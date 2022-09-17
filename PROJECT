@@ -1,0 +1,6 @@
+domain: znet
+layout:
+- go.kubebuilder.io/v3
+projectName: nodemanager
+repo: znet/nodemanager
+version: "3"
