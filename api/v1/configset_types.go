@@ -33,26 +33,25 @@ type Package struct {
 }
 
 type Service struct {
-	Enable bool   `json:"enable,omitempty"`
-	Ensure string `json:"ensure,omitempty"`
-	Name   string `json:"name,omitempty"`
+	Enable          bool     `json:"enable,omitempty"`
+	Ensure          string   `json:"ensure,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	SusbscribeFiles []string `json:"subscribe_files,omitempty"`
 }
 
 type File struct {
-	Content   string `json:"content,omitempty"`
-	Directory bool   `json:"directory,omitempty"`
-	Group     string `json:"group,omitempty"`
-	Mode      string `json:"mode,omitempty"`
-	Owner     string `json:"owner,omitempty"`
-	Path      string `json:"path,omitempty"`
-	Template  string `json:"template,omitempty"`
+	Content  string `json:"content,omitempty"`
+	Ensure   string `json:"ensure,omitempty"`
+	Target   string `json:"target,omitempty"`
+	Group    string `json:"group,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Owner    string `json:"owner,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Template string `json:"template,omitempty"`
 }
 
 // ConfigSetStatus defines the observed state of ConfigSet
-type ConfigSetStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-}
+type ConfigSetStatus struct{}
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status

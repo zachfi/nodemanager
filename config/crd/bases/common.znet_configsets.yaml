@@ -40,8 +40,8 @@ spec:
                   properties:
                     content:
                       type: string
-                    directory:
-                      type: boolean
+                    ensure:
+                      type: string
                     group:
                       type: string
                     mode:
@@ -49,6 +49,8 @@ spec:
                     owner:
                       type: string
                     path:
+                      type: string
+                    target:
                       type: string
                     template:
                       type: string
@@ -72,6 +74,10 @@ spec:
                       type: string
                     name:
                       type: string
+                    subscribe_files:
+                      items:
+                        type: string
+                      type: array
                   type: object
                 type: array
             type: object

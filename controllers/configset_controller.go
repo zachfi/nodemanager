@@ -17,9 +17,13 @@ limitations under the License.
 package controllers
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"os"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,7 +59,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	err := nodeLabelMatch(ctx, r, req, configSet.ObjectMeta.Labels)
+	err := nodeLabelMatch(ctx, r, req, configSet.Labels)
 	if err != nil {
 		log.Error(err, "node labels did not match")
 		return ctrl.Result{}, nil
@@ -66,7 +70,17 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	err = r.handlePackageSet(packageHandler, configSet.Spec.Packages)
+	err = r.handlePackageSet(log, packageHandler, configSet.Spec.Packages)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	fileHandler, err := common.GetFileHandler()
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	changedFiles, err := r.handleFileSet(log, fileHandler, configSet.Spec.Files)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -76,12 +90,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	err = r.handleServiceSet(serviceHandler, configSet.Spec.Services)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	err = r.handleFileSet(fileHandler, configSet.Spec.Files)
+	err = r.handleServiceSet(log, serviceHandler, configSet.Spec.Services, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -96,7 +105,7 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ConfigSetReconciler) handlePackageSet(handler common.PackageHandler, packageSet []commonv1.Package) error {
+func (r *ConfigSetReconciler) handlePackageSet(log logr.Logger, handler common.PackageHandler, packageSet []commonv1.Package) error {
 
 	currentlyInstalled := func(packages []string, pkg string) bool {
 		for _, p := range packages {
@@ -117,7 +126,8 @@ func (r *ConfigSetReconciler) handlePackageSet(handler common.PackageHandler, pa
 
 		switch pkg.Ensure {
 		case "installed":
-			if currentlyInstalled(packages, pkg.Name) {
+			if !currentlyInstalled(packages, pkg.Name) {
+				log.Info("installing package", "name", pkg.Name)
 				err := handler.Install(pkg.Name)
 				if err != nil {
 					return err
@@ -126,6 +136,7 @@ func (r *ConfigSetReconciler) handlePackageSet(handler common.PackageHandler, pa
 		case "absent":
 			if currentlyInstalled(packages, pkg.Name) {
 				err := handler.Remove(pkg.Name)
+				log.Info("removing package", "name", pkg.Name)
 				if err != nil {
 					return err
 				}
@@ -138,12 +149,113 @@ func (r *ConfigSetReconciler) handlePackageSet(handler common.PackageHandler, pa
 	return nil
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(handler common.ServiceHandler, serviceSet []commonv1.Service) error {
+func (r *ConfigSetReconciler) handleServiceSet(log logr.Logger, handler common.ServiceHandler, serviceSet []commonv1.Service, changedFiles []string) error {
 
-	return nil
+	var totalErrs error
+	var restartServices []string
+
+	for _, cf := range changedFiles {
+		for _, svc := range serviceSet {
+			for _, sub := range svc.SusbscribeFiles {
+				if sub == cf {
+					restartServices = append(restartServices, svc.Name)
+				}
+			}
+		}
+	}
+
+	for _, restart := range restartServices {
+		err := handler.Restart(restart)
+		log.Info("restarting service", "name", restart)
+		if err != nil {
+			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
+		}
+	}
+
+	return totalErrs
 }
 
-func (r *ConfigSetReconciler) handleFileSet(handler common.FileHandler, serviceSet []commonv1.File) error {
+// handleFileSet
+func (r *ConfigSetReconciler) handleFileSet(log logr.Logger, handler common.FileHandler, fileSet []commonv1.File) (changedFiles []string, err error) {
+	for _, file := range fileSet {
 
-	return nil
+		var ensure common.FileEnsure
+		if file.Ensure == "" {
+			ensure = common.File
+		} else {
+			ensure = common.FileEnsureFromString(file.Ensure)
+			if ensure == common.UnhandledFileEnsure {
+				return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
+			}
+		}
+
+		switch ensure {
+		case common.File:
+			if file.Content != "" {
+				// Determine the sha of the content
+				var b bytes.Buffer
+				_, err = b.WriteString(file.Content)
+				if err != nil {
+					return changedFiles, err
+				}
+
+				chsh := sha256.New()
+				contentHash := fmt.Sprintf("%x", chsh.Sum(b.Bytes()))
+
+				// Read the sha of the file
+				fileBytes, err := os.ReadFile(file.Path)
+				if err != nil {
+					return changedFiles, err
+				}
+				fhsh := sha256.New()
+				fileHash := fmt.Sprintf("%x", fhsh.Sum(fileBytes))
+
+				// Write only when necessary
+				if contentHash != fileHash {
+					log.Info(fmt.Sprintf("writing file %q (%x)", file.Path, contentHash))
+					err := handler.WriteContentFile(file.Path, []byte(file.Content))
+					if err != nil {
+						return changedFiles, err
+					}
+					changedFiles = append(changedFiles, file.Path)
+				}
+			}
+
+		case common.Directory:
+			if _, err := os.Stat(file.Path); os.IsNotExist(err) {
+				var fileMode os.FileMode
+
+				if file.Mode == "" {
+					fileMode = os.FileMode(0660)
+				} else {
+					fileMode, err = common.GetFileModeFromString(file.Mode)
+					if err != nil {
+						return changedFiles, err
+					}
+				}
+
+				err := os.Mkdir(file.Path, fileMode)
+				if err != nil {
+					return changedFiles, err
+				}
+				changedFiles = append(changedFiles, file.Path)
+			}
+
+		case common.Symlink:
+			target, err := os.Readlink(file.Path)
+			if err != nil {
+				return changedFiles, err
+			}
+
+			if target != file.Target {
+				log.Info("symlinking file", "name", file.Path)
+				err := os.Symlink(file.Target, file.Path)
+				if err != nil {
+					return changedFiles, err
+				}
+			}
+		}
+	}
+
+	return
 }
