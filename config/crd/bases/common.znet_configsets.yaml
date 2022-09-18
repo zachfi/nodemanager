@@ -1,0 +1,85 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.9.2
+  creationTimestamp: null
+  name: configsets.common.znet
+spec:
+  group: common.znet
+  names:
+    kind: ConfigSet
+    listKind: ConfigSetList
+    plural: configsets
+    singular: configset
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: ConfigSet is the Schema for the configsets API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ConfigSetSpec defines the desired state of ConfigSet
+            properties:
+              files:
+                items:
+                  properties:
+                    content:
+                      type: string
+                    directory:
+                      type: boolean
+                    group:
+                      type: string
+                    mode:
+                      type: string
+                    owner:
+                      type: string
+                    path:
+                      type: string
+                    template:
+                      type: string
+                  type: object
+                type: array
+              packages:
+                items:
+                  properties:
+                    ensure:
+                      type: string
+                    name:
+                      type: string
+                  type: object
+                type: array
+              services:
+                items:
+                  properties:
+                    enable:
+                      type: boolean
+                    ensure:
+                      type: string
+                    name:
+                      type: string
+                  type: object
+                type: array
+            type: object
+          status:
+            description: ConfigSetStatus defines the observed state of ConfigSet
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

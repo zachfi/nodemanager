@@ -1,0 +1,24 @@
+# permissions for end users to edit managednodes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: managednode-editor-role
+rules:
+- apiGroups:
+  - common.znet
+  resources:
+  - managednodes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - common.znet
+  resources:
+  - managednodes/status
+  verbs:
+  - get

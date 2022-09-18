@@ -1,0 +1,6 @@
+apiVersion: common.znet/v1
+kind: ManagedNode
+metadata:
+  name: managednode-sample
+spec:
+  # TODO(user): Add fields here

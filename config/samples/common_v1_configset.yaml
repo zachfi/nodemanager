@@ -1,0 +1,6 @@
+apiVersion: common.znet/v1
+kind: ConfigSet
+metadata:
+  name: configset-sample
+spec:
+  # TODO(user): Add fields here

@@ -1,0 +1,59 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: manager-role
+rules:
+- apiGroups:
+  - common.znet
+  resources:
+  - configsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - common.znet
+  resources:
+  - configsets/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - common.znet
+  resources:
+  - configsets/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - common.znet
+  resources:
+  - managednodes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - common.znet
+  resources:
+  - managednodes/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - common.znet
+  resources:
+  - managednodes/status
+  verbs:
+  - get
+  - patch
+  - update
