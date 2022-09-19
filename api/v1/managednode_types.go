@@ -29,6 +29,9 @@ type ManagedNodeSpec struct {
 type ManagedNodeStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Version      string `json:"version,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	OS           string `json:"os,omitempty"`
 }
 
 //+kubebuilder:object:root=true
