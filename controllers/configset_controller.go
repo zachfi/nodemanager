@@ -249,6 +249,11 @@ func (r *ConfigSetReconciler) handleFileSet(log logr.Logger, handler common.File
 
 			if target != file.Target {
 				log.Info("symlinking file", "name", file.Path)
+
+				if _, err := os.Lstat(file.Path); err == nil {
+					os.Remove(file.Path)
+				}
+
 				err := os.Symlink(file.Target, file.Path)
 				if err != nil {
 					return changedFiles, err
