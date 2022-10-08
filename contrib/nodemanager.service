@@ -1,0 +1,10 @@
+[Unit]
+Description=Kubernetes Node Manager
+
+[Service]
+Type=simple
+PIDFile=/var/run/nodemanager/nodemanager.pid
+ExecStart=/usr/bin/nodemanager
+
+[Install]
+WantedBy=multi-user.target
