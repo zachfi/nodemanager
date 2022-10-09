@@ -1,12 +1,12 @@
 pkgname=nodemanager
-pkgver=0.1.1
-pkgrel=4
+pkgver=0.1.1+1+g82b5f09
+pkgrel=1
 pkgdesc='A Kubernetes controller to manage nodes'
 arch=(x86_64 armv7l)
 url="https://github.com/xaque208/$pkgname"
 license=('APACHE')
 makedepends=(git go)
-_commit=bc343438ea5508c3e81c0bc940dea38fa1d80199
+_commit=82b5f092337d60614e25bf8fd0dd7d4b8cc1c3de
 source=("git+$url#commit=$_commit")
 sha256sums=('SKIP')
 

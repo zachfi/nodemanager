@@ -23,8 +23,8 @@ testbin/*
 *.swp
 *.swo
 *~
-contrib/pkg/
-contrib/src/
-contrib/nodemanager
-contrib/nodemanager*.tar.gz
-contrib/nodemanager*.tar.zst
+contrib/arch/pkg/
+contrib/arch/src/
+contrib/arch/nodemanager
+contrib/arch/nodemanager*.tar.gz
+contrib/arch/nodemanager*.tar.zst
