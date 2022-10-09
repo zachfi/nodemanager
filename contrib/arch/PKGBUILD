@@ -1,12 +1,12 @@
 pkgname=nodemanager
-pkgver=0.1.1+1+g82b5f09
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='A Kubernetes controller to manage nodes'
 arch=(x86_64 armv7l)
 url="https://github.com/xaque208/$pkgname"
 license=('APACHE')
 makedepends=(git go)
-_commit=82b5f092337d60614e25bf8fd0dd7d4b8cc1c3de
+_commit=1405a6f76fffe244be617a8bfa5b49531df9582b
 source=("git+$url#commit=$_commit")
 sha256sums=('SKIP')
 
@@ -37,5 +37,5 @@ check() {
 package() {
   cd $pkgname
   install -Dm755 bin/manager "${pkgdir}/usr/bin/${pkgname}"
-  install -Dm644 contrib/nodemanager.service "${pkgdir}/usr/lib/systemd/system/nodemanager.service"
+  install -Dm644 contrib/arch/nodemanager.service "${pkgdir}/usr/lib/systemd/system/nodemanager.service"
 }
