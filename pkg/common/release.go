@@ -2,11 +2,29 @@ package common
 
 import (
 	"log"
+	"runtime"
+	"syscall"
 
 	"github.com/go-ini/ini"
 )
 
-func ReadOSRelease(configfile string) map[string]string {
+type Sysinfo struct {
+	Name      string
+	Node      string
+	Release   string
+	Version   string
+	Machine   string
+	Domain    string
+	OS        string
+	OSRelease string
+	Processor string
+}
+
+type ReleaseInfo struct {
+	ID string
+}
+
+func readOSRelease(configfile string) map[string]string {
 	cfg, err := ini.Load(configfile)
 	if err != nil {
 		log.Fatal("Fail to read file: ", err)
@@ -18,7 +36,37 @@ func ReadOSRelease(configfile string) map[string]string {
 	return ConfigParams
 }
 
-func OsReleaseID() string {
-	releaseInfo := ReadOSRelease("/etc/os-release")
-	return releaseInfo["ID"]
+func getReleaseInfo(configfile string) ReleaseInfo {
+	releaseInfo := readOSRelease("/etc/os-release")
+	return ReleaseInfo{
+		ID: releaseInfo["ID"],
+	}
+}
+
+func GetSystemInfo() *Sysinfo {
+	osrelease := getReleaseInfo("/etc/os-release")
+
+	var utsname syscall.Utsname
+	_ = syscall.Uname(&utsname)
+	sys := Sysinfo{
+		Name:      utsnameToString(utsname.Sysname),
+		Node:      utsnameToString(utsname.Nodename),
+		Release:   utsnameToString(utsname.Release),
+		Version:   utsnameToString(utsname.Version),
+		Machine:   utsnameToString(utsname.Machine),
+		Domain:    utsnameToString(utsname.Domainname),
+		OS:        runtime.GOOS,
+		OSRelease: osrelease.ID,
+		// processor: getProcessorName(),
+	}
+	return &sys
+}
+
+func utsnameToString(unameArray [65]int8) string {
+	var byteString [65]byte
+	var indexLength int
+	for ; unameArray[indexLength] != 0; indexLength++ {
+		byteString[indexLength] = uint8(unameArray[indexLength])
+	}
+	return string(byteString[:indexLength])
 }

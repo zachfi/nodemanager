@@ -20,8 +20,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -65,8 +63,46 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	node.Status = nodeStatus(log, req)
+	labels := defaultLabels(log, req)
 
+	nodeLabels := node.GetLabels()
+	if nodeLabels == nil {
+		nodeLabels = make(map[string]string)
+	}
+
+	var updateLabels bool
+	for k, v := range labels {
+		if vv, ok := node.Labels[k]; ok {
+			if vv != v {
+				updateLabels = true
+				nodeLabels[k] = v
+			}
+		} else {
+			updateLabels = true
+			nodeLabels[k] = v
+		}
+	}
+
+	if updateLabels {
+		node.SetLabels(nodeLabels)
+		log.Info("updating labels", "labels", nodeLabels)
+		if err := r.Update(ctx, &node); err != nil {
+			log.Error(err, "unable to update ManagedNode")
+			return ctrl.Result{}, err
+		}
+	}
+
+	if err := r.Status().Update(ctx, &node); err != nil {
+		log.Error(err, "unable to update ManagedNode status")
+		return ctrl.Result{}, err
+	}
+
+	if err := r.Status().Update(ctx, &node); err != nil {
+		log.Error(err, "unable to update ManagedNode status")
+		return ctrl.Result{}, err
+	}
+
+	node.Status = nodeStatus(log, req)
 	log.Info("updating node status", "node", hostname, "status", fmt.Sprintf("%+v", node.Status))
 	if err := r.Status().Update(ctx, &node); err != nil {
 		log.Error(err, "unable to update ManagedNode status")
@@ -85,22 +121,18 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func nodeStatus(log logr.Logger, req ctrl.Request) commonv1.ManagedNodeStatus {
 	var status commonv1.ManagedNodeStatus
-
-	status.OS = common.OsReleaseID()
-
-	releaseCmd := exec.Command("/usr/bin/uname", "-r")
-	output, err := releaseCmd.Output()
-	if err != nil {
-		log.Error(err, "failed to execute uname")
-	}
-	status.Version = strings.TrimSpace(string(output))
-
-	archCmd := exec.Command("/usr/bin/uname", "-m")
-	archOut, err := archCmd.Output()
-	if err != nil {
-		log.Error(err, "failed to execute uname")
-	}
-	status.Architecture = strings.TrimSpace(string(archOut))
-
+	info := common.GetSystemInfo()
+	status.Release = info.Release
 	return status
+}
+
+func defaultLabels(log logr.Logger, req ctrl.Request) map[string]string {
+	info := common.GetSystemInfo()
+
+	return map[string]string{
+		"kubernetes.io/os":       info.OS,
+		"kubernetes.io/osid":     info.OSRelease,
+		"kubernetes.io/arch":     info.Machine,
+		"kubernetes.io/hostname": info.Node,
+	}
 }

@@ -59,9 +59,8 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	err := nodeLabelMatch(ctx, r, req, configSet.Labels)
+	err := nodeLabelMatch(ctx, log, r, r, req, configSet.Labels)
 	if err != nil {
-		log.Error(err, "node labels did not match")
 		return ctrl.Result{}, nil
 	}
 

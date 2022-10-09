@@ -53,7 +53,7 @@ type FileHandler interface {
 }
 
 func GetFileHandler() (FileHandler, error) {
-	switch OsReleaseID() {
+	switch GetSystemInfo().OSRelease {
 	case "arch", "freebsd":
 		return &FileHandler_Common{}, nil
 	}

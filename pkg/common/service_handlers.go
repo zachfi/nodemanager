@@ -32,7 +32,7 @@ func (s ServiceStatus) String() string {
 }
 
 func GetServiceHandler() (ServiceHandler, error) {
-	switch OsReleaseID() {
+	switch GetSystemInfo().OSRelease {
 	case "arch":
 		return &ServiceHandler_Systemd{}, nil
 	case "freebsd":

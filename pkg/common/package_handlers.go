@@ -14,8 +14,7 @@ type PackageHandler interface {
 }
 
 func GetPackageHandler() (PackageHandler, error) {
-
-	switch OsReleaseID() {
+	switch GetSystemInfo().OSRelease {
 	case "arch":
 		return &PackageHandler_Archlinux{}, nil
 	case "freebsd":
