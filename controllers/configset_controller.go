@@ -220,17 +220,17 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 				chsh := sha256.New()
 				contentHash := fmt.Sprintf("%x", chsh.Sum(b.Bytes()))
 
+				if _, err := os.Stat(file.Path); os.IsNotExist(err) {
+					_, err := os.Create(file.Path)
+					if err != nil {
+						return changedFiles, errors.Wrap(err, "failed to create new file")
+					}
+				}
+
 				// Read the sha of the file
 				fileBytes, err := os.ReadFile(file.Path)
 				if err != nil {
-					if err == os.ErrNotExist {
-						_, createErr := os.Create(file.Path)
-						if createErr != nil {
-							return changedFiles, errors.Wrap(createErr, "failed to create new file")
-						}
-					} else {
-						return changedFiles, errors.Wrap(err, "failed to read file")
-					}
+					return changedFiles, errors.Wrap(err, "failed to read file")
 				}
 				fhsh := sha256.New()
 				fileHash := fmt.Sprintf("%x", fhsh.Sum(fileBytes))
