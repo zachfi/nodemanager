@@ -24,6 +24,8 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,6 +40,7 @@ import (
 type ConfigSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Tracer trace.Tracer
 }
 
 //+kubebuilder:rbac:groups=common.znet,resources=configsets,verbs=get;list;watch;create;update;patch;delete
@@ -49,8 +52,16 @@ type ConfigSetReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.2/pkg/reconcile
-func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
+func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(rctx)
+
+	attributes := []attribute.KeyValue{
+		attribute.String("req", req.String()),
+		attribute.String("namespace", req.Namespace),
+	}
+
+	ctx, span := r.Tracer.Start(rctx, "Reconcile", trace.WithAttributes(attributes...))
+	defer span.End()
 
 	var configSet commonv1.ConfigSet
 	if err := r.Get(ctx, req.NamespacedName, &configSet); err != nil {
@@ -59,37 +70,37 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	err := nodeLabelMatch(ctx, log, r, r, req, configSet.Labels)
+	err := nodeLabelMatch(rctx, log, r, r, req, configSet.Labels)
 	if err != nil {
 		return ctrl.Result{}, nil
 	}
 
-	packageHandler, err := common.GetPackageHandler()
+	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.handlePackageSet(log, packageHandler, configSet.Spec.Packages)
+	err = r.handlePackageSet(ctx, log, packageHandler, configSet.Spec.Packages)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	fileHandler, err := common.GetFileHandler()
+	fileHandler, err := common.GetFileHandler(ctx, r.Tracer)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	changedFiles, err := r.handleFileSet(log, fileHandler, configSet.Spec.Files)
+	changedFiles, err := r.handleFileSet(ctx, log, fileHandler, configSet.Spec.Files)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	serviceHandler, err := common.GetServiceHandler()
+	serviceHandler, err := common.GetServiceHandler(ctx, r.Tracer)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.handleServiceSet(log, serviceHandler, configSet.Spec.Services, changedFiles)
+	err = r.handleServiceSet(ctx, log, serviceHandler, configSet.Spec.Services, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -104,7 +115,9 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ConfigSetReconciler) handlePackageSet(log logr.Logger, handler common.PackageHandler, packageSet []commonv1.Package) error {
+func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, log logr.Logger, handler common.PackageHandler, packageSet []commonv1.Package) error {
+	ctx, span := r.Tracer.Start(ctx, "handlePackageSet")
+	defer span.End()
 
 	currentlyInstalled := func(packages []string, pkg string) bool {
 		for _, p := range packages {
@@ -116,7 +129,7 @@ func (r *ConfigSetReconciler) handlePackageSet(log logr.Logger, handler common.P
 		return false
 	}
 
-	packages, err := handler.List()
+	packages, err := handler.List(ctx)
 	if err != nil {
 		return err
 	}
@@ -127,14 +140,14 @@ func (r *ConfigSetReconciler) handlePackageSet(log logr.Logger, handler common.P
 		case "installed":
 			if !currentlyInstalled(packages, pkg.Name) {
 				log.Info("installing package", "name", pkg.Name)
-				err := handler.Install(pkg.Name)
+				err := handler.Install(ctx, pkg.Name)
 				if err != nil {
 					return err
 				}
 			}
 		case "absent":
 			if currentlyInstalled(packages, pkg.Name) {
-				err := handler.Remove(pkg.Name)
+				err := handler.Remove(ctx, pkg.Name)
 				log.Info("removing package", "name", pkg.Name)
 				if err != nil {
 					return err
@@ -148,7 +161,9 @@ func (r *ConfigSetReconciler) handlePackageSet(log logr.Logger, handler common.P
 	return nil
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(log logr.Logger, handler common.ServiceHandler, serviceSet []commonv1.Service, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Logger, handler common.ServiceHandler, serviceSet []commonv1.Service, changedFiles []string) error {
+	ctx, span := r.Tracer.Start(ctx, "handleServiceSet")
+	defer span.End()
 
 	var totalErrs error
 	var restartServices []string
@@ -164,7 +179,7 @@ func (r *ConfigSetReconciler) handleServiceSet(log logr.Logger, handler common.S
 	}
 
 	for _, restart := range restartServices {
-		err := handler.Restart(restart)
+		err := handler.Restart(ctx, restart)
 		log.Info("restarting service", "name", restart)
 		if err != nil {
 			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
@@ -175,7 +190,10 @@ func (r *ConfigSetReconciler) handleServiceSet(log logr.Logger, handler common.S
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(log logr.Logger, handler common.FileHandler, fileSet []commonv1.File) (changedFiles []string, err error) {
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger, handler common.FileHandler, fileSet []commonv1.File) (changedFiles []string, err error) {
+	ctx, span := r.Tracer.Start(ctx, "handleFileSet")
+	defer span.End()
+
 	for _, file := range fileSet {
 
 		var ensure common.FileEnsure
@@ -211,8 +229,8 @@ func (r *ConfigSetReconciler) handleFileSet(log logr.Logger, handler common.File
 
 				// Write only when necessary
 				if contentHash != fileHash {
-					log.Info(fmt.Sprintf("writing file %q (%x)", file.Path, contentHash))
-					err := handler.WriteContentFile(file.Path, []byte(file.Content))
+					log.Info(fmt.Sprintf("writing file %q", file.Path))
+					err := handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 					if err != nil {
 						return changedFiles, err
 					}
@@ -227,7 +245,7 @@ func (r *ConfigSetReconciler) handleFileSet(log logr.Logger, handler common.File
 				if file.Mode == "" {
 					fileMode = os.FileMode(0660)
 				} else {
-					fileMode, err = common.GetFileModeFromString(file.Mode)
+					fileMode, err = common.GetFileModeFromString(ctx, file.Mode)
 					if err != nil {
 						return changedFiles, err
 					}

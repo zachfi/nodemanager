@@ -60,9 +60,16 @@ test: manifests generate fmt vet envtest ## Run tests.
 
 ##@ Build
 
+LD_FLAGS=-ldflags " \
+    -X main.goos=$(shell go env GOOS) \
+    -X main.goarch=$(shell go env GOARCH) \
+    -X main.gitCommit=$(shell git rev-parse HEAD) \
+    -X main.buildDate=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') \
+    "
+
 .PHONY: build
 build: generate fmt vet ## Build manager binary.
-	go build -o bin/manager main.go
+	go build $(LD_FLAGS) -o bin/manager main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.

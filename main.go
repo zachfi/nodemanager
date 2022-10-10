@@ -17,11 +17,16 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,10 +36,47 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+
+	"google.golang.org/grpc"
+
 	commonv1 "znet/nodemanager/api/v1"
 	"znet/nodemanager/controllers"
 	//+kubebuilder:scaffold:imports
 )
+
+// var needs to be used instead of const as ldflags is used to fill this
+// information in the release process
+var (
+	goos      = "unknown"
+	goarch    = "unknown"
+	gitCommit = "$Format:%H$" // sha1 from git, output of $(git rev-parse HEAD)
+
+	buildDate = "1970-01-01T00:00:00Z" // build date in ISO8601 format, output of $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+)
+
+// version contains all the information related to the CLI version
+type version struct {
+	GitCommit string `json:"gitCommit"`
+	BuildDate string `json:"buildDate"`
+	GoOs      string `json:"goOs"`
+	GoArch    string `json:"goArch"`
+}
+
+// versionString returns the CLI version
+func versionString() string {
+	return fmt.Sprintf("Version: %#v", version{
+		gitCommit,
+		buildDate,
+		goos,
+		goarch,
+	})
+}
 
 var (
 	scheme   = runtime.NewScheme()
@@ -52,8 +94,10 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var otelEndpoint string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&otelEndpoint, "otel-endpoint", "tempo:4317", "The URL to use when sending traces")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -92,6 +136,7 @@ func main() {
 	if err = (&controllers.ConfigSetReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Tracer: otel.Tracer("ConfigSet"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
@@ -99,6 +144,7 @@ func main() {
 	if err = (&controllers.ManagedNodeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Tracer: otel.Tracer("ManagedNode"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)
@@ -114,9 +160,70 @@ func main() {
 		os.Exit(1)
 	}
 
+	shutdownTracer, err := installOpenTelemetryTracer(otelEndpoint, setupLog)
+	if err != nil {
+		setupLog.Error(err, "error initializing tracer")
+		os.Exit(1)
+	}
+	defer shutdownTracer()
+
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func installOpenTelemetryTracer(endpoint string, log logr.Logger) (func(), error) {
+	if endpoint == "" {
+		return func() {}, nil
+	}
+
+	log.Info("initialising OpenTelemetry tracer", "endpoint", endpoint)
+
+	ctx := context.Background()
+
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceNameKey.String("nodemanager"),
+			semconv.ServiceVersionKey.String(versionString()),
+		),
+		resource.WithHost(),
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to initialize trace resuorce")
+	}
+
+	conn, err := grpc.DialContext(ctx, endpoint, grpc.WithInsecure())
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to dial otel grpc")
+	}
+
+	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to creat trace exporter")
+	}
+
+	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithResource(res),
+		sdktrace.WithSpanProcessor(bsp),
+	)
+
+	otel.SetTracerProvider(tracerProvider)
+
+	// set global propagator to tracecontext (the default is no-op).
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracerProvider.Shutdown(ctx); err != nil {
+			log.Error(err, "OpenTelemetry trace provider failed to shutdown")
+			os.Exit(1)
+		}
+	}
+
+	return shutdown, nil
 }
