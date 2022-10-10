@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
@@ -48,6 +49,34 @@ import (
 	"znet/nodemanager/controllers"
 	//+kubebuilder:scaffold:imports
 )
+
+// var needs to be used instead of const as ldflags is used to fill this
+// information in the release process
+var (
+	goos      = "unknown"
+	goarch    = "unknown"
+	gitCommit = "$Format:%H$" // sha1 from git, output of $(git rev-parse HEAD)
+
+	buildDate = "1970-01-01T00:00:00Z" // build date in ISO8601 format, output of $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+)
+
+// version contains all the information related to the CLI version
+type version struct {
+	GitCommit string `json:"gitCommit"`
+	BuildDate string `json:"buildDate"`
+	GoOs      string `json:"goOs"`
+	GoArch    string `json:"goArch"`
+}
+
+// versionString returns the CLI version
+func versionString() string {
+	return fmt.Sprintf("Version: %#v", version{
+		gitCommit,
+		buildDate,
+		goos,
+		goarch,
+	})
+}
 
 var (
 	scheme   = runtime.NewScheme()
@@ -157,7 +186,7 @@ func installOpenTelemetryTracer(endpoint string, log logr.Logger) (func(), error
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String("nodemanager"),
-			semconv.ServiceVersionKey.String("0.0.1"),
+			semconv.ServiceVersionKey.String(versionString()),
 		),
 		resource.WithHost(),
 	)
