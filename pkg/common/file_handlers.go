@@ -1,10 +1,13 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/user"
 	"strconv"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 type FileEnsure int64
@@ -46,16 +49,19 @@ func FileEnsureFromString(ensure string) FileEnsure {
 }
 
 type FileHandler interface {
-	Chown(path, owner, group string) error
-	SetMode(path, group string) error
-	WriteContentFile(path string, content []byte) error
-	WriteTemplateFile(path, template string) error
+	Chown(ctx context.Context, path, owner, group string) error
+	SetMode(ctx context.Context, path, group string) error
+	WriteContentFile(ctx context.Context, path string, content []byte) error
+	WriteTemplateFile(ctx context.Context, path, template string) error
 }
 
-func GetFileHandler() (FileHandler, error) {
-	switch GetSystemInfo().OSRelease {
+func GetFileHandler(ctx context.Context, tracer trace.Tracer) (FileHandler, error) {
+	ctx, span := tracer.Start(ctx, "GetFileHandler")
+	defer span.End()
+
+	switch GetSystemInfo(ctx).OSRelease {
 	case "arch", "freebsd":
-		return &FileHandler_Common{}, nil
+		return &FileHandler_Common{tracer: tracer}, nil
 	}
 
 	return &FileHandler_Null{}, fmt.Errorf("file handler not available for system")
@@ -63,14 +69,18 @@ func GetFileHandler() (FileHandler, error) {
 
 type FileHandler_Null struct{}
 
-func (h *FileHandler_Null) Chown(_, _, _ string) error                { return nil }
-func (h *FileHandler_Null) SetMode(_, _ string) error                 { return nil }
-func (h *FileHandler_Null) WriteContentFile(_ string, _ []byte) error { return nil }
-func (h *FileHandler_Null) WriteTemplateFile(_, _ string) error       { return nil }
+func (h *FileHandler_Null) Chown(_ context.Context, _, _, _ string) error                { return nil }
+func (h *FileHandler_Null) SetMode(_ context.Context, _, _ string) error                 { return nil }
+func (h *FileHandler_Null) WriteContentFile(_ context.Context, _ string, _ []byte) error { return nil }
+func (h *FileHandler_Null) WriteTemplateFile(_ context.Context, _, _ string) error       { return nil }
 
-type FileHandler_Common struct{}
+type FileHandler_Common struct {
+	tracer trace.Tracer
+}
 
-func (h *FileHandler_Common) Chown(path, owner, group string) error {
+func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group string) error {
+	_, span := h.tracer.Start(ctx, "Chown")
+	defer span.End()
 
 	u, err := user.Lookup(owner)
 	if err != nil {
@@ -100,8 +110,11 @@ func (h *FileHandler_Common) Chown(path, owner, group string) error {
 	return nil
 }
 
-func (h *FileHandler_Common) SetMode(path, mode string) error {
-	fileMode, err := GetFileModeFromString(mode)
+func (h *FileHandler_Common) SetMode(ctx context.Context, path, mode string) error {
+	_, span := h.tracer.Start(ctx, "SetMode")
+	defer span.End()
+
+	fileMode, err := GetFileModeFromString(ctx, mode)
 	if err != nil {
 		return err
 	}
@@ -114,7 +127,10 @@ func (h *FileHandler_Common) SetMode(path, mode string) error {
 	return nil
 }
 
-func (h *FileHandler_Common) WriteContentFile(path string, bytes []byte) error {
+func (h *FileHandler_Common) WriteContentFile(ctx context.Context, path string, bytes []byte) error {
+	_, span := h.tracer.Start(ctx, "WriteContentFile")
+	defer span.End()
+
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -129,9 +145,14 @@ func (h *FileHandler_Common) WriteContentFile(path string, bytes []byte) error {
 	return nil
 }
 
-func (h *FileHandler_Common) WriteTemplateFile(path, template string) error { return nil }
+func (h *FileHandler_Common) WriteTemplateFile(ctx context.Context, path, template string) error {
+	_, span := h.tracer.Start(ctx, "WriteTemplateFile")
+	defer span.End()
 
-func GetFileModeFromString(mode string) (os.FileMode, error) {
+	return nil
+}
+
+func GetFileModeFromString(_ context.Context, mode string) (os.FileMode, error) {
 	octalMode, err := strconv.ParseUint(mode, 0, 32)
 	if err != nil {
 		return os.FileMode(0), err

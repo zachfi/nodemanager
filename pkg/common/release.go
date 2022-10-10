@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"log"
 	"runtime"
 	"syscall"
@@ -43,7 +44,7 @@ func getReleaseInfo(configfile string) ReleaseInfo {
 	}
 }
 
-func GetSystemInfo() *Sysinfo {
+func GetSystemInfo(ctx context.Context) *Sysinfo {
 	osrelease := getReleaseInfo("/etc/os-release")
 
 	var utsname syscall.Utsname

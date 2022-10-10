@@ -22,6 +22,8 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,6 +37,7 @@ import (
 type ManagedNodeReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Tracer trace.Tracer
 }
 
 //+kubebuilder:rbac:groups=common.znet,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
@@ -46,8 +49,16 @@ type ManagedNodeReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.2/pkg/reconcile
-func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
+func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(rctx)
+
+	attributes := []attribute.KeyValue{
+		attribute.String("req", req.String()),
+		attribute.String("namespace", req.Namespace),
+	}
+
+	ctx, span := r.Tracer.Start(rctx, "Reconcile", trace.WithAttributes(attributes...))
+	defer span.End()
 
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -63,7 +74,7 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	labels := defaultLabels(log, req)
+	labels := defaultLabels(ctx, log, req)
 
 	nodeLabels := node.GetLabels()
 	if nodeLabels == nil {
@@ -102,7 +113,7 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	node.Status = nodeStatus(log, req)
+	node.Status = nodeStatus(ctx, log, req)
 	log.Info("updating node status", "node", hostname, "status", fmt.Sprintf("%+v", node.Status))
 	if err := r.Status().Update(ctx, &node); err != nil {
 		log.Error(err, "unable to update ManagedNode status")
@@ -119,15 +130,15 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func nodeStatus(log logr.Logger, req ctrl.Request) commonv1.ManagedNodeStatus {
+func nodeStatus(ctx context.Context, log logr.Logger, req ctrl.Request) commonv1.ManagedNodeStatus {
 	var status commonv1.ManagedNodeStatus
-	info := common.GetSystemInfo()
+	info := common.GetSystemInfo(ctx)
 	status.Release = info.Release
 	return status
 }
 
-func defaultLabels(log logr.Logger, req ctrl.Request) map[string]string {
-	info := common.GetSystemInfo()
+func defaultLabels(ctx context.Context, log logr.Logger, req ctrl.Request) map[string]string {
+	info := common.GetSystemInfo(ctx)
 
 	return map[string]string{
 		"kubernetes.io/os":       info.OS,
