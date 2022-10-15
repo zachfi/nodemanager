@@ -32,9 +32,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	commonv1 "znet/nodemanager/api/v1"
+	commonv1 "github.com/xaque208/nodemanager/api/v1"
 
-	"znet/nodemanager/pkg/common"
+	"github.com/xaque208/nodemanager/pkg/common"
 )
 
 // ConfigSetReconciler reconciles a ConfigSet object

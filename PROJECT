@@ -1,25 +1,25 @@
-domain: znet
+domain: xaque208
 layout:
 - go.kubebuilder.io/v3
 projectName: nodemanager
-repo: znet/nodemanager
+repo: github.com/xaque208/nodemanager
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: znet
+  domain: xaque208
   group: common
   kind: ConfigSet
-  path: znet/nodemanager/api/v1
+  path: github.com/xaque208/nodemanager/api/v1
   version: v1
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: znet
+  domain: xaque208
   group: common
   kind: ManagedNode
-  path: znet/nodemanager/api/v1
+  path: github.com/xaque208/nodemanager/api/v1
   version: v1
 version: "3"

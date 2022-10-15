@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	commonv1 "znet/nodemanager/api/v1"
+
+	commonv1 "github.com/xaque208/nodemanager/api/v1"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
