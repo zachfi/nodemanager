@@ -149,6 +149,10 @@ func (h *FileHandler_Common) WriteTemplateFile(ctx context.Context, path, templa
 	_, span := h.tracer.Start(ctx, "WriteTemplateFile")
 	defer span.End()
 
+	// Render the template into bytes
+	// b, err := render()
+	// return h.WriteContentFile(ctx, path, b)
+
 	return nil
 }
 
