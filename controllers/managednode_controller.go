@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -74,7 +73,7 @@ func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	labels := defaultLabels(ctx, log, req)
+	labels := defaultLabels()
 
 	nodeLabels := node.GetLabels()
 	if nodeLabels == nil {
@@ -103,17 +102,7 @@ func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request
 		}
 	}
 
-	if err := r.Status().Update(ctx, &node); err != nil {
-		log.Error(err, "unable to update ManagedNode status")
-		return ctrl.Result{}, err
-	}
-
-	if err := r.Status().Update(ctx, &node); err != nil {
-		log.Error(err, "unable to update ManagedNode status")
-		return ctrl.Result{}, err
-	}
-
-	node.Status = nodeStatus(ctx, log, req)
+	node.Status = nodeStatus()
 	log.Info("updating node status", "node", hostname, "status", fmt.Sprintf("%+v", node.Status))
 	if err := r.Status().Update(ctx, &node); err != nil {
 		log.Error(err, "unable to update ManagedNode status")
@@ -130,15 +119,15 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func nodeStatus(ctx context.Context, log logr.Logger, req ctrl.Request) commonv1.ManagedNodeStatus {
+func nodeStatus() commonv1.ManagedNodeStatus {
 	var status commonv1.ManagedNodeStatus
-	info := common.GetSystemInfo(ctx)
-	status.Release = info.Release
+	info := common.GetSystemInfo()
+	status.Release = info.OS.Release
 	return status
 }
 
-func defaultLabels(ctx context.Context, log logr.Logger, req ctrl.Request) map[string]string {
-	info := common.GetSystemInfo(ctx)
+func defaultLabels() map[string]string {
+	info := common.GetSystemInfo()
 
 	return map[string]string{
 		"kubernetes.io/os":       info.OS.ID,

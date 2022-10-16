@@ -1,7 +1,6 @@
 package common
 
 import (
-	"context"
 	"log"
 	"runtime"
 	"strings"
@@ -12,7 +11,6 @@ import (
 type Sysinfo struct {
 	Name    string
 	Kernel  string
-	Release string
 	Version string
 	Machine string
 	Domain  string
@@ -60,7 +58,8 @@ func getReleaseInfo() (r ReleaseInfo) {
 	return
 }
 
-func GetSystemInfo(ctx context.Context) (sys *Sysinfo) {
+func GetSystemInfo() *Sysinfo {
+	sys := &Sysinfo{}
 	//
 	sys.Runtime.Arch = runtime.GOARCH
 	sys.Runtime.OS = runtime.GOOS
@@ -72,12 +71,12 @@ func GetSystemInfo(ctx context.Context) (sys *Sysinfo) {
 	args := []string{"-snrm"}
 	output, _, err := runCommand("uname", args...)
 	if err != nil {
-		return
+		return sys
 	}
 
 	fields := strings.Fields(output)
 	if len(fields) != 4 {
-		return
+		return sys
 	}
 
 	sys.Kernel = fields[0]
@@ -85,5 +84,5 @@ func GetSystemInfo(ctx context.Context) (sys *Sysinfo) {
 	sys.OS.Release = fields[2]
 	sys.Machine = fields[3]
 
-	return
+	return sys
 }

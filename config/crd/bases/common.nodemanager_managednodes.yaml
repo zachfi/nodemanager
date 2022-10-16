@@ -41,13 +41,7 @@ spec:
           status:
             description: ManagedNodeStatus defines the observed state of ManagedNode
             properties:
-              architecture:
-                type: string
-              os:
-                type: string
               release:
-                type: string
-              version:
                 type: string
             type: object
         type: object

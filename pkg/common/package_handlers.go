@@ -17,10 +17,10 @@ type PackageHandler interface {
 }
 
 func GetPackageHandler(ctx context.Context, tracer trace.Tracer) (PackageHandler, error) {
-	ctx, span := tracer.Start(ctx, "GetPackageHandler")
+	_, span := tracer.Start(ctx, "GetPackageHandler")
 	defer span.End()
 
-	switch GetSystemInfo(ctx).OS.Release {
+	switch GetSystemInfo().OS.Release {
 	case "arch":
 		return &PackageHandler_Archlinux{tracer: tracer}, nil
 	case "freebsd":

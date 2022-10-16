@@ -27,10 +27,7 @@ type ManagedNodeSpec struct {
 
 // ManagedNodeStatus defines the observed state of ManagedNode
 type ManagedNodeStatus struct {
-	Version      string `json:"version,omitempty"`
-	Architecture string `json:"architecture,omitempty"`
-	OS           string `json:"os,omitempty"`
-	Release      string `json:"release,omitempty"`
+	Release string `json:"release,omitempty"`
 }
 
 //+kubebuilder:object:root=true

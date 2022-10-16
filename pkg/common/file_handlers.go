@@ -56,10 +56,10 @@ type FileHandler interface {
 }
 
 func GetFileHandler(ctx context.Context, tracer trace.Tracer) (FileHandler, error) {
-	ctx, span := tracer.Start(ctx, "GetFileHandler")
+	_, span := tracer.Start(ctx, "GetFileHandler")
 	defer span.End()
 
-	switch GetSystemInfo(ctx).OS.Release {
+	switch GetSystemInfo().OS.Release {
 	case "arch", "freebsd":
 		return &FileHandler_Common{tracer: tracer}, nil
 	}
