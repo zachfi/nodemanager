@@ -141,9 +141,8 @@ func defaultLabels(ctx context.Context, log logr.Logger, req ctrl.Request) map[s
 	info := common.GetSystemInfo(ctx)
 
 	return map[string]string{
-		"kubernetes.io/os":       info.OS,
-		"kubernetes.io/osid":     info.OSRelease,
+		"kubernetes.io/os":       info.OS.ID,
 		"kubernetes.io/arch":     info.Machine,
-		"kubernetes.io/hostname": info.Node,
+		"kubernetes.io/hostname": info.Name,
 	}
 }

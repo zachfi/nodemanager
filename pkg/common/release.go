@@ -46,10 +46,8 @@ func readOSRelease(configfile string) map[string]string {
 	return ConfigParams
 }
 
-func getReleaseInfo(configfile string) ReleaseInfo {
+func getReleaseInfo() (r ReleaseInfo) {
 	releaseInfo := readOSRelease("/etc/os-release")
-
-	var r ReleaseInfo
 
 	if val, ok := releaseInfo["ID"]; ok {
 		r.ID = strings.ToLower(val)
@@ -59,7 +57,7 @@ func getReleaseInfo(configfile string) ReleaseInfo {
 		r.Name = val
 	}
 
-	return r
+	return
 }
 
 func GetSystemInfo(ctx context.Context) (sys *Sysinfo) {
@@ -67,7 +65,7 @@ func GetSystemInfo(ctx context.Context) (sys *Sysinfo) {
 	sys.Runtime.Arch = runtime.GOARCH
 	sys.Runtime.OS = runtime.GOOS
 
-	osrelease := getReleaseInfo("/etc/os-release")
+	osrelease := getReleaseInfo()
 	sys.OS.ID = osrelease.ID
 	sys.OS.Name = osrelease.Name
 

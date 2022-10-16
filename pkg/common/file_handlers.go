@@ -59,12 +59,12 @@ func GetFileHandler(ctx context.Context, tracer trace.Tracer) (FileHandler, erro
 	ctx, span := tracer.Start(ctx, "GetFileHandler")
 	defer span.End()
 
-	switch GetSystemInfo(ctx).OSRelease {
+	switch GetSystemInfo(ctx).OS.Release {
 	case "arch", "freebsd":
 		return &FileHandler_Common{tracer: tracer}, nil
 	}
 
-	return &FileHandler_Null{}, fmt.Errorf("file handler not available for system")
+	return &FileHandler_Null{}, fmt.Errorf("file handler not found for system")
 }
 
 type FileHandler_Null struct{}
