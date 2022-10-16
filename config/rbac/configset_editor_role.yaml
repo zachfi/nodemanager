@@ -4,21 +4,21 @@ kind: ClusterRole
 metadata:
   name: configset-editor-role
 rules:
-- apiGroups:
-  - common.znet
-  resources:
-  - configsets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - common.znet
-  resources:
-  - configsets/status
-  verbs:
-  - get
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - configsets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - configsets/status
+    verbs:
+      - get

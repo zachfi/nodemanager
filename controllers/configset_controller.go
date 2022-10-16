@@ -44,9 +44,9 @@ type ConfigSetReconciler struct {
 	Tracer trace.Tracer
 }
 
-//+kubebuilder:rbac:groups=common.znet,resources=configsets,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=common.znet,resources=configsets/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=common.znet,resources=configsets/finalizers,verbs=update
+//+kubebuilder:rbac:groups=common.nodemanager,resources=configsets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=common.nodemanager,resources=configsets/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=common.nodemanager,resources=configsets/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

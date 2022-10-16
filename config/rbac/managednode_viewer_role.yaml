@@ -4,17 +4,17 @@ kind: ClusterRole
 metadata:
   name: managednode-viewer-role
 rules:
-- apiGroups:
-  - common.znet
-  resources:
-  - managednodes
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - common.znet
-  resources:
-  - managednodes/status
-  verbs:
-  - get
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - managednodes
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - managednodes/status
+    verbs:
+      - get
