@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var poudriereLabelGate map[string]string = map[string]string{"poudriere.freebsd.znet/builder": "true"}
+var poudriereLabelGate map[string]string = map[string]string{"poudriere.freebsd.nodemanager/builder": "true"}
 
 // nodeLabelMatch returns an error if not all of the matched key/value pairs are not matched against the given nodes labels.  If the hostname for the node running this controller is not found, a new node is created.
 func nodeLabelMatch(ctx context.Context, log logr.Logger, r client.Reader, w client.Writer, req ctrl.Request, matchers map[string]string) error {

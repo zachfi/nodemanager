@@ -4,17 +4,17 @@ kind: ClusterRole
 metadata:
   name: configset-viewer-role
 rules:
-- apiGroups:
-  - common.znet
-  resources:
-  - configsets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - common.znet
-  resources:
-  - configsets/status
-  verbs:
-  - get
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - configsets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - configsets/status
+    verbs:
+      - get

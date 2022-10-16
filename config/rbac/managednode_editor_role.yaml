@@ -4,21 +4,21 @@ kind: ClusterRole
 metadata:
   name: managednode-editor-role
 rules:
-- apiGroups:
-  - common.znet
-  resources:
-  - managednodes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - common.znet
-  resources:
-  - managednodes/status
-  verbs:
-  - get
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - managednodes
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - common.nodemanager
+    resources:
+      - managednodes/status
+    verbs:
+      - get

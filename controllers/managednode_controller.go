@@ -40,9 +40,9 @@ type ManagedNodeReconciler struct {
 	Tracer trace.Tracer
 }
 
-//+kubebuilder:rbac:groups=common.znet,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=common.znet,resources=managednodes/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=common.znet,resources=managednodes/finalizers,verbs=update
+//+kubebuilder:rbac:groups=common.nodemanager,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=common.nodemanager,resources=managednodes/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=common.nodemanager,resources=managednodes/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
