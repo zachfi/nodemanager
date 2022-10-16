@@ -20,14 +20,14 @@ func GetPackageHandler(ctx context.Context, tracer trace.Tracer) (PackageHandler
 	ctx, span := tracer.Start(ctx, "GetPackageHandler")
 	defer span.End()
 
-	switch GetSystemInfo(ctx).OSRelease {
+	switch GetSystemInfo(ctx).OS.Release {
 	case "arch":
 		return &PackageHandler_Archlinux{tracer: tracer}, nil
 	case "freebsd":
 		return &PackageHandler_FreeBSD{tracer: tracer}, nil
 	}
 
-	return &PackageHandler_Null{}, fmt.Errorf("package handler not available for system")
+	return &PackageHandler_Null{}, fmt.Errorf("package handler not found for system")
 }
 
 type PackageHandler_Null struct{}

@@ -4,25 +4,34 @@ import (
 	"context"
 	"log"
 	"runtime"
-	"syscall"
+	"strings"
 
 	"github.com/go-ini/ini"
 )
 
 type Sysinfo struct {
-	Name      string
-	Node      string
-	Release   string
-	Version   string
-	Machine   string
-	Domain    string
-	OS        string
-	OSRelease string
+	Name    string
+	Kernel  string
+	Release string
+	Version string
+	Machine string
+	Domain  string
+	OS      struct {
+		Release string // uname -r
+		Name    string // os-release.NAME
+		ID      string // os-release.ID
+
+	}
 	Processor string
+	Runtime   struct {
+		Arch string
+		OS   string
+	}
 }
 
 type ReleaseInfo struct {
-	ID string
+	ID   string
+	Name string
 }
 
 func readOSRelease(configfile string) map[string]string {
@@ -39,35 +48,44 @@ func readOSRelease(configfile string) map[string]string {
 
 func getReleaseInfo(configfile string) ReleaseInfo {
 	releaseInfo := readOSRelease("/etc/os-release")
-	return ReleaseInfo{
-		ID: releaseInfo["ID"],
+
+	var r ReleaseInfo
+
+	if val, ok := releaseInfo["ID"]; ok {
+		r.ID = strings.ToLower(val)
 	}
+
+	if val, ok := releaseInfo["NAME"]; ok {
+		r.Name = val
+	}
+
+	return r
 }
 
-func GetSystemInfo(ctx context.Context) *Sysinfo {
+func GetSystemInfo(ctx context.Context) (sys *Sysinfo) {
+	//
+	sys.Runtime.Arch = runtime.GOARCH
+	sys.Runtime.OS = runtime.GOOS
+
 	osrelease := getReleaseInfo("/etc/os-release")
+	sys.OS.ID = osrelease.ID
+	sys.OS.Name = osrelease.Name
 
-	var utsname syscall.Utsname
-	_ = syscall.Uname(&utsname)
-	sys := Sysinfo{
-		Name:      utsnameToString(utsname.Sysname),
-		Node:      utsnameToString(utsname.Nodename),
-		Release:   utsnameToString(utsname.Release),
-		Version:   utsnameToString(utsname.Version),
-		Machine:   utsnameToString(utsname.Machine),
-		Domain:    utsnameToString(utsname.Domainname),
-		OS:        runtime.GOOS,
-		OSRelease: osrelease.ID,
-		// processor: getProcessorName(),
+	args := []string{"-snrm"}
+	output, _, err := runCommand("uname", args...)
+	if err != nil {
+		return
 	}
-	return &sys
-}
 
-func utsnameToString(unameArray [65]int8) string {
-	var byteString [65]byte
-	var indexLength int
-	for ; unameArray[indexLength] != 0; indexLength++ {
-		byteString[indexLength] = uint8(unameArray[indexLength])
+	fields := strings.Fields(output)
+	if len(fields) != 4 {
+		return
 	}
-	return string(byteString[:indexLength])
+
+	sys.Kernel = fields[0]
+	sys.Name = fields[1]
+	sys.OS.Release = fields[2]
+	sys.Machine = fields[3]
+
+	return
 }

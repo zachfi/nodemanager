@@ -40,14 +40,14 @@ func GetServiceHandler(ctx context.Context, tracer trace.Tracer) (ServiceHandler
 	ctx, span := tracer.Start(ctx, "GetServiceHandler")
 	defer span.End()
 
-	switch GetSystemInfo(ctx).OSRelease {
+	switch GetSystemInfo(ctx).OS.Release {
 	case "arch":
 		return &ServiceHandler_Systemd{tracer: tracer}, nil
 	case "freebsd":
 		return &ServiceHandler_FreeBSD{tracer: tracer}, nil
 	}
 
-	return &ServiceHandler_Null{}, fmt.Errorf("service handler not available for system")
+	return &ServiceHandler_Null{}, fmt.Errorf("service handler not found for system")
 }
 
 type ServiceHandler_Null struct{}
