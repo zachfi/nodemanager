@@ -40,7 +40,7 @@ func GetServiceHandler(ctx context.Context, tracer trace.Tracer) (ServiceHandler
 	ctx, span := tracer.Start(ctx, "GetServiceHandler")
 	defer span.End()
 
-	switch GetSystemInfo().OS.Release {
+	switch GetSystemInfo().OS.ID {
 	case "arch":
 		return &ServiceHandler_Systemd{tracer: tracer}, nil
 	case "freebsd":

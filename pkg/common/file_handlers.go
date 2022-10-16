@@ -59,7 +59,7 @@ func GetFileHandler(ctx context.Context, tracer trace.Tracer) (FileHandler, erro
 	_, span := tracer.Start(ctx, "GetFileHandler")
 	defer span.End()
 
-	switch GetSystemInfo().OS.Release {
+	switch GetSystemInfo().OS.ID {
 	case "arch", "freebsd":
 		return &FileHandler_Common{tracer: tracer}, nil
 	}

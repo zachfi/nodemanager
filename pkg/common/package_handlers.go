@@ -20,7 +20,7 @@ func GetPackageHandler(ctx context.Context, tracer trace.Tracer) (PackageHandler
 	_, span := tracer.Start(ctx, "GetPackageHandler")
 	defer span.End()
 
-	switch GetSystemInfo().OS.Release {
+	switch GetSystemInfo().OS.ID {
 	case "arch":
 		return &PackageHandler_Archlinux{tracer: tracer}, nil
 	case "freebsd":
