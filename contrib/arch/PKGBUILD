@@ -6,7 +6,7 @@ arch=(x86_64 armv7l)
 url="https://github.com/xaque208/$pkgname"
 license=('APACHE')
 makedepends=(git go)
-_commit="v0.1.11"
+_commit="v0.1.12"
 source=("git+$url#commit=$_commit")
 sha256sums=('SKIP')
 
