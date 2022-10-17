@@ -22,9 +22,10 @@ import (
 
 // ConfigSetSpec defines the desired state of ConfigSet
 type ConfigSetSpec struct {
-	Files    []File    `json:"files,omitempty"`
-	Packages []Package `json:"packages,omitempty"`
-	Services []Service `json:"services,omitempty"`
+	Files      []File    `json:"files,omitempty"`
+	Packages   []Package `json:"packages,omitempty"`
+	Services   []Service `json:"services,omitempty"`
+	Executions []Exec    `json:"executions,omitempty"`
 }
 
 type Package struct {
@@ -48,6 +49,12 @@ type File struct {
 	Owner    string `json:"owner,omitempty"`
 	Path     string `json:"path,omitempty"`
 	Template string `json:"template,omitempty"`
+}
+
+type Exec struct {
+	Command         string   `json:"command,omitempty"`
+	Args            []string `json:"args,omitempty"`
+	SusbscribeFiles []string `json:"subscribe_files,omitempty"`
 }
 
 // ConfigSetStatus defines the observed state of ConfigSet

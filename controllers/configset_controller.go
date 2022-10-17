@@ -106,6 +106,16 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	execHandler, err := common.GetExecHandler(ctx, r.Tracer)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	err = r.handleExecutions(ctx, log, execHandler, configSet.Spec.Executions, changedFiles)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -288,4 +298,32 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 	}
 
 	return
+}
+
+func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, log logr.Logger, handler common.ExecHandler, serviceSet []commonv1.Exec, changedFiles []string) error {
+	ctx, span := r.Tracer.Start(ctx, "handleExecutions")
+	defer span.End()
+
+	var totalErrs error
+	var runExec []commonv1.Exec
+
+	for _, cf := range changedFiles {
+		for _, exe := range serviceSet {
+			for _, sub := range exe.SusbscribeFiles {
+				if sub == cf {
+					runExec = append(runExec, exe)
+				}
+			}
+		}
+	}
+
+	for _, exe := range runExec {
+		_, _, err := handler.RunCommand(ctx, exe.Command, exe.Args...)
+		log.Info("running exec", "command", exe.Command)
+		if err != nil {
+			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
+		}
+	}
+
+	return totalErrs
 }
