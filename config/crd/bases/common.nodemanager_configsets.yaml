@@ -35,6 +35,21 @@ spec:
           spec:
             description: ConfigSetSpec defines the desired state of ConfigSet
             properties:
+              executions:
+                items:
+                  properties:
+                    args:
+                      items:
+                        type: string
+                      type: array
+                    command:
+                      type: string
+                    subscribe_files:
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: array
               files:
                 items:
                   properties:
