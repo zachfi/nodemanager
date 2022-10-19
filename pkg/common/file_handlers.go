@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"strconv"
 
+	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -84,27 +85,27 @@ func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group strin
 
 	u, err := user.Lookup(owner)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to lookup user")
 	}
 
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to convert uid string")
 	}
 
 	g, err := user.LookupGroup(group)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to lookup group")
 	}
 
 	gid, err := strconv.Atoi(g.Gid)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to convert gid string")
 	}
 
 	err = os.Chown(path, uid, gid)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to chown file")
 	}
 
 	return nil

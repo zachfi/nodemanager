@@ -254,6 +254,17 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 					}
 					changedFiles = append(changedFiles, file.Path)
 				}
+
+				err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
+				if err != nil {
+					return changedFiles, errors.Wrap(err, "failed to chown file")
+				}
+
+				err = handler.SetMode(ctx, file.Path, file.Mode)
+				if err != nil {
+					return changedFiles, errors.Wrap(err, "failed to set file mode")
+				}
+
 			}
 
 		case common.Directory:
