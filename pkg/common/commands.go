@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+
+	"github.com/pkg/errors"
 )
 
 func runCommand(command string, arg ...string) (string, int, error) {
@@ -16,13 +18,16 @@ func runCommand(command string, arg ...string) (string, int, error) {
 
 	err := cmd.Run()
 	if err != nil {
-		return out.String(), cmd.ProcessState.ExitCode(), fmt.Errorf("failed to execute %q: %w", command, err)
+		return stderr.String(), cmd.ProcessState.ExitCode(), fmt.Errorf("failed to execute %q %s: %w", command, arg, err)
 	}
 
 	return out.String(), cmd.ProcessState.ExitCode(), nil
 }
 
 func simpleRunCommand(command string, arg ...string) error {
-	_, _, err := runCommand(command, arg...)
+	out, _, err := runCommand(command, arg...)
+	if err != nil {
+		return errors.Wrap(err, out)
+	}
 	return err
 }
