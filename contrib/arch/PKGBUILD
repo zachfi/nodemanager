@@ -1,5 +1,5 @@
 pkgname=nodemanager
-pkgver=0.1.15
+pkgver=0.1.16
 pkgrel=1
 pkgdesc='A Kubernetes controller to manage nodes'
 arch=(x86_64 armv7l)
