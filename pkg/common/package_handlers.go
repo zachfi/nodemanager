@@ -73,7 +73,7 @@ type PackageHandler_Archlinux struct {
 func (h *PackageHandler_Archlinux) Install(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Install")
 	defer span.End()
-	return simpleRunCommand("/usr/bin/pacman", "-Sy", "--needed", name)
+	return simpleRunCommand("/usr/bin/pacman", "-Sy", "--needed", "--noconfirm", name)
 }
 
 func (h *PackageHandler_Archlinux) Remove(ctx context.Context, name string) error {
