@@ -61,6 +61,7 @@ func (h *PackageHandler_FreeBSD) Install(ctx context.Context, name string) error
 		}
 	}
 
+	h.logger.Info("installing package", "name", name)
 	return simpleRunCommand("pkg", "install", "-qy", name)
 }
 
@@ -92,6 +93,8 @@ type PackageHandler_Archlinux struct {
 func (h *PackageHandler_Archlinux) Install(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Install")
 	defer span.End()
+
+	h.logger.Info("installing package", "name", name)
 	return simpleRunCommand("/usr/bin/pacman", "-Sy", "--needed", "--noconfirm", name)
 }
 

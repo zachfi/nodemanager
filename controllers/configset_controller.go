@@ -150,7 +150,6 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, log logr.Log
 		switch pkg.Ensure {
 		case "installed":
 			if !currentlyInstalled(packages, pkg.Name) {
-				log.Info("installing package", "name", pkg.Name)
 				err := handler.Install(ctx, pkg.Name)
 				if err != nil {
 					return err
@@ -181,9 +180,44 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Log
 
 	for _, cf := range changedFiles {
 		for _, svc := range serviceSet {
-			for _, sub := range svc.SusbscribeFiles {
-				if sub == cf {
-					restartServices = append(restartServices, svc.Name)
+			// Only record services for restart that are supposed to be running
+			if svc.Ensure == common.Running.String() {
+				for _, sub := range svc.SusbscribeFiles {
+					if sub == cf {
+						restartServices = append(restartServices, svc.Name)
+					}
+				}
+			}
+		}
+	}
+
+	for _, svc := range serviceSet {
+		if svc.Enable {
+			err := handler.Enable(ctx, svc.Name)
+			if err != nil {
+				return errors.Wrap(err, "failed to enable service")
+			}
+		} else {
+			err := handler.Disable(ctx, svc.Name)
+			if err != nil {
+				return errors.Wrap(err, "failed to disable service")
+			}
+		}
+
+		status, _ := handler.Status(ctx, svc.Name)
+		switch svc.Ensure {
+		case common.Running.String():
+			if status != common.Running.String() {
+				err := handler.Start(ctx, svc.Name)
+				if err != nil {
+					return errors.Wrap(err, "failed to start service")
+				}
+			}
+		case common.Stopped.String():
+			if status != common.Stopped.String() {
+				err := handler.Stop(ctx, svc.Name)
+				if err != nil {
+					return errors.Wrap(err, "failed to stop service")
 				}
 			}
 		}
