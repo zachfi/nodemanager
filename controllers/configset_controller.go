@@ -76,7 +76,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
-	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer)
+	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer, log)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -86,7 +86,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	fileHandler, err := common.GetFileHandler(ctx, r.Tracer)
+	fileHandler, err := common.GetFileHandler(ctx, r.Tracer, log)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -96,7 +96,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	serviceHandler, err := common.GetServiceHandler(ctx, r.Tracer)
+	serviceHandler, err := common.GetServiceHandler(ctx, r.Tracer, log)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/go-logr/logr"
+	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -16,15 +18,17 @@ type PackageHandler interface {
 	List(context.Context) ([]string, error)
 }
 
-func GetPackageHandler(ctx context.Context, tracer trace.Tracer) (PackageHandler, error) {
+func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (PackageHandler, error) {
 	_, span := tracer.Start(ctx, "GetPackageHandler")
 	defer span.End()
 
+	logger := log.WithName("PackageHandler")
+
 	switch GetSystemInfo().OS.ID {
 	case "arch":
-		return &PackageHandler_Archlinux{tracer: tracer}, nil
+		return &PackageHandler_Archlinux{tracer: tracer, logger: logger}, nil
 	case "freebsd":
-		return &PackageHandler_FreeBSD{tracer: tracer}, nil
+		return &PackageHandler_FreeBSD{tracer: tracer, logger: logger}, nil
 	}
 
 	return &PackageHandler_Null{}, fmt.Errorf("package handler not found for system")
@@ -39,11 +43,24 @@ func (h *PackageHandler_Null) List(_ context.Context) ([]string, error)  { retur
 // FREEBSD
 type PackageHandler_FreeBSD struct {
 	tracer trace.Tracer
+	logger logr.Logger
 }
 
 func (h *PackageHandler_FreeBSD) Install(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Install")
 	defer span.End()
+
+	pkgs, err := h.List(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to list packages")
+	}
+
+	for _, p := range pkgs {
+		if p == name {
+			return nil
+		}
+	}
+
 	return simpleRunCommand("pkg", "install", "-qy", name)
 }
 
@@ -52,6 +69,7 @@ func (h *PackageHandler_FreeBSD) Remove(ctx context.Context, name string) error 
 	defer span.End()
 	return simpleRunCommand("pkg", "remove", "-qy", name)
 }
+
 func (h *PackageHandler_FreeBSD) List(ctx context.Context) ([]string, error) {
 	_, span := h.tracer.Start(ctx, "List")
 	defer span.End()
@@ -68,6 +86,7 @@ func (h *PackageHandler_FreeBSD) List(ctx context.Context) ([]string, error) {
 // ARCH
 type PackageHandler_Archlinux struct {
 	tracer trace.Tracer
+	logger logr.Logger
 }
 
 func (h *PackageHandler_Archlinux) Install(ctx context.Context, name string) error {

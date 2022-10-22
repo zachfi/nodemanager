@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"strconv"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -56,13 +57,15 @@ type FileHandler interface {
 	WriteTemplateFile(ctx context.Context, path, template string) error
 }
 
-func GetFileHandler(ctx context.Context, tracer trace.Tracer) (FileHandler, error) {
+func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (FileHandler, error) {
 	_, span := tracer.Start(ctx, "GetFileHandler")
 	defer span.End()
 
+	logger := log.WithName("FileHandler")
+
 	switch GetSystemInfo().OS.ID {
 	case "arch", "freebsd":
-		return &FileHandler_Common{tracer: tracer}, nil
+		return &FileHandler_Common{tracer: tracer, logger: logger}, nil
 	}
 
 	return &FileHandler_Null{}, fmt.Errorf("file handler not found for system")
@@ -77,6 +80,7 @@ func (h *FileHandler_Null) WriteTemplateFile(_ context.Context, _, _ string) err
 
 type FileHandler_Common struct {
 	tracer trace.Tracer
+	logger logr.Logger
 }
 
 func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group string) error {

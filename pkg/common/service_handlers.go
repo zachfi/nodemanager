@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -36,15 +37,17 @@ func (s ServiceStatus) String() string {
 	return "unknown"
 }
 
-func GetServiceHandler(ctx context.Context, tracer trace.Tracer) (ServiceHandler, error) {
+func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (ServiceHandler, error) {
 	ctx, span := tracer.Start(ctx, "GetServiceHandler")
 	defer span.End()
 
+	logger := log.WithName("PackageHandler")
+
 	switch GetSystemInfo().OS.ID {
 	case "arch":
-		return &ServiceHandler_Systemd{tracer: tracer}, nil
+		return &ServiceHandler_Systemd{tracer: tracer, logger: logger}, nil
 	case "freebsd":
-		return &ServiceHandler_FreeBSD{tracer: tracer}, nil
+		return &ServiceHandler_FreeBSD{tracer: tracer, logger: logger}, nil
 	}
 
 	return &ServiceHandler_Null{}, fmt.Errorf("service handler not found for system")
@@ -65,6 +68,7 @@ func (h *ServiceHandler_Null) Status(_ context.Context, _ string) (string, error
 // FREEBSD
 type ServiceHandler_FreeBSD struct {
 	tracer trace.Tracer
+	logger logr.Logger
 }
 
 func (h *ServiceHandler_FreeBSD) Enable(ctx context.Context, name string) error {
@@ -117,6 +121,7 @@ func (h *ServiceHandler_FreeBSD) Status(ctx context.Context, name string) (strin
 // LINUX
 type ServiceHandler_Systemd struct {
 	tracer trace.Tracer
+	logger logr.Logger
 }
 
 func (h *ServiceHandler_Systemd) Enable(ctx context.Context, name string) error {
