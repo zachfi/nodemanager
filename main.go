@@ -95,9 +95,11 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var otelEndpoint string
+	var orgID string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.StringVar(&otelEndpoint, "otel-endpoint", "tempo:4317", "The URL to use when sending traces")
+	flag.StringVar(&otelEndpoint, "otel-endpoint", "", "The URL to use when sending traces")
+	flag.StringVar(&orgID, "org-id", "", "The X-Scope-OrgID header to set when sending traces")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -160,12 +162,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	shutdownTracer, err := installOpenTelemetryTracer(otelEndpoint, setupLog)
-	if err != nil {
-		setupLog.Error(err, "error initializing tracer")
-		os.Exit(1)
+	if otelEndpoint != "" {
+		shutdownTracer, err := installOpenTelemetryTracer(otelEndpoint, orgID, setupLog)
+		if err != nil {
+			setupLog.Error(err, "error initializing tracer")
+			os.Exit(1)
+		}
+		defer shutdownTracer()
 	}
-	defer shutdownTracer()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
@@ -174,7 +178,7 @@ func main() {
 	}
 }
 
-func installOpenTelemetryTracer(endpoint string, log logr.Logger) (func(), error) {
+func installOpenTelemetryTracer(endpoint string, orgID string, log logr.Logger) (func(), error) {
 	if endpoint == "" {
 		return func() {}, nil
 	}
@@ -199,7 +203,13 @@ func installOpenTelemetryTracer(endpoint string, log logr.Logger) (func(), error
 		return nil, errors.Wrap(err, "failed to dial otel grpc")
 	}
 
-	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
+	options := []otlptracegrpc.Option{otlptracegrpc.WithGRPCConn(conn)}
+	if orgID != "" {
+		options = append(options,
+			otlptracegrpc.WithHeaders(map[string]string{"X-Scope-OrgID": orgID}))
+	}
+
+	traceExporter, err := otlptracegrpc.New(ctx, options...)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to creat trace exporter")
 	}
