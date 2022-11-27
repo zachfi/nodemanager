@@ -15,8 +15,7 @@ builds:
     goarm:
       - 7
     goamd64:
-      - v2
-      - v3
+      - v1
     goarch:
       - amd64
       - arm
@@ -25,7 +24,7 @@ builds:
       - goos: freebsd
         goarch: arm
       - goos: freebsd
-        goarch: arm
+        goarch: arm64
 archives:
   - replacements:
       darwin: Darwin
@@ -169,7 +168,7 @@ aurs:
 
     # If you build for multiple GOAMD64 versions, you may use this to choose which one to use.
     # Defaults to `v1`.
-    goamd64: v2
+    goamd64: v1
 
     # The value to be passed to `GIT_SSH_COMMAND`.
     # This is mainly used to specify the SSH private key used to pull/push to
