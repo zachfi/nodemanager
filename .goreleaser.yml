@@ -1,0 +1,186 @@
+# This is an example .goreleaser.yml file with some sensible defaults.
+# Make sure to check the documentation at https://goreleaser.com
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod tidy
+    # you may remove this if you don't need go generate
+    - go generate ./...
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - freebsd
+    goarm:
+      - 7
+    goamd64:
+      - v2
+      - v3
+    goarch:
+      - amd64
+      - arm
+      - arm64
+    ignore:
+      - goos: freebsd
+        goarch: arm
+      - goos: freebsd
+        goarch: arm
+archives:
+  - replacements:
+      darwin: Darwin
+      linux: Linux
+      windows: Windows
+      amd64: x86_64
+      freebsd: FreeBSD
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: '{{ incpatch .Version }}-next'
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+# .goreleaser.yaml
+aurs:
+  - # The package name.
+    #
+    # Defaults to the Project Name with a -bin suffix.
+    #
+    # Note that since this integration does not create a PKGBUILD to build from
+    # source, per Arch's guidelines.
+    # That said, GoReleaser will enforce a `-bin` suffix if its not present.
+    name: nodemanager
+
+    # Artifact IDs to filter for.
+    #
+    # Defaults to empty, which includes all artifacts.
+    ids:
+      []
+      # - nodemanager
+
+    # Your app's homepage.
+    # Default is empty.
+    homepage: 'https://github.com/xaque208/nodemanager'
+
+    # Template of your app's description.
+    # Default is empty.
+    description: 'A Kubernetes controller to manage node OS configuration'
+
+    # The maintainers of the package.
+    # Defaults to empty.
+    maintainers:
+      []
+      # - 'Zach Leslie <>'
+
+    # The contributors of the package.
+    # Defaults to empty.
+    contributors: []
+
+    # SPDX identifier of your app's license.
+    # Default is empty.
+    license: 'APACHE'
+
+    # The SSH private key that should be used to commit to the Git repository.
+    # This can either be a path or the key contents.
+    #
+    # WARNING: do not expose your private key in the configuration file!
+    # private_key: '{{ .Env.AUR_KEY }}'
+
+    # The AUR Git URL for this package.
+    # Defaults to empty
+    # Publish is skipped if empty.
+    # git_url: 'ssh://aur@aur.archlinux.org/nodemanager.git'
+
+    # Setting this will prevent goreleaser to actually try to commit the updated
+    # formula - instead, the formula file will be stored on the dist folder only,
+    # leaving the responsibility of publishing it to the user.
+    #
+    # If set to auto, the release will not be uploaded to the AUR repo
+    # in case there is an indicator for prerelease in the tag e.g. v1.0.0-rc1.
+    #
+    # Default is false.
+    skip_upload: true
+
+    # List of additional packages that the software provides the features of.
+    #
+    # Defaults to the project name.
+    provides:
+      - nodemanager
+
+    # List of packages that conflict with, or cause problems with the package.
+    #
+    # Defaults to the project name.
+    conflicts:
+      - nodemanager
+
+    # List of packages that must be installed to install this.
+    #
+    # Defaults to empty.
+    depends:
+      []
+      # - curl
+
+    # List of packages that are not needed for the software to function,
+    # but provide additional features.
+    #
+    # Must be in the format `package: short description of the extra functionality`.
+    #
+    # Defaults to empty.
+    optdepends:
+      []
+      # - 'wget: for downloading things'
+
+    # List of files that can contain user-made changes and should be preserved
+    # during package upgrades and removals.
+    #
+    # Default: empty.
+    # Since: v1.12
+    backup:
+      []
+      # - /etc/foo.conf
+
+    # Custom package instructions.
+    #
+    # Defaults to `install -Dm755 "./PROJECT_NAME" "${pkgdir}/usr/bin/PROJECT_NAME",
+    # which is not always correct.
+    #
+    # We recommend you override this, installing the binary, license and
+    # everything else your package needs.
+    package: |-
+      ls
+      # bin
+      install -Dm755 "./${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+
+      install -Dm644 contrib/arch/${pkgname}.service "${pkgdir}/usr/lib/systemd/system/${pkgname}.service"
+
+    # Git author used to commit to the repository.
+    # Defaults are shown below.
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+
+    # Commit message template.
+    # Defaults to `Update to {{ .Tag }}`.
+    commit_msg_template: 'pkgbuild updates'
+
+    # If you build for multiple GOAMD64 versions, you may use this to choose which one to use.
+    # Defaults to `v1`.
+    goamd64: v2
+
+    # The value to be passed to `GIT_SSH_COMMAND`.
+    # This is mainly used to specify the SSH private key used to pull/push to
+    # the Git URL.
+    #
+    # Defaults to `ssh -i {{ .KeyPath }} -o StrictHostKeyChecking=accept-new -F /dev/null`.
+    git_ssh_command: 'ssh -i {{ .Env.KEY }} -o SomeOption=yes'
+
+    # Template for the url which is determined by the given Token
+    # (github, gitlab or gitea).
+    #
+    # Default depends on the client.
+    # https://github.com/xaque208/znet/releases/download/v0.31.5/znet_0.31.5_FreeBSD_x86_64.tar.gz
+    url_template: 'https://github.com/xaque208/nodemanager/releases/download/{{ .Tag }}/{{ .ArtifactName }}'
