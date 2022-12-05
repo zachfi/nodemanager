@@ -27,7 +27,9 @@ import (
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -71,9 +73,14 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	err := nodeLabelMatch(rctx, log, r, r, req, configSet.Labels)
+	node, err := createOrGetNode(ctx, log, r, r, req)
 	if err != nil {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, err
+	}
+
+	err = nodeLabelMatch(ctx, log, node, configSet.Labels)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer, log)
@@ -91,7 +98,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	changedFiles, err := r.handleFileSet(ctx, log, fileHandler, configSet.Spec.Files)
+	changedFiles, err := r.handleFileSet(ctx, log, req.Namespace, fileHandler, configSet.Spec.Files, node)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -235,7 +242,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Log
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger, handler common.FileHandler, fileSet []commonv1.File) (changedFiles []string, err error) {
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger, namespace string, handler common.FileHandler, fileSet []commonv1.File, node commonv1.ManagedNode) (changedFiles []string, err error) {
 	ctx, span := r.Tracer.Start(ctx, "handleFileSet")
 	defer span.End()
 
@@ -253,52 +260,32 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 
 		switch ensure {
 		case common.File:
-			if file.Content != "" {
-				// Determine the sha of the content
-				var b bytes.Buffer
-				_, err = b.WriteString(file.Content)
+			// If we have a template, let's set the content based on the rendered template.
+			if file.Template != "" {
+				data, err := r.collectData(ctx, log, namespace, file, node)
 				if err != nil {
 					return changedFiles, err
 				}
 
-				chsh := sha256.New()
-				contentHash := fmt.Sprintf("%x", chsh.Sum(b.Bytes()))
-
-				if _, err := os.Stat(file.Path); os.IsNotExist(err) {
-					_, err := os.Create(file.Path)
-					if err != nil {
-						return changedFiles, errors.Wrap(err, "failed to create new file")
-					}
-				}
-
-				// Read the sha of the file
-				fileBytes, err := os.ReadFile(file.Path)
+				content, err := r.buildTemplate(ctx, log, file, data)
 				if err != nil {
-					return changedFiles, errors.Wrap(err, "failed to read file")
+					return changedFiles, err
 				}
-				fhsh := sha256.New()
-				fileHash := fmt.Sprintf("%x", fhsh.Sum(fileBytes))
 
-				// Write only when necessary
-				if contentHash != fileHash {
-					log.Info(fmt.Sprintf("writing file %q", file.Path))
-					err := handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
-					if err != nil {
-						return changedFiles, err
-					}
+				if len(content) > 0 {
+					file.Content = string(content)
+				}
+			}
+
+			if file.Content != "" {
+				err, changed := r.writeFileContent(ctx, file, log, handler)
+				if err != nil {
+					return changedFiles, err
+				}
+
+				if changed {
 					changedFiles = append(changedFiles, file.Path)
 				}
-
-				err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
-				if err != nil {
-					return changedFiles, errors.Wrap(err, "failed to chown file")
-				}
-
-				err = handler.SetMode(ctx, file.Path, file.Mode)
-				if err != nil {
-					return changedFiles, errors.Wrap(err, "failed to set file mode")
-				}
-
 			}
 
 		case common.Directory:
@@ -371,4 +358,99 @@ func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, log logr.Log
 	}
 
 	return totalErrs
+}
+
+func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, namespace string, file commonv1.File, node commonv1.ManagedNode) (data Data, err error) {
+	var nodeData NodeData
+	nodeData.Labels = node.Labels
+
+	var secrets []corev1.Secret
+	for _, s := range file.SecretRefs {
+		var secret corev1.Secret
+		nsn := types.NamespacedName{
+			Name:      s,
+			Namespace: namespace,
+		}
+		if err := r.Get(ctx, nsn, &secret); err != nil {
+			return Data{}, err
+		}
+
+		secrets = append(secrets, secret)
+	}
+	nodeData.Secrets = secrets
+
+	var configMaps []corev1.ConfigMap
+	for _, c := range file.ConfigMapRefs {
+		var configMap corev1.ConfigMap
+
+		nsn := types.NamespacedName{
+			Name:      c,
+			Namespace: namespace,
+		}
+		if err := r.Get(ctx, nsn, &configMap); err != nil {
+			return Data{}, err
+		}
+
+		configMaps = append(configMaps, configMap)
+	}
+	nodeData.ConfigMaps = configMaps
+
+	data.Node = nodeData
+
+	return data, nil
+}
+
+func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger, file commonv1.File, data Data) (content []byte, err error) {
+
+	return
+}
+
+// writeFileContent is responsible for ensuring a file on disk matches the desired state.
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, log logr.Logger, handler common.FileHandler) (err error, changed bool) {
+	// Determine the sha of the content
+	var b bytes.Buffer
+	_, err = b.WriteString(file.Content)
+	if err != nil {
+		return err, changed
+	}
+
+	chsh := sha256.New()
+	contentHash := fmt.Sprintf("%x", chsh.Sum(b.Bytes()))
+
+	if _, err = os.Stat(file.Path); os.IsNotExist(err) {
+		_, err = os.Create(file.Path)
+		if err != nil {
+			return errors.Wrap(err, "failed to create new file"), changed
+		}
+	}
+
+	// Read the sha of the file
+	fileBytes, err := os.ReadFile(file.Path)
+	if err != nil {
+		return errors.Wrap(err, "failed to read file"), changed
+	}
+	fhsh := sha256.New()
+	fileHash := fmt.Sprintf("%x", fhsh.Sum(fileBytes))
+
+	// Write only when necessary
+	if contentHash != fileHash {
+		log.Info(fmt.Sprintf("writing file %q", file.Path))
+		err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
+		if err != nil {
+			return err, changed
+		}
+		changed = true
+	}
+
+	err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
+	if err != nil {
+		return errors.Wrap(err, "failed to chown file"), changed
+	}
+
+	err = handler.SetMode(ctx, file.Path, file.Mode)
+	if err != nil {
+		return errors.Wrap(err, "failed to set file mode"), changed
+	}
+
+	return nil, changed
 }

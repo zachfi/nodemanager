@@ -41,14 +41,16 @@ type Service struct {
 }
 
 type File struct {
-	Content  string `json:"content,omitempty"`
-	Ensure   string `json:"ensure,omitempty"`
-	Target   string `json:"target,omitempty"`
-	Group    string `json:"group,omitempty"`
-	Mode     string `json:"mode,omitempty"`
-	Owner    string `json:"owner,omitempty"`
-	Path     string `json:"path,omitempty"`
-	Template string `json:"template,omitempty"`
+	Content       string   `json:"content,omitempty"`
+	Ensure        string   `json:"ensure,omitempty"`
+	Target        string   `json:"target,omitempty"`
+	Group         string   `json:"group,omitempty"`
+	Mode          string   `json:"mode,omitempty"`
+	Owner         string   `json:"owner,omitempty"`
+	Path          string   `json:"path,omitempty"`
+	Template      string   `json:"template,omitempty"`
+	SecretRefs    []string `json:"secretRefs,omitempty"`
+	ConfigMapRefs []string `json:"configMapRefs,omitempty"`
 }
 
 type Exec struct {
