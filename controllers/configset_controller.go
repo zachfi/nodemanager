@@ -20,8 +20,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
@@ -78,7 +80,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	err = nodeLabelMatch(ctx, log, node, configSet.Labels)
+	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -401,6 +403,44 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 }
 
 func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger, file commonv1.File, data Data) (content []byte, err error) {
+	// echo '{"foo": {"foo": "bar"}}' | gomplate -i '{{(ds "data").foo.foo}}' -d data=stdin:///foo.json
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	command := "gomplate"
+	arg := []string{
+		"-i",
+		file.Template,
+		"-d",
+		"data=stdin:///data.json",
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd := exec.Command(command, arg...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	in, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = in.Write(b)
+	if err != nil {
+		return nil, err
+	}
+
+	err = cmd.Run()
+	if err != nil {
+		return nil, errors.Wrap(err, fmt.Sprintf("failed to execute %q: %s", command, stderr.String()))
+	}
+
+	content = stdout.Bytes()
 
 	return
 }

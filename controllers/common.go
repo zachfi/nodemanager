@@ -55,7 +55,7 @@ func createOrGetNode(ctx context.Context, log logr.Logger, r client.Reader, w cl
 }
 
 // nodeLabelMatch returns an error if not all of the matched key/value pairs are not matched against the given nodes labels.  If the hostname for the node running this controller is not found, a new node is created.
-func nodeLabelMatch(ctx context.Context, log logr.Logger, node commonv1.ManagedNode, matchers map[string]string) error {
+func nodeLabelMatch(node commonv1.ManagedNode, matchers map[string]string) error {
 	if matchAllLabels(node.Labels, matchers) {
 		return nil
 	}
