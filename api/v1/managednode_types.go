@@ -20,6 +20,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type SecureShellFingerprintAlgo int64
+
+const (
+	Reserved SecureShellFingerprintAlgo = iota
+	RSA
+	DSA
+	ECDSA
+	Ed25519
+	Unknown
+	Ed448
+)
+
+type SecureShellFingerprintHash struct {
+	SHA1   string `json:"sha1,omitempty"`
+	SHA256 string `json:"sha256,omitempty"`
+}
+
 // ManagedNodeSpec defines the desired state of ManagedNode
 type ManagedNodeSpec struct {
 	Domain string `json:"domain,omitempty"`
@@ -27,7 +44,8 @@ type ManagedNodeSpec struct {
 
 // ManagedNodeStatus defines the observed state of ManagedNode
 type ManagedNodeStatus struct {
-	Release string `json:"release,omitempty"`
+	Release                 string                                                    `json:"release,omitempty"`
+	SecureShellFingerprints map[SecureShellFingerprintAlgo]SecureShellFingerprintHash `json:"secure_shell_fingerprints,omitempty"`
 }
 
 //+kubebuilder:object:root=true
