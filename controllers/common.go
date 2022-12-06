@@ -60,7 +60,7 @@ func nodeLabelMatch(node commonv1.ManagedNode, matchers map[string]string) error
 		return nil
 	}
 
-	return fmt.Errorf("unmatched labels: %s to matchers: %s", node.Labels, matchers)
+	return errors.Wrap(ErrLabelsNotMatched, fmt.Sprintf(": %s to matchers: %s", node.Labels, matchers))
 }
 
 // createInitialNode will create a ManagedNode object.

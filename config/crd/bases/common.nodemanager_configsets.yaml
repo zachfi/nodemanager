@@ -53,6 +53,10 @@ spec:
               files:
                 items:
                   properties:
+                    configMapRefs:
+                      items:
+                        type: string
+                      type: array
                     content:
                       type: string
                     ensure:
@@ -65,6 +69,10 @@ spec:
                       type: string
                     path:
                       type: string
+                    secretRefs:
+                      items:
+                        type: string
+                      type: array
                     target:
                       type: string
                     template:

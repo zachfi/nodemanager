@@ -82,7 +82,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 
 	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
 
 	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer, log)
@@ -431,6 +431,11 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger
 	}
 
 	_, err = in.Write(b)
+	if err != nil {
+		return nil, err
+	}
+
+	err = in.Close()
 	if err != nil {
 		return nil, err
 	}
