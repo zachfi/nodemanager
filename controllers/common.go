@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -17,8 +16,8 @@ import (
 
 type NodeData struct {
 	Labels     map[string]string
-	ConfigMaps []corev1.ConfigMap
-	Secrets    []corev1.Secret
+	ConfigMaps map[string]string
+	Secrets    map[string][]byte
 }
 
 type Data struct {

@@ -366,7 +366,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 	var nodeData NodeData
 	nodeData.Labels = node.Labels
 
-	var secrets []corev1.Secret
+	secrets := map[string][]byte{}
 	for _, s := range file.SecretRefs {
 		var secret corev1.Secret
 		nsn := types.NamespacedName{
@@ -377,14 +377,15 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 			return Data{}, err
 		}
 
-		secrets = append(secrets, secret)
+		for k, v := range secret.Data {
+			secrets[k] = v
+		}
 	}
 	nodeData.Secrets = secrets
 
-	var configMaps []corev1.ConfigMap
+	configMaps := map[string]string{}
 	for _, c := range file.ConfigMapRefs {
 		var configMap corev1.ConfigMap
-
 		nsn := types.NamespacedName{
 			Name:      c,
 			Namespace: namespace,
@@ -393,7 +394,9 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 			return Data{}, err
 		}
 
-		configMaps = append(configMaps, configMap)
+		for k, v := range configMap.Data {
+			configMaps[k] = v
+		}
 	}
 	nodeData.ConfigMaps = configMaps
 
