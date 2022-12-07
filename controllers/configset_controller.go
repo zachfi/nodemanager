@@ -269,7 +269,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 					return changedFiles, err
 				}
 
-				content, err := r.buildTemplate(ctx, log, file, data)
+				content, err := r.buildTemplate(ctx, log, file.Template, data)
 				if err != nil {
 					return changedFiles, err
 				}
@@ -368,9 +368,16 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 
 	secrets := map[string][]byte{}
 	for _, s := range file.SecretRefs {
+
+		// Render the secretRef in case it is a template string
+		st, err := r.buildTemplate(ctx, log, s, Data{Node: nodeData})
+		if err != nil {
+			return Data{}, errors.Wrap(err, "failed to build template string rendering secretRef")
+		}
+
 		var secret corev1.Secret
 		nsn := types.NamespacedName{
-			Name:      s,
+			Name:      string(st),
 			Namespace: namespace,
 		}
 		if err := r.Get(ctx, nsn, &secret); err != nil {
@@ -405,7 +412,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 	return data, nil
 }
 
-func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger, file commonv1.File, data Data) (content []byte, err error) {
+func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger, template string, data Data) (content []byte, err error) {
 	// echo '{"foo": {"foo": "bar"}}' | gomplate -i '{{(ds "data").foo.foo}}' -d data=stdin:///foo.json
 
 	b, err := json.Marshal(data)
@@ -416,7 +423,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger
 	command := "gomplate"
 	arg := []string{
 		"-i",
-		file.Template,
+		template,
 		"-d",
 		"data=stdin:///data.json",
 	}
