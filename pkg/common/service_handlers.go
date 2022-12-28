@@ -15,6 +15,7 @@ type ServiceHandler interface {
 	Stop(context.Context, string) error
 	Restart(context.Context, string) error
 	Status(context.Context, string) (string, error)
+	SetArguments(context.Context, string, string) error
 }
 
 type ServiceStatus int64
@@ -38,10 +39,10 @@ func (s ServiceStatus) String() string {
 }
 
 func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (ServiceHandler, error) {
-	ctx, span := tracer.Start(ctx, "GetServiceHandler")
+	_, span := tracer.Start(ctx, "GetServiceHandler")
 	defer span.End()
 
-	logger := log.WithName("PackageHandler")
+	logger := log.WithName("ServiceHandler")
 
 	switch GetSystemInfo().OS.ID {
 	case "arch":

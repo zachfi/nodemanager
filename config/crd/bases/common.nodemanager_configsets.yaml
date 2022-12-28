@@ -91,6 +91,8 @@ spec:
               services:
                 items:
                   properties:
+                    arguments:
+                      type: string
                     enable:
                       type: boolean
                     ensure:

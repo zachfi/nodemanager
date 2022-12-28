@@ -38,6 +38,7 @@ type Service struct {
 	Ensure          string   `json:"ensure,omitempty"`
 	Name            string   `json:"name,omitempty"`
 	SusbscribeFiles []string `json:"subscribe_files,omitempty"`
+	Arguments       string   `json:"arguments,omitempty"`
 }
 
 type File struct {

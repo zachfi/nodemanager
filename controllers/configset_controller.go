@@ -213,6 +213,13 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Log
 			}
 		}
 
+		if svc.Arguments != "" {
+			err := handler.SetArguments(ctx, svc.Name, svc.Arguments)
+			if err != nil {
+				return errors.Wrap(err, "failed to set service arguments")
+			}
+		}
+
 		status, _ := handler.Status(ctx, svc.Name)
 		switch svc.Ensure {
 		case common.Running.String():
