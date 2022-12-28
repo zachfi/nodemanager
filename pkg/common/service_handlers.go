@@ -74,19 +74,22 @@ type ServiceHandler_FreeBSD struct {
 func (h *ServiceHandler_FreeBSD) Enable(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Enable")
 	defer span.End()
-	return simpleRunCommand("sysrc", name+"_enable=YES")
+	rcFile := fmt.Sprintf("/etc/rc.conf.d/%s", name)
+	return simpleRunCommand("sysrc", "-f", rcFile, name+"_enable=YES")
 }
 
 func (h *ServiceHandler_FreeBSD) Disable(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Disable")
 	defer span.End()
-	return simpleRunCommand("sysrc", name+"_enable=NO")
+	rcFile := fmt.Sprintf("/etc/rc.conf.d/%s", name)
+	return simpleRunCommand("sysrc", "-f", rcFile, name+"_enable=NO")
 }
 
 func (h *ServiceHandler_FreeBSD) SetArguments(ctx context.Context, name string, args string) error {
 	_, span := h.tracer.Start(ctx, "SetArguments")
 	defer span.End()
-	return simpleRunCommand("sysrc", fmt.Sprintf("%s_args=%q", name, args))
+	rcFile := fmt.Sprintf("/etc/rc.conf.d/%s", name)
+	return simpleRunCommand("sysrc", "-f", rcFile, fmt.Sprintf("%s_args=%q", name, args))
 }
 
 func (h *ServiceHandler_FreeBSD) Start(ctx context.Context, name string) error {
