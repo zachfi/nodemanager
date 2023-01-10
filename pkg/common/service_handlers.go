@@ -90,7 +90,7 @@ func (h *ServiceHandler_FreeBSD) SetArguments(ctx context.Context, name string, 
 	_, span := h.tracer.Start(ctx, "SetArguments")
 	defer span.End()
 	rcFile := fmt.Sprintf("/etc/rc.conf.d/%s", name)
-	return simpleRunCommand("sysrc", "-f", rcFile, fmt.Sprintf("%s_args=%q", name, args))
+	return simpleRunCommand("sysrc", "-f", rcFile, fmt.Sprintf("%s_args=%s", name, args))
 }
 
 func (h *ServiceHandler_FreeBSD) Start(ctx context.Context, name string) error {
