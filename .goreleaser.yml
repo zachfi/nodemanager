@@ -63,7 +63,7 @@ aurs:
 
     # Your app's homepage.
     # Default is empty.
-    homepage: 'https://github.com/xaque208/nodemanager'
+    homepage: 'https://github.com/zachfi/nodemanager'
 
     # Template of your app's description.
     # Default is empty.
@@ -181,5 +181,5 @@ aurs:
     # (github, gitlab or gitea).
     #
     # Default depends on the client.
-    # https://github.com/xaque208/znet/releases/download/v0.31.5/znet_0.31.5_FreeBSD_x86_64.tar.gz
-    url_template: 'https://github.com/xaque208/nodemanager/releases/download/{{ .Tag }}/{{ .ArtifactName }}'
+    # https://github.com/zachfi/znet/releases/download/v0.31.5/znet_0.31.5_FreeBSD_x86_64.tar.gz
+    url_template: 'https://github.com/zachfi/nodemanager/releases/download/{{ .Tag }}/{{ .ArtifactName }}'
