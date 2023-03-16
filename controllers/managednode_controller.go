@@ -49,6 +49,7 @@ type ManagedNodeReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.2/pkg/reconcile
 func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	var err error
 	log := log.FromContext(rctx)
 
 	attributes := []attribute.KeyValue{
@@ -57,7 +58,13 @@ func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request
 	}
 
 	ctx, span := r.Tracer.Start(rctx, "Reconcile", trace.WithAttributes(attributes...))
-	defer span.End()
+
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	hostname, err := os.Hostname()
 	if err != nil {

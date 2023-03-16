@@ -17,16 +17,13 @@ limitations under the License.
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
-	"github.com/go-logr/logr"
-	"github.com/pkg/errors"
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,17 +34,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 
-	"google.golang.org/grpc"
+	commonv1 "github.com/zachfi/nodemanager/api/v1"
+	"github.com/zachfi/nodemanager/controllers"
 
-	commonv1 "github.com/xaque208/nodemanager/api/v1"
-	"github.com/xaque208/nodemanager/controllers"
 	//+kubebuilder:scaffold:imports
+
+	"github.com/go-kit/log"
+	"github.com/zachfi/zkit/pkg/tracing"
 )
 
 // var needs to be used instead of const as ldflags is used to fill this
@@ -96,10 +90,12 @@ func main() {
 	var probeAddr string
 	var otelEndpoint string
 	var orgID string
+	var namespace string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.StringVar(&otelEndpoint, "otel-endpoint", "", "The URL to use when sending traces")
 	flag.StringVar(&orgID, "org-id", "", "The X-Scope-OrgID header to set when sending traces")
+	flag.StringVar(&namespace, "namespace", "nodemanager", "The namespace to operate within")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -118,6 +114,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "39b18fec.nodemanager",
+		Namespace:              namespace,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -163,7 +160,15 @@ func main() {
 	}
 
 	if otelEndpoint != "" {
-		shutdownTracer, err := installOpenTelemetryTracer(otelEndpoint, orgID, setupLog)
+		shutdownTracer, err := tracing.InstallOpenTelemetryTracer(
+			&tracing.Config{
+				OtelEndpoint: otelEndpoint,
+				OrgID:        orgID,
+			},
+			log.NewLogfmtLogger(os.Stderr),
+			"nodemanager",
+			versionString(),
+		)
 		if err != nil {
 			setupLog.Error(err, "error initializing tracer")
 			os.Exit(1)
@@ -176,64 +181,4 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
-}
-
-func installOpenTelemetryTracer(endpoint string, orgID string, log logr.Logger) (func(), error) {
-	if endpoint == "" {
-		return func() {}, nil
-	}
-
-	log.Info("initialising OpenTelemetry tracer", "endpoint", endpoint)
-
-	ctx := context.Background()
-
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String("nodemanager"),
-			semconv.ServiceVersionKey.String(versionString()),
-		),
-		resource.WithHost(),
-	)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to initialize trace resuorce")
-	}
-
-	conn, err := grpc.DialContext(ctx, endpoint, grpc.WithInsecure())
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to dial otel grpc")
-	}
-
-	options := []otlptracegrpc.Option{otlptracegrpc.WithGRPCConn(conn)}
-	if orgID != "" {
-		options = append(options,
-			otlptracegrpc.WithHeaders(map[string]string{"X-Scope-OrgID": orgID}))
-	}
-
-	traceExporter, err := otlptracegrpc.New(ctx, options...)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to creat trace exporter")
-	}
-
-	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
-	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithResource(res),
-		sdktrace.WithSpanProcessor(bsp),
-	)
-
-	otel.SetTracerProvider(tracerProvider)
-
-	// set global propagator to tracecontext (the default is no-op).
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-
-	shutdown := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := tracerProvider.Shutdown(ctx); err != nil {
-			log.Error(err, "OpenTelemetry trace provider failed to shutdown")
-			os.Exit(1)
-		}
-	}
-
-	return shutdown, nil
 }
