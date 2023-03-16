@@ -22,14 +22,15 @@ import (
 	"os"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	commonv1 "github.com/xaque208/nodemanager/api/v1"
-	"github.com/xaque208/nodemanager/pkg/common"
+	commonv1 "github.com/zachfi/nodemanager/api/v1"
+	"github.com/zachfi/nodemanager/pkg/common"
 )
 
 // ManagedNodeReconciler reconciles a ManagedNode object

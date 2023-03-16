@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -19,8 +21,15 @@ type PackageHandler interface {
 }
 
 func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (PackageHandler, error) {
+	var err error
 	_, span := tracer.Start(ctx, "GetPackageHandler")
 	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	logger := log.WithName("PackageHandler")
 
@@ -50,6 +59,8 @@ func (h *PackageHandler_FreeBSD) Install(ctx context.Context, name string) error
 	_, span := h.tracer.Start(ctx, "Install")
 	defer span.End()
 
+	span.SetAttributes(attribute.String("name", name))
+
 	pkgs, err := h.List(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to list packages")
@@ -61,13 +72,17 @@ func (h *PackageHandler_FreeBSD) Install(ctx context.Context, name string) error
 		}
 	}
 
+	span.SetAttributes(attribute.Bool("install", true))
 	h.logger.Info("installing package", "name", name)
+
 	return simpleRunCommand("pkg", "install", "-qy", name)
 }
 
 func (h *PackageHandler_FreeBSD) Remove(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Remove")
 	defer span.End()
+	span.SetAttributes(attribute.Bool("remove", true))
+	h.logger.Info("removing package", "name", name)
 	return simpleRunCommand("pkg", "remove", "-qy", name)
 }
 

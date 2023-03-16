@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -12,8 +13,15 @@ type ExecHandler interface {
 }
 
 func GetExecHandler(ctx context.Context, tracer trace.Tracer) (ExecHandler, error) {
+	var err error
 	_, span := tracer.Start(ctx, "GetExecHandler")
 	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	switch GetSystemInfo().OS.ID {
 	case "arch", "freebsd":

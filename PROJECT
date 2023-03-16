@@ -1,25 +1,25 @@
-domain: xaque208
+domain: zachfi
 layout:
 - go.kubebuilder.io/v3
 projectName: nodemanager
-repo: github.com/xaque208/nodemanager
+repo: github.com/zachfi/nodemanager
 resources:
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: xaque208
+  domain: zachfi
   group: common
   kind: ConfigSet
-  path: github.com/xaque208/nodemanager/api/v1
+  path: github.com/zachfi/nodemanager/api/v1
   version: v1
 - api:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: xaque208
+  domain: zachfi
   group: common
   kind: ManagedNode
-  path: github.com/xaque208/nodemanager/api/v1
+  path: github.com/zachfi/nodemanager/api/v1
   version: v1
 version: "3"

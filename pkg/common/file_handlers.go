@@ -9,6 +9,8 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -58,8 +60,14 @@ type FileHandler interface {
 }
 
 func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (FileHandler, error) {
+	var err error
 	_, span := tracer.Start(ctx, "GetFileHandler")
-	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	logger := log.WithName("FileHandler")
 
@@ -84,8 +92,18 @@ type FileHandler_Common struct {
 }
 
 func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group string) error {
+	var err error
 	_, span := h.tracer.Start(ctx, "Chown")
-	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	span.SetAttributes(attribute.String("path", path))
+	span.SetAttributes(attribute.String("owner", owner))
+	span.SetAttributes(attribute.String("group", group))
 
 	u, err := user.Lookup(owner)
 	if err != nil {
@@ -116,8 +134,17 @@ func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group strin
 }
 
 func (h *FileHandler_Common) SetMode(ctx context.Context, path, mode string) error {
+	var err error
 	_, span := h.tracer.Start(ctx, "SetMode")
-	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	span.SetAttributes(attribute.String("path", path))
+	span.SetAttributes(attribute.String("mode", mode))
 
 	fileMode, err := GetFileModeFromString(ctx, mode)
 	if err != nil {
@@ -133,8 +160,16 @@ func (h *FileHandler_Common) SetMode(ctx context.Context, path, mode string) err
 }
 
 func (h *FileHandler_Common) WriteContentFile(ctx context.Context, path string, bytes []byte) error {
+	var err error
 	_, span := h.tracer.Start(ctx, "WriteContentFile")
-	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	span.SetAttributes(attribute.String("path", path))
 
 	f, err := os.Create(path)
 	if err != nil {
@@ -151,8 +186,16 @@ func (h *FileHandler_Common) WriteContentFile(ctx context.Context, path string, 
 }
 
 func (h *FileHandler_Common) WriteTemplateFile(ctx context.Context, path, template string) error {
+	var err error
 	_, span := h.tracer.Start(ctx, "WriteTemplateFile")
-	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	span.SetAttributes(attribute.String("path", path))
 
 	return nil
 }

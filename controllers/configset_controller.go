@@ -28,6 +28,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,9 +37,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	commonv1 "github.com/xaque208/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/v1"
 
-	"github.com/xaque208/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/common"
 )
 
 // ConfigSetReconciler reconciles a ConfigSet object
@@ -58,6 +59,7 @@ type ConfigSetReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.2/pkg/reconcile
 func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	var err error
 	log := log.FromContext(rctx)
 
 	attributes := []attribute.KeyValue{
@@ -66,12 +68,16 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 	}
 
 	ctx, span := r.Tracer.Start(rctx, "Reconcile", trace.WithAttributes(attributes...))
-	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	var configSet commonv1.ConfigSet
-	if err := r.Get(ctx, req.NamespacedName, &configSet); err != nil {
+	if err = r.Get(ctx, req.NamespacedName, &configSet); err != nil {
 		log.Error(err, "failed to get resource")
-
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 

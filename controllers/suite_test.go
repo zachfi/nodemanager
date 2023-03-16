@@ -31,7 +31,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	commonv1 "github.com/xaque208/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/v1"
 	//+kubebuilder:scaffold:imports
 )
 

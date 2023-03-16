@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	commonv1 "github.com/xaque208/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/v1"
 
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"

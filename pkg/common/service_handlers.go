@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -39,8 +40,15 @@ func (s ServiceStatus) String() string {
 }
 
 func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (ServiceHandler, error) {
+	var err error
 	_, span := tracer.Start(ctx, "GetServiceHandler")
 	defer span.End()
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
 
 	logger := log.WithName("ServiceHandler")
 
