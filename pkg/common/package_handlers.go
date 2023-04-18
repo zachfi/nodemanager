@@ -89,7 +89,7 @@ func (h *PackageHandler_FreeBSD) Remove(ctx context.Context, name string) error 
 func (h *PackageHandler_FreeBSD) List(ctx context.Context) ([]string, error) {
 	_, span := h.tracer.Start(ctx, "List")
 	defer span.End()
-	output, _, err := runCommand("pkg", "query", "-a", "'%n'")
+	output, _, err := runCommand("pkg", "query", "-a", "%n")
 	if err != nil {
 		return []string{}, err
 	}
