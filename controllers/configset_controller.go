@@ -88,6 +88,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 
 	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
+		err = nil                 // for the span defer
 		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
 
