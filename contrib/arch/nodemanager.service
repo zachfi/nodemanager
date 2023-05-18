@@ -3,6 +3,7 @@ Description=Kubernetes Node Manager
 
 [Service]
 Type=simple
+Restart=always
 PIDFile=/var/run/nodemanager/nodemanager.pid
 ExecStart=/usr/bin/nodemanager
 
