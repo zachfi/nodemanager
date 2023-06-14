@@ -4,13 +4,30 @@ An approach to managing node configurations using Kubernetes resources.
 
 ## Description
 
-This controller can run either on cluster nodes, or on off-cluster nodes and features a small package/file/service resource footprint to allow a collections of ConfigSet resources to manage portions of the node configuration.
+This controller can run either on cluster nodes, or on off-cluster nodes and
+features a small package/file/service resource footprint to allow a collections
+of `ConfigSet` resources to manage portions of the node configuration, based on
+matching labels in the `ConfigSet` resources to the `ManagedNode` resources for
+the instance of the controller.  This allows a very flexible configuration
+management approach using Kubernetes to store configuration data to be
+referenced from `Secret` or `ConfigMap` and templated into files on disk of the
+nodes.  Services can "subscribe" to changes on files, so that they are
+restarted when details changed.
 
-This is a work in progress, but not at all complete configuration management replacement.
+In a small lab environment, this has been very productive in capturing all of
+the various configuration details of the Kubernetes nodes, as well as
+supporting nodes that are not running in the cluster, such as FreeBSD storage
+nodes.  This includes configuration details like authentication, package
+installation, ssh configuration, NTP configuration, etc.
 
-Currently targeted at support are Archlinux and FreeBSD, but the interfaces exist in such a way to allow expanded operating system support.
+Currently targeted to for support in this project are Archlinux and FreeBSD,
+but the interfaces exist in such a way to allow expanded operating system
+support quite easily.  Contributions welcome.
 
-Additinally, currently only amd64 architectures are built, with the expecation of arm packages at some point in the future.
+Additionally, currently only `amd64` architectures are built, with the
+expectation of `arm` packages at some point in the future.
+
+This project is built using `kubebuilder`, continue reading to get started.
 
 ## Getting Started
 
