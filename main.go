@@ -35,8 +35,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 
-	commonv1 "github.com/zachfi/nodemanager/api/v1"
-	"github.com/zachfi/nodemanager/controllers"
+	commonv1 "github.com/zachfi/nodemanager/apis/common/v1"
+	commoncontrollers "github.com/zachfi/nodemanager/controllers/common"
 
 	//+kubebuilder:scaffold:imports
 
@@ -132,7 +132,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.ConfigSetReconciler{
+	if err = (&commoncontrollers.ConfigSetReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Tracer: otel.Tracer("ConfigSet"),
@@ -140,7 +140,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
 	}
-	if err = (&controllers.ManagedNodeReconciler{
+	if err = (&commoncontrollers.ManagedNodeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 		Tracer: otel.Tracer("ManagedNode"),

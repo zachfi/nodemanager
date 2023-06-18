@@ -1,6 +1,7 @@
 domain: zachfi
 layout:
 - go.kubebuilder.io/v3
+multigroup: true
 projectName: nodemanager
 repo: github.com/zachfi/nodemanager
 resources:
@@ -11,7 +12,7 @@ resources:
   domain: zachfi
   group: common
   kind: ConfigSet
-  path: github.com/zachfi/nodemanager/api/v1
+  path: github.com/zachfi/nodemanager/apis/common/v1
   version: v1
 - api:
     crdVersion: v1
@@ -20,6 +21,6 @@ resources:
   domain: zachfi
   group: common
   kind: ManagedNode
-  path: github.com/zachfi/nodemanager/api/v1
+  path: github.com/zachfi/nodemanager/apis/common/v1
   version: v1
 version: "3"
