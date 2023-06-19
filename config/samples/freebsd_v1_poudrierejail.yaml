@@ -1,0 +1,12 @@
+apiVersion: freebsd.zachfi/v1
+kind: PoudriereJail
+metadata:
+  labels:
+    app.kubernetes.io/name: poudrierejail
+    app.kubernetes.io/instance: poudrierejail-sample
+    app.kubernetes.io/part-of: nodemanager
+    app.kuberentes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: nodemanager
+  name: poudrierejail-sample
+spec:
+  # TODO(user): Add fields here

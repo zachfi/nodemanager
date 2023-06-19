@@ -1,0 +1,12 @@
+apiVersion: freebsd.zachfi/v1
+kind: PoudriereBulkBuild
+metadata:
+  labels:
+    app.kubernetes.io/name: poudrierebulkbuild
+    app.kubernetes.io/instance: poudrierebulkbuild-sample
+    app.kubernetes.io/part-of: nodemanager
+    app.kuberentes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: nodemanager
+  name: poudrierebulkbuild-sample
+spec:
+  # TODO(user): Add fields here

@@ -1,0 +1,12 @@
+apiVersion: freebsd.zachfi/v1
+kind: PoudrierePortsTree
+metadata:
+  labels:
+    app.kubernetes.io/name: poudriereportstree
+    app.kubernetes.io/instance: poudriereportstree-sample
+    app.kubernetes.io/part-of: nodemanager
+    app.kuberentes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: nodemanager
+  name: poudriereportstree-sample
+spec:
+  # TODO(user): Add fields here

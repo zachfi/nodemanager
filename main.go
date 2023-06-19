@@ -38,6 +38,9 @@ import (
 	commonv1 "github.com/zachfi/nodemanager/apis/common/v1"
 	commoncontrollers "github.com/zachfi/nodemanager/controllers/common"
 
+	freebsdv1 "github.com/zachfi/nodemanager/apis/freebsd/v1"
+	freebsdcontrollers "github.com/zachfi/nodemanager/controllers/freebsd"
+
 	//+kubebuilder:scaffold:imports
 
 	"github.com/go-kit/log"
@@ -81,6 +84,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(commonv1.AddToScheme(scheme))
+	utilruntime.Must(freebsdv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -146,6 +150,13 @@ func main() {
 		Tracer: otel.Tracer("ManagedNode"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
+		os.Exit(1)
+	}
+	if err = (&freebsdcontrollers.PoudriereReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder

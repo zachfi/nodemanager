@@ -1,0 +1,27 @@
+# permissions for end users to view poudriereportstrees.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: poudriereportstree-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: nodemanager
+    app.kubernetes.io/part-of: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: poudriereportstree-viewer-role
+rules:
+- apiGroups:
+  - freebsd.zachfi
+  resources:
+  - poudriereportstrees
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - freebsd.zachfi
+  resources:
+  - poudriereportstrees/status
+  verbs:
+  - get
