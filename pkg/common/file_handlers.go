@@ -197,6 +197,10 @@ func (h *FileHandler_Common) WriteTemplateFile(ctx context.Context, path, templa
 
 	span.SetAttributes(attribute.String("path", path))
 
+	// Render the template into bytes
+	// b, err := render()
+	// return h.WriteContentFile(ctx, path, b)
+
 	return nil
 }
 
