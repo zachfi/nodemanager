@@ -9,29 +9,17 @@ before:
 builds:
   - env:
       - CGO_ENABLED=0
+      - 'CC={{ index .Env (print "CC_" .Os "_" .Arch) }}'
+      - 'CXX={{ index .Env (print "CXX_" .Os "_" .Arch) }}'
+    goarm:
+      - '7'
     goos:
       - linux
       - freebsd
-    goarm:
-      - 7
-    goamd64:
-      - v1
     goarch:
       - amd64
       - arm
       - arm64
-    ignore:
-      - goos: freebsd
-        goarch: arm
-      - goos: freebsd
-        goarch: arm64
-archives:
-  - replacements:
-      darwin: Darwin
-      linux: Linux
-      windows: Windows
-      amd64: x86_64
-      freebsd: FreeBSD
 checksum:
   name_template: 'checksums.txt'
 snapshot:
