@@ -4,6 +4,8 @@ IMG ?= zachfi/nodemanager:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.24.2
 
+SRCDIR			?= .
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -69,7 +71,7 @@ LD_FLAGS=-ldflags " \
 
 .PHONY: build
 build: generate fmt vet ## Build manager binary.
-	go build $(LD_FLAGS) -o bin/manager main.go
+	go build $(LD_FLAGS) -o bin/nodemanager main.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
@@ -142,3 +144,5 @@ $(ENVTEST): $(LOCALBIN)
 drone:
 	@drone jsonnet --format
 	@drone lint
+
+include build/release.mk
