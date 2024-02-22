@@ -1,0 +1,7 @@
+kind: pipeline
+name: build
+steps:
+- commands:
+  - make
+  image: golang
+  name: make
