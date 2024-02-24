@@ -3,5 +3,6 @@ name: build
 steps:
 - commands:
   - make
-  image: golang:1.22-alpine3.19
+  image: zachfi/build-image
   name: make
+  pull: always
