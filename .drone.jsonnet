@@ -3,13 +3,22 @@
 
   kind: 'pipeline',
   // type: 'kubernetes',
-  name: 'build',
+  name: 'ci',
   steps: [
     {
-      name: 'make',
-      image: 'golang',
+      name: 'build',
+      image: 'zachfi/build-image',
+      pull: 'always',
       commands: [
-        'make',
+        'make build',
+      ],
+    },
+    {
+      name: 'test',
+      image: 'zachfi/build-image',
+      pull: 'always',
+      commands: [
+        'make test',
       ],
     },
   ],

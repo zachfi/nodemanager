@@ -1,8 +1,13 @@
 kind: pipeline
-name: build
+name: ci
 steps:
 - commands:
-  - make
+  - make build
   image: zachfi/build-image
-  name: make
+  name: build
+  pull: always
+- commands:
+  - make test
+  image: zachfi/build-image
+  name: test
   pull: always
