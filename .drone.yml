@@ -11,3 +11,16 @@ steps:
   image: zachfi/build-image
   name: test
   pull: always
+- commands:
+  - make snapshot
+  image: zachfi/build-image
+  name: snapshot
+  pull: always
+- commands:
+  - make release
+  image: zachfi/build-image
+  name: release
+  pull: always
+  when:
+    ref:
+    - refs/tags/*
