@@ -116,8 +116,9 @@ func (h *PackageHandler_Archlinux) Install(ctx context.Context, name string) err
 func (h *PackageHandler_Archlinux) Remove(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Remove")
 	defer span.End()
-	return simpleRunCommand("/usr/bin/pacman", "-Rcsy", name)
+	return simpleRunCommand("/usr/bin/pacman", "-Rcs", "--noconfirm", name)
 }
+
 func (h *PackageHandler_Archlinux) List(ctx context.Context) ([]string, error) {
 	_, span := h.tracer.Start(ctx, "List")
 	defer span.End()
