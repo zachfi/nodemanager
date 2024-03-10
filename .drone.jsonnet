@@ -21,5 +21,26 @@
         'make test',
       ],
     },
+    {
+      name: 'snapshot',
+      image: 'zachfi/build-image',
+      pull: 'always',
+      commands: [
+        'make snapshot',
+      ],
+    },
+    {
+      name: 'release',
+      image: 'zachfi/build-image',
+      pull: 'always',
+      commands: [
+        'make release',
+      ],
+      when: {
+        ref: [
+          'refs/tags/*',
+        ],
+      },
+    },
   ],
 }
