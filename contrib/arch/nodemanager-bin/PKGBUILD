@@ -1,0 +1,70 @@
+# Maintainer: Zach Leslie <@zachfi>
+
+pkgname=nodemanager-bin
+_realname=nodemanager
+pkgver=0.1.32
+pkgrel=1
+pkgdesc='A Kubernetes controller to manage nodes'
+url="https://github.com/zachfi/$_realname"
+arch=(x86_64 aarch64 armv7h)
+license=('APACHE')
+makedepends=(git go)
+# _commit="v0.1.31"
+# source=("git+$url#commit=$_commit")
+
+#source=("${_realname}-${pkgver}.tar.gz::https://github.com/zachfi/${_realname}/archive/refs/tags/v${pkgver}.tar.gz")
+source_x86_64=("https://github.com/zachfi/${_realname}/releases/download/v${pkgver}/${_realname}_${pkgver}_Linux_x86_64.tar.gz")
+source_aarch64=("https://github.com/zachfi/${_realname}/releases/download/v${pkgver}/${_realname}_${pkgver}_Linux_arm64.tar.gz")
+source_armv7h=("https://github.com/zachfi/${_realname}/releases/download/v${pkgver}/${_realname}_${pkgver}_Linux_armv7.tar.gz")
+#sha256sums=('fa2edae90c7999a6f667bba26a6c63c7165647f77c02c83860237c6d08ee4bbd')
+sha256sums_x86_64=('84d7b3e572162f78cdb82b4d393fa955819aae1254575c9ee23d243e8674137f')
+sha256sums_aarch64=('655999e733e16e63e82ed9f095f60e90d636020058b08606097e8343c30af587')
+sha256sums_armv7h=('9f1ac5dc13bd76d7db9adedffdd2a38ae62af04fb63a1b41ce024073cb9da42e')
+
+# prepare(){
+#   cd "$pkgname-$pkgver"
+#   mkdir -p build/
+# }
+
+# pkgver() {
+# 	cd "${pkgname}"
+# 	git describe --tags | sed 's/^v//;s/-/+/g'
+# }
+
+# build() {
+# 	cd "${pkgname}"
+# 	export CGO_CPPFLAGS="${CPPFLAGS}"
+# 	export CGO_CFLAGS="${CFLAGS}"
+# 	export CGO_CXXFLAGS="${CXXFLAGS}"
+# 	export CGO_LDFLAGS="${LDFLAGS}"
+# 	export GOFLAGS="-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw"
+# 	make build
+# }
+
+# check() {
+# 	make -C $pkgname test
+# }
+
+package() {
+	case "$CARCH" in
+	arm64)
+		_pkgarch="arm64"
+		;;
+	armv*)
+		_pkgarch="arm"
+		;;
+	i686)
+		_pkgarch="386"
+		;;
+	x86_64)
+		_pkgarch="amd64"
+		;;
+	esac
+
+	ls -l
+	#cd "${_realname}-linux-${_pkgarch}-v${pkgver}"
+	#cd "${_realname}"
+	pwd
+	install -Dm755 "${_realname}" "${pkgdir}/usr/bin/${pkgname}"
+	install -Dm644 nodemanager.service "${pkgdir}/usr/lib/systemd/system/nodemanager.service"
+}
