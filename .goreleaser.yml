@@ -9,10 +9,15 @@ before:
 builds:
   - env:
       - CGO_ENABLED=0
-      - 'CC={{ index .Env (print "CC_" .Os "_" .Arch) }}'
-      - 'CXX={{ index .Env (print "CXX_" .Os "_" .Arch) }}'
+      # - 'CC={{ index .Env (print "CC_" .Os "_" .Arch) }}'
+      # - 'CXX={{ index .Env (print "CXX_" .Os "_" .Arch) }}'
     goarm:
       - '7'
+    goamd64:
+      - 'v1'
+      # - 'v2'
+      # - 'v3'
+      # - 'v4'
     goos:
       - linux
       - freebsd
@@ -20,6 +25,10 @@ builds:
       - amd64
       - arm
       - arm64
+    ignore:
+      - goos: freebsd
+        goarch: arm
+        goarm: 7
 checksum:
   name_template: 'checksums.txt'
 snapshot:
@@ -32,142 +41,114 @@ changelog:
       - '^test:'
 
 # .goreleaser.yaml
-aurs:
-  - # The package name.
+archives:
+  - #
+    # ID of this archive.
     #
-    # Defaults to the Project Name with a -bin suffix.
+    # Default: 'default'
+    id: default
+
+    # Builds reference which build instances should be archived in this archive.
+    builds:
+      - default
+
+    # Archive format. Valid options are `tar.gz`, `tgz`, `tar.xz`, `txz`, tar`, `gz`, `zip` and `binary`.
+    # If format is `binary`, no archives are created and the binaries are instead
+    # uploaded directly.
     #
-    # Note that since this integration does not create a PKGBUILD to build from
-    # source, per Arch's guidelines.
-    # That said, GoReleaser will enforce a `-bin` suffix if its not present.
-    name: nodemanager
+    # Default: 'tar.gz'
+    format: tar.gz
 
-    # Artifact IDs to filter for.
+    # This will create an archive without any binaries, only the files are there.
+    # The name template must not contain any references to `Os`, `Arch` and etc, since the archive will be meta.
     #
-    # Defaults to empty, which includes all artifacts.
-    ids:
-      []
-      # - nodemanager
+    # Since: v1.9
+    # Templates: allowed
+    meta: false
 
-    # Your app's homepage.
-    # Default is empty.
-    homepage: 'https://github.com/zachfi/nodemanager'
-
-    # Template of your app's description.
-    # Default is empty.
-    description: 'A Kubernetes controller to manage node OS configuration'
-
-    # The maintainers of the package.
-    # Defaults to empty.
-    maintainers:
-      []
-      # - 'Zach Leslie <>'
-
-    # The contributors of the package.
-    # Defaults to empty.
-    contributors: []
-
-    # SPDX identifier of your app's license.
-    # Default is empty.
-    license: 'APACHE'
-
-    # The SSH private key that should be used to commit to the Git repository.
-    # This can either be a path or the key contents.
+    # Archive name.
     #
-    # WARNING: do not expose your private key in the configuration file!
-    # private_key: '{{ .Env.AUR_KEY }}'
+    # Default:
+    # - if format is `binary`:
+    #   - `{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}`
+    # - if format is anything else:
+    #   - `{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}{{ with .Mips }}_{{ . }}{{ end }}{{ if not (eq .Amd64 "v1") }}{{ .Amd64 }}{{ end }}`
+    # Templates: allowed
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Runtime.Goos }}_{{ .Runtime.Goarch }}'
 
-    # The AUR Git URL for this package.
-    # Defaults to empty
-    # Publish is skipped if empty.
-    # git_url: 'ssh://aur@aur.archlinux.org/nodemanager.git'
-
-    # Setting this will prevent goreleaser to actually try to commit the updated
-    # formula - instead, the formula file will be stored on the dist folder only,
-    # leaving the responsibility of publishing it to the user.
+    # Sets the given file info to all the binaries included from the `builds`.
     #
-    # If set to auto, the release will not be uploaded to the AUR repo
-    # in case there is an indicator for prerelease in the tag e.g. v1.0.0-rc1.
+    # Default: copied from the source binary.
+    # Since: v1.14
+    builds_info:
+      group: root
+      owner: root
+      mode: 0644
+      # format is `time.RFC3339Nano`
+      mtime: 2008-01-02T15:04:05Z
+
+    # Set this to true if you want all files in the archive to be in a single directory.
+    # If set to true and you extract the archive 'goreleaser_Linux_arm64.tar.gz',
+    # you'll get a folder 'goreleaser_Linux_arm64'.
+    # If set to false, all files are extracted separately.
+    # You can also set it to a custom folder name (templating is supported).
+    wrap_in_directory: true
+
+    # If set to true, will strip the parent directories away from binary files.
     #
-    # Default is false.
-    skip_upload: true
-
-    # List of additional packages that the software provides the features of.
+    # This might be useful if you have your binary be built with a subdir for some reason, but do no want that subdir inside the archive.
     #
-    # Defaults to the project name.
-    provides:
-      - nodemanager
+    # Since: v1.11
+    strip_parent_binary_folder: true
 
-    # List of packages that conflict with, or cause problems with the package.
+    # This will make the destination paths be relative to the longest common
+    # path prefix between all the files matched and the source glob.
+    # Enabling this essentially mimic the behavior of nfpm's contents section.
+    # It will be the default by June 2023.
     #
-    # Defaults to the project name.
-    conflicts:
-      - nodemanager
+    # Since: v1.14
+    rlcp: true
 
-    # List of packages that must be installed to install this.
+    # Can be used to change the archive formats for specific GOOSs.
+    # Most common use case is to archive as zip on Windows.
+    format_overrides:
+      - goos: windows
+        format: zip
+
+    # Additional files/globs you want to add to the archive.
     #
-    # Defaults to empty.
-    depends:
-      []
-      # - curl
-
-    # List of packages that are not needed for the software to function,
-    # but provide additional features.
+    # Default: [ 'LICENSE*', 'README*', 'CHANGELOG', 'license*', 'readme*', 'changelog']
+    # Templates: allowed
+    files: ['contrib/arch/nodemanager.service']
+    #   - CHANGELOG.md
+    #   - docs/*
+    #   - design/*.png
+    #   - templates/**/*
+    #   # a more complete example, check the globbing deep dive below
+    #   - src: '*.md'
+    #     dst: docs
     #
-    # Must be in the format `package: short description of the extra functionality`.
+    #     # Strip parent folders when adding files to the archive.
+    #     strip_parent: true
     #
-    # Defaults to empty.
-    optdepends:
-      []
-      # - 'wget: for downloading things'
-
-    # List of files that can contain user-made changes and should be preserved
-    # during package upgrades and removals.
+    #     # File info.
+    #     # Not all fields are supported by all formats available formats.
+    #     #
+    #     # Default: copied from the source file
+    #     info:
+    #       # Templates: allowed (since v1.14)
+    #       owner: root
     #
-    # Default: empty.
-    # Since: v1.12
-    backup:
-      []
-      # - /etc/foo.conf
-
-    # Custom package instructions.
+    #       # Templates: allowed (since v1.14)
+    #       group: root
     #
-    # Defaults to `install -Dm755 "./PROJECT_NAME" "${pkgdir}/usr/bin/PROJECT_NAME",
-    # which is not always correct.
+    #       # Must be in time.RFC3339Nano format.
+    #       #
+    #       # Templates: allowed (since v1.14)
+    #       mtime: '{{ .CommitDate }}'
     #
-    # We recommend you override this, installing the binary, license and
-    # everything else your package needs.
-    package: |-
-      ls
-      # bin
-      install -Dm755 "./${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+    #       # File mode.
+    #       mode: 0644
 
-      install -Dm644 contrib/arch/${pkgname}.service "${pkgdir}/usr/lib/systemd/system/${pkgname}.service"
-
-    # Git author used to commit to the repository.
-    # Defaults are shown below.
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
-
-    # Commit message template.
-    # Defaults to `Update to {{ .Tag }}`.
-    commit_msg_template: 'pkgbuild updates'
-
-    # If you build for multiple GOAMD64 versions, you may use this to choose which one to use.
-    # Defaults to `v1`.
-    goamd64: v1
-
-    # The value to be passed to `GIT_SSH_COMMAND`.
-    # This is mainly used to specify the SSH private key used to pull/push to
-    # the Git URL.
-    #
-    # Defaults to `ssh -i {{ .KeyPath }} -o StrictHostKeyChecking=accept-new -F /dev/null`.
-    git_ssh_command: 'ssh -i {{ .Env.KEY }} -o SomeOption=yes'
-
-    # Template for the url which is determined by the given Token
-    # (github, gitlab or gitea).
-    #
-    # Default depends on the client.
-    # https://github.com/zachfi/znet/releases/download/v0.31.5/znet_0.31.5_FreeBSD_x86_64.tar.gz
-    url_template: 'https://github.com/zachfi/nodemanager/releases/download/{{ .Tag }}/{{ .ArtifactName }}'
+    # Disables the binary count check.
+    allow_different_binary_count: true
