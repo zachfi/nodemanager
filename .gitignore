@@ -25,8 +25,7 @@ testbin/*
 *~
 contrib/arch/pkg/
 contrib/arch/src/
-contrib/arch/nodemanager
-contrib/arch/nodemanager*.tar.gz
-contrib/arch/nodemanager*.tar.zst
+contrib/arch/nodemanager*/*.tar.gz
+contrib/arch/nodemanager*/*.tar.zst
 
 dist/
