@@ -129,13 +129,15 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 func nodeStatus() commonv1.ManagedNodeStatus {
 	var status commonv1.ManagedNodeStatus
-	info := common.GetSystemInfo()
+	resolver := &common.UnameInfoResolver{}
+	info := resolver.Info()
 	status.Release = info.OS.Release
 	return status
 }
 
 func defaultLabels() map[string]string {
-	info := common.GetSystemInfo()
+	resolver := &common.UnameInfoResolver{}
+	info := resolver.Info()
 
 	return map[string]string{
 		"kubernetes.io/os":       info.OS.ID,

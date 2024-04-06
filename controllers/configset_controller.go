@@ -92,7 +92,9 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
 
-	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer, log)
+	resolver := &common.UnameInfoResolver{}
+
+	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer, log, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -102,7 +104,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	fileHandler, err := common.GetFileHandler(ctx, r.Tracer, log)
+	fileHandler, err := common.GetFileHandler(ctx, r.Tracer, log, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -112,7 +114,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	serviceHandler, err := common.GetServiceHandler(ctx, r.Tracer, log)
+	serviceHandler, err := common.GetServiceHandler(ctx, r.Tracer, log, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -122,7 +124,7 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	execHandler, err := common.GetExecHandler(ctx, r.Tracer)
+	execHandler, err := common.GetExecHandler(ctx, r.Tracer, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -162,7 +164,6 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, log logr.Log
 	}
 
 	for _, pkg := range packageSet {
-
 		switch pkg.Ensure {
 		case "installed":
 			if !currentlyInstalled(packages, pkg.Name) {
@@ -309,7 +310,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 				var fileMode os.FileMode
 
 				if file.Mode == "" {
-					fileMode = os.FileMode(0660)
+					fileMode = os.FileMode(0o660)
 				} else {
 					fileMode, err = common.GetFileModeFromString(ctx, file.Mode)
 					if err != nil {
