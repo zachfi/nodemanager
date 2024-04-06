@@ -24,3 +24,8 @@ steps:
   when:
     ref:
     - refs/tags/*
+trigger:
+  event:
+  - push
+  ref:
+  - refs/heads/**

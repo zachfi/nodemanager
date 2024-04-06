@@ -43,4 +43,12 @@
       },
     },
   ],
+  trigger: {
+    event: [
+      'push',
+    ],
+    ref: [
+      'refs/heads/**',
+    ],
+  },
 }
