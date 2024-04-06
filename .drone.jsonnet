@@ -44,11 +44,8 @@
     },
   ],
   trigger: {
-    event: [
-      'push',
-    ],
     ref: [
-      'refs/heads/**',
+      'refs/heads/*',
     ],
   },
 }

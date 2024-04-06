@@ -25,7 +25,5 @@ steps:
     ref:
     - refs/tags/*
 trigger:
-  event:
-  - push
   ref:
-  - refs/heads/**
+  - refs/heads/*
