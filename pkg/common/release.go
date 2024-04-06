@@ -8,18 +8,17 @@ import (
 	"github.com/go-ini/ini"
 )
 
-type Sysinfo struct {
-	Name    string
-	Kernel  string
-	Version string
-	Machine string
-	Domain  string
-	OS      struct {
-		Release string // uname -r
-		Name    string // os-release.NAME
-		ID      string // os-release.ID
+type SysInfoResolver interface {
+	Info() *SysInfo
+}
 
-	}
+type SysInfo struct {
+	Name      string
+	Kernel    string
+	Version   string
+	Machine   string
+	Domain    string
+	OS        OS
 	Processor string
 	Runtime   struct {
 		Arch string
@@ -32,39 +31,21 @@ type ReleaseInfo struct {
 	Name string
 }
 
-func readOSRelease(configfile string) map[string]string {
-	cfg, err := ini.Load(configfile)
-	if err != nil {
-		log.Fatal("Fail to read file: ", err)
-	}
-
-	ConfigParams := make(map[string]string)
-	ConfigParams["ID"] = cfg.Section("").Key("ID").String()
-
-	return ConfigParams
+type OS struct {
+	Release string // uname -r
+	Name    string // os-release.NAME
+	ID      string // os-release.ID
 }
 
-func getReleaseInfo() (r ReleaseInfo) {
-	releaseInfo := readOSRelease("/etc/os-release")
+type UnameInfoResolver struct{}
 
-	if val, ok := releaseInfo["ID"]; ok {
-		r.ID = strings.ToLower(val)
-	}
-
-	if val, ok := releaseInfo["NAME"]; ok {
-		r.Name = val
-	}
-
-	return
-}
-
-func GetSystemInfo() *Sysinfo {
-	sys := &Sysinfo{}
+func (r *UnameInfoResolver) Info() *SysInfo {
+	sys := &SysInfo{}
 	//
 	sys.Runtime.Arch = runtime.GOARCH
 	sys.Runtime.OS = runtime.GOOS
 
-	osrelease := getReleaseInfo()
+	osrelease := r.getReleaseInfo()
 	sys.OS.ID = osrelease.ID
 	sys.OS.Name = osrelease.Name
 
@@ -85,4 +66,38 @@ func GetSystemInfo() *Sysinfo {
 	sys.Machine = fields[3]
 
 	return sys
+}
+
+func (r *UnameInfoResolver) getReleaseInfo() (info ReleaseInfo) {
+	releaseInfo := r.readOSRelease("/etc/os-release")
+
+	if val, ok := releaseInfo["ID"]; ok {
+		info.ID = strings.ToLower(val)
+	}
+
+	if val, ok := releaseInfo["NAME"]; ok {
+		info.Name = val
+	}
+
+	return
+}
+
+func (r *UnameInfoResolver) readOSRelease(configfile string) map[string]string {
+	cfg, err := ini.Load(configfile)
+	if err != nil {
+		log.Fatal("Fail to read file: ", err)
+	}
+
+	ConfigParams := make(map[string]string)
+	ConfigParams["ID"] = cfg.Section("").Key("ID").String()
+
+	return ConfigParams
+}
+
+type MockInfoResolver struct {
+	info *SysInfo
+}
+
+func (r *MockInfoResolver) Info() *SysInfo {
+	return r.info
 }

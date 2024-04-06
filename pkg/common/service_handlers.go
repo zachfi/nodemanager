@@ -39,7 +39,7 @@ func (s ServiceStatus) String() string {
 	return "unknown"
 }
 
-func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (ServiceHandler, error) {
+func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (ServiceHandler, error) {
 	var err error
 	_, span := tracer.Start(ctx, "GetServiceHandler")
 	defer span.End()
@@ -52,7 +52,7 @@ func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger
 
 	logger := log.WithName("ServiceHandler")
 
-	switch GetSystemInfo().OS.ID {
+	switch info.Info().OS.ID {
 	case "arch":
 		return &ServiceHandler_Systemd{tracer: tracer, logger: logger}, nil
 	case "freebsd":

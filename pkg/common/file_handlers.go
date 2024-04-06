@@ -59,7 +59,7 @@ type FileHandler interface {
 	WriteTemplateFile(ctx context.Context, path, template string) error
 }
 
-func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (FileHandler, error) {
+func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (FileHandler, error) {
 	var err error
 	_, span := tracer.Start(ctx, "GetFileHandler")
 	defer func() {
@@ -71,7 +71,7 @@ func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (
 
 	logger := log.WithName("FileHandler")
 
-	switch GetSystemInfo().OS.ID {
+	switch info.Info().OS.ID {
 	case "arch", "freebsd":
 		return &FileHandler_Common{tracer: tracer, logger: logger}, nil
 	}

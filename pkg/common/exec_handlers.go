@@ -12,7 +12,7 @@ type ExecHandler interface {
 	RunCommand(ctx context.Context, command string, arg ...string) (string, int, error)
 }
 
-func GetExecHandler(ctx context.Context, tracer trace.Tracer) (ExecHandler, error) {
+func GetExecHandler(ctx context.Context, tracer trace.Tracer, info SysInfoResolver) (ExecHandler, error) {
 	var err error
 	_, span := tracer.Start(ctx, "GetExecHandler")
 	defer span.End()
@@ -23,7 +23,7 @@ func GetExecHandler(ctx context.Context, tracer trace.Tracer) (ExecHandler, erro
 		span.End()
 	}()
 
-	switch GetSystemInfo().OS.ID {
+	switch info.Info().OS.ID {
 	case "arch", "freebsd":
 		return &ExecHandler_Common{tracer: tracer}, nil
 	}

@@ -20,42 +20,45 @@ type PackageHandler interface {
 	List(context.Context) ([]string, error)
 }
 
-func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger) (PackageHandler, error) {
+func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (PackageHandler, error) {
 	var err error
-	_, span := tracer.Start(ctx, "GetPackageHandler")
-	defer span.End()
-	defer func() {
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-		}
-		span.End()
-	}()
+
+	if tracer != nil {
+		_, span := tracer.Start(ctx, "GetPackageHandler")
+		defer span.End()
+		defer func() {
+			if err != nil {
+				span.SetStatus(codes.Error, err.Error())
+			}
+			span.End()
+		}()
+	}
 
 	logger := log.WithName("PackageHandler")
 
-	switch GetSystemInfo().OS.ID {
-	case "arch":
-		return &PackageHandler_Archlinux{tracer: tracer, logger: logger}, nil
+	switch info.Info().OS.ID {
+	case "arch", "archarm":
+		return &PackageHandlerArchlinux{tracer: tracer, logger: logger}, nil
 	case "freebsd":
-		return &PackageHandler_FreeBSD{tracer: tracer, logger: logger}, nil
+		return &PackageHandlerFreeBSD{tracer: tracer, logger: logger}, nil
 	}
 
-	return &PackageHandler_Null{}, fmt.Errorf("package handler not found for system")
+	return &PackageHandlerNull{}, ErrSystemNotFound
 }
 
-type PackageHandler_Null struct{}
+type PackageHandlerNull struct{}
 
-func (h *PackageHandler_Null) Install(_ context.Context, _ string) error { return nil }
-func (h *PackageHandler_Null) Remove(_ context.Context, _ string) error  { return nil }
-func (h *PackageHandler_Null) List(_ context.Context) ([]string, error)  { return []string{}, nil }
+func (h *PackageHandlerNull) Install(_ context.Context, _ string) error { return nil }
+func (h *PackageHandlerNull) Remove(_ context.Context, _ string) error  { return nil }
+func (h *PackageHandlerNull) List(_ context.Context) ([]string, error)  { return []string{}, nil }
 
 // FREEBSD
-type PackageHandler_FreeBSD struct {
+type PackageHandlerFreeBSD struct {
 	tracer trace.Tracer
 	logger logr.Logger
 }
 
-func (h *PackageHandler_FreeBSD) Install(ctx context.Context, name string) error {
+func (h *PackageHandlerFreeBSD) Install(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Install")
 	defer span.End()
 
@@ -78,7 +81,7 @@ func (h *PackageHandler_FreeBSD) Install(ctx context.Context, name string) error
 	return simpleRunCommand("pkg", "install", "-qy", name)
 }
 
-func (h *PackageHandler_FreeBSD) Remove(ctx context.Context, name string) error {
+func (h *PackageHandlerFreeBSD) Remove(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Remove")
 	defer span.End()
 	span.SetAttributes(attribute.Bool("remove", true))
@@ -86,7 +89,7 @@ func (h *PackageHandler_FreeBSD) Remove(ctx context.Context, name string) error 
 	return simpleRunCommand("pkg", "remove", "-qy", name)
 }
 
-func (h *PackageHandler_FreeBSD) List(ctx context.Context) ([]string, error) {
+func (h *PackageHandlerFreeBSD) List(ctx context.Context) ([]string, error) {
 	_, span := h.tracer.Start(ctx, "List")
 	defer span.End()
 	output, _, err := runCommand("pkg", "query", "-a", "%n")
@@ -100,12 +103,12 @@ func (h *PackageHandler_FreeBSD) List(ctx context.Context) ([]string, error) {
 }
 
 // ARCH
-type PackageHandler_Archlinux struct {
+type PackageHandlerArchlinux struct {
 	tracer trace.Tracer
 	logger logr.Logger
 }
 
-func (h *PackageHandler_Archlinux) Install(ctx context.Context, name string) error {
+func (h *PackageHandlerArchlinux) Install(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Install")
 	defer span.End()
 
@@ -113,13 +116,13 @@ func (h *PackageHandler_Archlinux) Install(ctx context.Context, name string) err
 	return simpleRunCommand("/usr/bin/pacman", "-Sy", "--needed", "--noconfirm", name)
 }
 
-func (h *PackageHandler_Archlinux) Remove(ctx context.Context, name string) error {
+func (h *PackageHandlerArchlinux) Remove(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Remove")
 	defer span.End()
 	return simpleRunCommand("/usr/bin/pacman", "-Rcs", "--noconfirm", name)
 }
 
-func (h *PackageHandler_Archlinux) List(ctx context.Context) ([]string, error) {
+func (h *PackageHandlerArchlinux) List(ctx context.Context) ([]string, error) {
 	_, span := h.tracer.Start(ctx, "List")
 	defer span.End()
 	output, _, err := runCommand("/usr/bin/pacman", "-Q")
