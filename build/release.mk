@@ -6,6 +6,7 @@ DIST_DIR ?= ./dist
 # Example usage: make release version=0.11.0
 release: build
 	@echo "=== $(PROJECT_NAME) === [ release          ]: Generating release."
+	git fetch --tags
 	$(REL_CMD) release
 
 release-clean:

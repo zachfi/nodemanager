@@ -142,7 +142,7 @@ $(ENVTEST): $(LOCALBIN)
 
 .PHONY: drone
 drone:
-	@drone jsonnet --format
+	@drone jsonnet --stream --format
 	@drone lint
 
 include build/release.mk
