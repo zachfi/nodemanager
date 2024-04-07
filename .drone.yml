@@ -18,12 +18,15 @@ steps:
   pull: always
 - commands:
   - make release
+  environment:
+    GITHUB_TOKEN:
+      from_secret: GITHUB_TOKEN
   image: zachfi/build-image
   name: release
   pull: always
   when:
     ref:
-    - refs/tags/*
+    - refs/tags/v*
 trigger:
   ref:
   - refs/heads/*

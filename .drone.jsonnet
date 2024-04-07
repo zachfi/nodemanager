@@ -36,9 +36,14 @@
       commands: [
         'make release',
       ],
+      environment: {
+        GITHUB_TOKEN: {
+          from_secret: 'GITHUB_TOKEN',
+        },
+      },
       when: {
         ref: [
-          'refs/tags/*',
+          'refs/tags/v*',
         ],
       },
     },
