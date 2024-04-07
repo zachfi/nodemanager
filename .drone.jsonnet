@@ -46,6 +46,7 @@
   trigger: {
     ref: [
       'refs/heads/*',
+      'refs/tags/*',
     ],
   },
 }
