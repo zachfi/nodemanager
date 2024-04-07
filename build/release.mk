@@ -20,6 +20,6 @@ release-publish: clean tools docker-login release-notes
 snapshot: release-clean
 	@echo "=== $(PROJECT_NAME) === [ snapshot         ]: Creating release via $(REL_CMD)"
 	@echo "=== $(PROJECT_NAME) === [ snapshot         ]:   THIS WILL NOT BE PUBLISHED!"
-	$(REL_CMD) --skip-publish --snapshot
+	$(REL_CMD) --skip=publish --snapshot
 
 .PHONY: release release-clean release-publish snapshot

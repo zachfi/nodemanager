@@ -19,6 +19,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -26,12 +27,12 @@ import (
 
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"go.opentelemetry.io/otel"
 
@@ -40,7 +41,6 @@ import (
 
 	//+kubebuilder:scaffold:imports
 
-	"github.com/go-kit/log"
 	"github.com/zachfi/zkit/pkg/tracing"
 )
 
@@ -99,13 +99,18 @@ func main() {
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+
+	// We have multiple loggers, using slog as a base handler.
+	handler := slog.NewTextHandler(os.Stdout, opts)
+	logger := slog.New(handler)
+	slogger := logr.FromSlogHandler(handler)
+
+	ctrl.SetLogger(slogger)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -165,7 +170,7 @@ func main() {
 				OtelEndpoint: otelEndpoint,
 				OrgID:        orgID,
 			},
-			log.NewLogfmtLogger(os.Stderr),
+			logger,
 			"nodemanager",
 			versionString(),
 		)
