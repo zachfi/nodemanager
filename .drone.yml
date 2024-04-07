@@ -18,9 +18,6 @@ steps:
   image: zachfi/build-image
   name: snapshot
   pull: always
-  when:
-    ref:
-    - refs/heads/*
 ---
 depends_on: []
 kind: pipeline
@@ -37,3 +34,6 @@ steps:
   when:
     ref:
     - refs/tags/v*
+trigger:
+  ref:
+  - refs/tags/*

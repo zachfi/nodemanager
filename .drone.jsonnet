@@ -3,6 +3,15 @@ local pipeline(name) = {
   name: name,
   steps: [],
   depends_on: [],
+
+};
+
+local withPipelineTags() = {
+  trigger+: {
+    ref+: [
+      'refs/tags/*',
+    ],
+  },
 };
 
 local step(name) = {
@@ -17,16 +26,16 @@ local make(target) = step(target) {
 };
 
 local withHeads() = {
-  when: {
-    ref: [
+  when+: {
+    ref+: [
       'refs/heads/*',
     ],
   },
 };
 
 local withTags() = {
-  when: {
-    ref: [
+  when+: {
+    ref+: [
       'refs/tags/v*',
     ],
   },
@@ -47,13 +56,13 @@ local withGithub() = {
         [
           make('build'),
           make('test'),
-          make('snapshot')
-          + withHeads(),
+          make('snapshot'),
         ],
     }
   ),
   (
-    pipeline('release') {
+    pipeline('release')
+    + withPipelineTags() {
       steps:
         [
           make('release')
