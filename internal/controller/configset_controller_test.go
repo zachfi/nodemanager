@@ -18,9 +18,12 @@ package controller
 
 import (
 	"context"
+	"log/slog"
+	"os"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -71,6 +74,8 @@ var _ = Describe("ConfigSet Controller", func() {
 			controllerReconciler := &ConfigSetReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+				tracer: trace.NewNoopTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
