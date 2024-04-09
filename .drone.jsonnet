@@ -16,7 +16,7 @@ local withPipelineTags() = {
 
 local step(name) = {
   name: name,
-  image: 'zachfi/build-image',
+  image: 'zachfi/shell',
   pull: 'always',
   commands: [],
 };

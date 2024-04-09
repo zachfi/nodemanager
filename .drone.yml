@@ -5,17 +5,17 @@ name: ci
 steps:
 - commands:
   - make build
-  image: zachfi/build-image
+  image: zachfi/shell
   name: build
   pull: always
 - commands:
   - make test
-  image: zachfi/build-image
+  image: zachfi/shell
   name: test
   pull: always
 - commands:
   - make snapshot
-  image: zachfi/build-image
+  image: zachfi/shell
   name: snapshot
   pull: always
 ---
@@ -28,7 +28,7 @@ steps:
   environment:
     GITHUB_TOKEN:
       from_secret: GITHUB_TOKEN
-  image: zachfi/build-image
+  image: zachfi/shell
   name: release
   pull: always
   when:
