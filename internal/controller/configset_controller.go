@@ -1,6 +1,5 @@
 /*
-Copyright 2022.
-
+Copyright 2024.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -14,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"bytes"
@@ -22,11 +21,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 
-	"github.com/go-logr/logr"
-	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -35,10 +33,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/pkg/errors"
 
 	commonv1 "github.com/zachfi/nodemanager/api/v1"
-
 	"github.com/zachfi/nodemanager/pkg/common"
 )
 
@@ -46,28 +44,25 @@ import (
 type ConfigSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Tracer trace.Tracer
+	tracer trace.Tracer
+	logger *slog.Logger
 }
 
-//+kubebuilder:rbac:groups=common.nodemanager,resources=configsets,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=common.nodemanager,resources=configsets/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=common.nodemanager,resources=configsets/finalizers,verbs=update
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-//
 // For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.2/pkg/reconcile
-func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.2/pkg/reconcile
+func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var err error
-	log := log.FromContext(rctx)
 
 	attributes := []attribute.KeyValue{
 		attribute.String("req", req.String()),
 		attribute.String("namespace", req.Namespace),
 	}
 
-	ctx, span := r.Tracer.Start(rctx, "Reconcile", trace.WithAttributes(attributes...))
+	ctx, span := r.tracer.Start(ctx, "Reconcile", trace.WithAttributes(attributes...))
 	defer func() {
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
@@ -77,11 +72,11 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 
 	var configSet commonv1.ConfigSet
 	if err = r.Get(ctx, req.NamespacedName, &configSet); err != nil {
-		log.Error(err, "failed to get resource")
+		r.logger.Error("failed to get resource", "err", err)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	node, err := createOrGetNode(ctx, log, r, r, req)
+	node, err := createOrGetNode(ctx, r.logger, r, r, req)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -94,42 +89,42 @@ func (r *ConfigSetReconciler) Reconcile(rctx context.Context, req ctrl.Request) 
 
 	resolver := &common.UnameInfoResolver{}
 
-	packageHandler, err := common.GetPackageHandler(ctx, r.Tracer, log, resolver)
+	packageHandler, err := common.GetPackageHandler(ctx, r.tracer, r.logger, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.handlePackageSet(ctx, log, packageHandler, configSet.Spec.Packages)
+	err = r.handlePackageSet(ctx, packageHandler, configSet.Spec.Packages)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	fileHandler, err := common.GetFileHandler(ctx, r.Tracer, log, resolver)
+	fileHandler, err := common.GetFileHandler(ctx, r.tracer, r.logger, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	changedFiles, err := r.handleFileSet(ctx, log, req.Namespace, fileHandler, configSet.Spec.Files, node)
+	changedFiles, err := r.handleFileSet(ctx, req.Namespace, fileHandler, configSet.Spec.Files, node)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	serviceHandler, err := common.GetServiceHandler(ctx, r.Tracer, log, resolver)
+	serviceHandler, err := common.GetServiceHandler(ctx, r.tracer, r.logger, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.handleServiceSet(ctx, log, serviceHandler, configSet.Spec.Services, changedFiles)
+	err = r.handleServiceSet(ctx, serviceHandler, configSet.Spec.Services, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	execHandler, err := common.GetExecHandler(ctx, r.Tracer, resolver)
+	execHandler, err := common.GetExecHandler(ctx, r.tracer, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.handleExecutions(ctx, log, execHandler, configSet.Spec.Executions, changedFiles)
+	err = r.handleExecutions(ctx, execHandler, configSet.Spec.Executions, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -144,8 +139,8 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, log logr.Logger, handler common.PackageHandler, packageSet []commonv1.Package) error {
-	ctx, span := r.Tracer.Start(ctx, "handlePackageSet")
+func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, handler common.PackageHandler, packageSet []commonv1.Package) error {
+	ctx, span := r.tracer.Start(ctx, "handlePackageSet")
 	defer span.End()
 
 	currentlyInstalled := func(packages []string, pkg string) bool {
@@ -175,7 +170,7 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, log logr.Log
 		case "absent":
 			if currentlyInstalled(packages, pkg.Name) {
 				err := handler.Remove(ctx, pkg.Name)
-				log.Info("removing package", "name", pkg.Name)
+				r.logger.Info("removing package", "name", pkg.Name)
 				if err != nil {
 					return err
 				}
@@ -188,8 +183,16 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, log logr.Log
 	return nil
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Logger, handler common.ServiceHandler, serviceSet []commonv1.Service, changedFiles []string) error {
-	ctx, span := r.Tracer.Start(ctx, "handleServiceSet")
+func (r *ConfigSetReconciler) WithTracer(tracer trace.Tracer) {
+	r.tracer = tracer
+}
+
+func (r *ConfigSetReconciler) WithLogger(logger *slog.Logger) {
+	r.logger = logger
+}
+
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler common.ServiceHandler, serviceSet []commonv1.Service, changedFiles []string) error {
+	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
 
 	var totalErrs error
@@ -249,7 +252,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Log
 
 	for _, restart := range restartServices {
 		err := handler.Restart(ctx, restart)
-		log.Info("restarting service", "name", restart)
+		r.logger.Info("restarting service", "name", restart)
 		if err != nil {
 			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
 		}
@@ -259,8 +262,8 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, log logr.Log
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger, namespace string, handler common.FileHandler, fileSet []commonv1.File, node commonv1.ManagedNode) (changedFiles []string, err error) {
-	ctx, span := r.Tracer.Start(ctx, "handleFileSet")
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace string, handler common.FileHandler, fileSet []commonv1.File, node commonv1.ManagedNode) (changedFiles []string, err error) {
+	ctx, span := r.tracer.Start(ctx, "handleFileSet")
 	defer span.End()
 
 	for _, file := range fileSet {
@@ -279,12 +282,12 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 		case common.File:
 			// If we have a template, let's set the content based on the rendered template.
 			if file.Template != "" {
-				data, err := r.collectData(ctx, log, namespace, file, node)
+				data, err := r.collectData(ctx, namespace, file, node)
 				if err != nil {
 					return changedFiles, err
 				}
 
-				content, err := r.buildTemplate(ctx, log, file.Template, data)
+				content, err := r.buildTemplate(ctx, file.Template, data)
 				if err != nil {
 					return changedFiles, err
 				}
@@ -295,7 +298,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 			}
 
 			if file.Content != "" {
-				err, changed := r.writeFileContent(ctx, file, log, handler)
+				err, changed := r.writeFileContent(ctx, file, handler)
 				if err != nil {
 					return changedFiles, err
 				}
@@ -332,7 +335,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 			}
 
 			if target != file.Target {
-				log.Info("symlinking file", "name", file.Path)
+				r.logger.Info("symlinking file", "name", file.Path)
 
 				if _, err := os.Lstat(file.Path); err == nil {
 					os.Remove(file.Path)
@@ -349,8 +352,8 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, log logr.Logger
 	return
 }
 
-func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, log logr.Logger, handler common.ExecHandler, serviceSet []commonv1.Exec, changedFiles []string) error {
-	ctx, span := r.Tracer.Start(ctx, "handleExecutions")
+func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, handler common.ExecHandler, serviceSet []commonv1.Exec, changedFiles []string) error {
+	ctx, span := r.tracer.Start(ctx, "handleExecutions")
 	defer span.End()
 
 	var totalErrs error
@@ -368,7 +371,7 @@ func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, log logr.Log
 
 	for _, exe := range runExec {
 		_, _, err := handler.RunCommand(ctx, exe.Command, exe.Args...)
-		log.Info("running exec", "command", exe.Command)
+		r.logger.Info("running exec", "command", exe.Command)
 		if err != nil {
 			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
 		}
@@ -377,7 +380,7 @@ func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, log logr.Log
 	return totalErrs
 }
 
-func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, namespace string, file commonv1.File, node commonv1.ManagedNode) (data Data, err error) {
+func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string, file commonv1.File, node commonv1.ManagedNode) (data Data, err error) {
 	var nodeData NodeData
 	nodeData.Labels = node.Labels
 
@@ -385,7 +388,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 	for _, s := range file.SecretRefs {
 
 		// Render the secretRef in case it is a template string
-		st, err := r.buildTemplate(ctx, log, s, Data{Node: nodeData})
+		st, err := r.buildTemplate(ctx, s, Data{Node: nodeData})
 		if err != nil {
 			return Data{}, errors.Wrap(err, "failed to build template string rendering secretRef")
 		}
@@ -427,7 +430,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, log logr.Logger, 
 	return data, nil
 }
 
-func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger, template string, data Data) (content []byte, err error) {
+func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string, data Data) (content []byte, err error) {
 	// echo '{"foo": {"foo": "bar"}}' | gomplate -i '{{(ds "data").foo.foo}}' -d data=stdin:///foo.json
 
 	b, err := json.Marshal(data)
@@ -476,7 +479,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, log logr.Logger
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
-func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, log logr.Logger, handler common.FileHandler) (err error, changed bool) {
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler common.FileHandler) (err error, changed bool) {
 	// Determine the sha of the content
 	var b bytes.Buffer
 	_, err = b.WriteString(file.Content)
@@ -504,7 +507,7 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv
 
 	// Write only when necessary
 	if contentHash != fileHash {
-		log.Info(fmt.Sprintf("writing file %q", file.Path))
+		r.logger.Info("writing file", "path", file.Path)
 		err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 		if err != nil {
 			return err, changed

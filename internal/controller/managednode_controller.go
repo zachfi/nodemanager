@@ -1,5 +1,5 @@
 /*
-Copyright 2022.
+Copyright 2024.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,11 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controllers
+package controller
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -37,28 +38,26 @@ import (
 type ManagedNodeReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	Tracer trace.Tracer
+	tracer trace.Tracer
+	logger *slog.Logger
 }
 
-//+kubebuilder:rbac:groups=common.nodemanager,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=common.nodemanager,resources=managednodes/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=common.nodemanager,resources=managednodes/finalizers,verbs=update
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-//
 // For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.2/pkg/reconcile
-func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.2/pkg/reconcile
+func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var err error
-	log := log.FromContext(rctx)
+	_ = log.FromContext(ctx)
 
 	attributes := []attribute.KeyValue{
 		attribute.String("req", req.String()),
 		attribute.String("namespace", req.Namespace),
 	}
 
-	ctx, span := r.Tracer.Start(rctx, "Reconcile", trace.WithAttributes(attributes...))
+	ctx, span := r.tracer.Start(ctx, "Reconcile", trace.WithAttributes(attributes...))
 
 	defer func() {
 		if err != nil {
@@ -103,17 +102,17 @@ func (r *ManagedNodeReconciler) Reconcile(rctx context.Context, req ctrl.Request
 
 	if updateLabels {
 		node.SetLabels(nodeLabels)
-		log.Info("updating labels", "labels", nodeLabels)
+		r.logger.Info("updating labels", "labels", nodeLabels)
 		if err := r.Update(ctx, &node); err != nil {
-			log.Error(err, "unable to update ManagedNode")
+			r.logger.Error("unable to update ManagedNode", "err", err)
 			return ctrl.Result{}, err
 		}
 	}
 
 	node.Status = nodeStatus()
-	log.Info("updating node status", "node", hostname, "status", fmt.Sprintf("%+v", node.Status))
+	r.logger.Info("updating node status", "node", hostname, "status", fmt.Sprintf("%+v", node.Status))
 	if err := r.Status().Update(ctx, &node); err != nil {
-		log.Error(err, "unable to update ManagedNode status")
+		r.logger.Error("unable to update ManagedNode status", "err", err)
 		return ctrl.Result{}, err
 	}
 
@@ -125,6 +124,14 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&commonv1.ManagedNode{}).
 		Complete(r)
+}
+
+func (r *ManagedNodeReconciler) WithTracer(tracer trace.Tracer) {
+	r.tracer = tracer
+}
+
+func (r *ManagedNodeReconciler) WithLogger(logger *slog.Logger) {
+	r.logger = logger
 }
 
 func nodeStatus() commonv1.ManagedNodeStatus {

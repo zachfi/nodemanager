@@ -1,18 +1,20 @@
-package controllers
+package controller
 
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 
 	commonv1 "github.com/zachfi/nodemanager/api/v1"
 
-	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+var ErrLabelsNotMatched = fmt.Errorf("labels not matched")
 
 type NodeData struct {
 	Labels     map[string]string
@@ -27,7 +29,7 @@ type Data struct {
 var poudriereLabelGate map[string]string = map[string]string{"poudriere.freebsd.nodemanager/builder": "true"}
 
 // createOrGetNode will query for the current node in the requested namespace.  If the node does not exist, it will be created.  Node results are returned, or an error.
-func createOrGetNode(ctx context.Context, log logr.Logger, r client.Reader, w client.Writer, req ctrl.Request) (commonv1.ManagedNode, error) {
+func createOrGetNode(ctx context.Context, log *slog.Logger, r client.Reader, w client.Writer, req ctrl.Request) (commonv1.ManagedNode, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return commonv1.ManagedNode{}, err
