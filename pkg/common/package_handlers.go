@@ -18,6 +18,7 @@ type PackageHandler interface {
 	Install(context.Context, string) error
 	Remove(context.Context, string) error
 	List(context.Context) ([]string, error)
+	UpgradeAll(context.Context) error
 }
 
 func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (PackageHandler, error) {
@@ -51,6 +52,7 @@ type PackageHandlerNull struct{}
 func (h *PackageHandlerNull) Install(_ context.Context, _ string) error { return nil }
 func (h *PackageHandlerNull) Remove(_ context.Context, _ string) error  { return nil }
 func (h *PackageHandlerNull) List(_ context.Context) ([]string, error)  { return []string{}, nil }
+func (h *PackageHandlerNull) UpgradeAll(_ context.Context) error        { return nil }
 
 // FREEBSD
 type PackageHandlerFreeBSD struct {
@@ -102,6 +104,15 @@ func (h *PackageHandlerFreeBSD) List(ctx context.Context) ([]string, error) {
 	return packages, nil
 }
 
+func (h *PackageHandlerFreeBSD) UpgradeAll(ctx context.Context) error {
+	_, span := h.tracer.Start(ctx, "UpgradeAll")
+	defer span.End()
+
+	h.logger.Info("upgrading packages")
+
+	return simpleRunCommand("/usr/sbin/pkg", "upgrade", "-y")
+}
+
 // ARCH
 type PackageHandlerArchlinux struct {
 	tracer trace.Tracer
@@ -144,4 +155,11 @@ func (h *PackageHandlerArchlinux) List(ctx context.Context) ([]string, error) {
 	}
 
 	return packages, nil
+}
+
+func (h *PackageHandlerArchlinux) UpgradeAll(ctx context.Context) error {
+	_, span := h.tracer.Start(ctx, "UpgradeAll")
+	defer span.End()
+
+	return simpleRunCommand("/usr/bin/pacman", "-Syu", "--noconfirm")
 }
