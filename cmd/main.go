@@ -1,5 +1,5 @@
 /*
-Copyright 2022.
+Copyright 2024.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -24,28 +25,25 @@ import (
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
-
+	"go.opentelemetry.io/otel"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-
-	"go.opentelemetry.io/otel"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	commonv1 "github.com/zachfi/nodemanager/api/v1"
-	"github.com/zachfi/nodemanager/controllers"
+	"github.com/zachfi/nodemanager/internal/controller"
 
 	//+kubebuilder:scaffold:imports
-
 	"github.com/zachfi/zkit/pkg/tracing"
 )
 
-// var needs to be used instead of const as ldflags is used to fill this
-// information in the release process
 var (
 	goos      = "unknown"
 	goarch    = "unknown"
@@ -88,38 +86,64 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
-	var otelEndpoint string
-	var orgID string
-	var namespace string
+	var secureMetrics bool
+	var enableHTTP2 bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.StringVar(&otelEndpoint, "otel-endpoint", "", "The URL to use when sending traces")
-	flag.StringVar(&orgID, "org-id", "", "The X-Scope-OrgID header to set when sending traces")
-	flag.StringVar(&namespace, "namespace", "nodemanager", "The namespace to operate within")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&secureMetrics, "metrics-secure", false,
+		"If set the metrics endpoint is served securely")
+	flag.BoolVar(&enableHTTP2, "enable-http2", false,
+		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
+	var otelEndpoint string
+	var orgID string
+	var namespace string
+	flag.StringVar(&otelEndpoint, "otel-endpoint", "", "The URL to use when sending traces")
+	flag.StringVar(&orgID, "org-id", "", "The X-Scope-OrgID header to set when sending traces")
+	flag.StringVar(&namespace, "namespace", "nodemanager", "The namespace to operate within")
+
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// if the enable-http2 flag is false (the default), http/2 should be disabled
+	// due to its vulnerabilities. More specifically, disabling http/2 will
+	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
+	// Rapid Reset CVEs. For more information see:
+	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
+	// - https://github.com/advisories/GHSA-4374-p667-p6c8
+	disableHTTP2 := func(c *tls.Config) {
+		setupLog.Info("disabling http/2")
+		c.NextProtos = []string{"http/1.1"}
 	}
 
-	// We have multiple loggers, using slog as a base handler.
-	handler := slog.NewTextHandler(os.Stdout, opts)
-	logger := slog.New(handler)
-	slogger := logr.FromSlogHandler(handler)
+	tlsOpts := []func(*tls.Config){}
+	if !enableHTTP2 {
+		tlsOpts = append(tlsOpts, disableHTTP2)
+	}
 
-	ctrl.SetLogger(slogger)
+	webhookServer := webhook.NewServer(webhook.Options{
+		TLSOpts: tlsOpts,
+	})
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		MetricsBindAddress:     metricsAddr,
-		Port:                   9443,
+		Scheme: scheme,
+		Metrics: metricsserver.Options{
+			BindAddress:   metricsAddr,
+			SecureServing: secureMetrics,
+			TLSOpts:       tlsOpts,
+		},
+		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "39b18fec.nodemanager",
-		Namespace:              namespace,
+		LeaderElectionID:       "0c551175.nodemanager",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -137,20 +161,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.ConfigSetReconciler{
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+
+	managedNodeReconciler := &controller.ManagedNodeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Tracer: otel.Tracer("ConfigSet"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
+	}
+	managedNodeReconciler.WithTracer(otel.Tracer("ManagedNode"))
+	managedNodeReconciler.WithLogger(logger.With("reconciler", "ManagedNode"))
+
+	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)
 	}
-	if err = (&controllers.ManagedNodeReconciler{
+
+	configSetReconciler := &controller.ConfigSetReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Tracer: otel.Tracer("ManagedNode"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
+	}
+	configSetReconciler.WithTracer(otel.Tracer("ConfigSet"))
+	configSetReconciler.WithLogger(logger.With("reconciler", "ConfigSet"))
+
+	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder
@@ -164,22 +197,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	if otelEndpoint != "" {
-		shutdownTracer, err := tracing.InstallOpenTelemetryTracer(
-			&tracing.Config{
-				OtelEndpoint: otelEndpoint,
-				OrgID:        orgID,
-			},
-			logger,
-			"nodemanager",
-			versionString(),
-		)
-		if err != nil {
-			setupLog.Error(err, "error initializing tracer")
-			os.Exit(1)
-		}
-		defer shutdownTracer()
+	shutdownTracer, err := tracing.InstallOpenTelemetryTracer(
+		&tracing.Config{
+			OtelEndpoint: otelEndpoint,
+			OrgID:        orgID,
+		},
+		logger,
+		"nodemanager",
+		versionString(),
+	)
+	if err != nil {
+		setupLog.Error(err, "error initializing tracer")
+		os.Exit(1)
 	}
+	defer shutdownTracer()
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
