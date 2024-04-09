@@ -3,8 +3,8 @@ package common
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
-	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -39,7 +39,7 @@ func (s ServiceStatus) String() string {
 	return "unknown"
 }
 
-func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (ServiceHandler, error) {
+func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log *slog.Logger, info SysInfoResolver) (ServiceHandler, error) {
 	var err error
 
 	if tracer != nil {
@@ -53,7 +53,7 @@ func GetServiceHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger
 		}()
 	}
 
-	logger := log.WithName("ServiceHandler")
+	logger := log.With("handler", "ServiceHandler")
 
 	switch info.Info().OS.ID {
 	case "arch", "archarm":
@@ -80,7 +80,7 @@ func (h *ServiceHandlerNull) Status(_ context.Context, _ string) (string, error)
 // FREEBSD
 type ServiceHandlerFreeBSD struct {
 	tracer trace.Tracer
-	logger logr.Logger
+	logger *slog.Logger
 }
 
 func (h *ServiceHandlerFreeBSD) Enable(ctx context.Context, name string) error {
@@ -136,7 +136,7 @@ func (h *ServiceHandlerFreeBSD) Status(ctx context.Context, name string) (string
 // LINUX
 type ServiceHandlerSystemd struct {
 	tracer trace.Tracer
-	logger logr.Logger
+	logger *slog.Logger
 }
 
 func (h *ServiceHandlerSystemd) Enable(ctx context.Context, name string) error {

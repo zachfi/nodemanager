@@ -3,11 +3,11 @@ package common
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/user"
 	"strconv"
 
-	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -59,7 +59,7 @@ type FileHandler interface {
 	WriteTemplateFile(ctx context.Context, path, template string) error
 }
 
-func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (FileHandler, error) {
+func GetFileHandler(ctx context.Context, tracer trace.Tracer, log *slog.Logger, info SysInfoResolver) (FileHandler, error) {
 	var err error
 	_, span := tracer.Start(ctx, "GetFileHandler")
 	defer func() {
@@ -69,7 +69,7 @@ func GetFileHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, i
 		span.End()
 	}()
 
-	logger := log.WithName("FileHandler")
+	logger := log.With("handler", "FileHandler")
 
 	switch info.Info().OS.ID {
 	case "arch", "freebsd":
@@ -88,7 +88,7 @@ func (h *FileHandler_Null) WriteTemplateFile(_ context.Context, _, _ string) err
 
 type FileHandler_Common struct {
 	tracer trace.Tracer
-	logger logr.Logger
+	logger *slog.Logger
 }
 
 func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group string) error {

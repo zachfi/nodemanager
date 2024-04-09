@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
-	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -21,7 +21,7 @@ type PackageHandler interface {
 	UpgradeAll(context.Context) error
 }
 
-func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger, info SysInfoResolver) (PackageHandler, error) {
+func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log *slog.Logger, info SysInfoResolver) (PackageHandler, error) {
 	var err error
 
 	if tracer != nil {
@@ -35,7 +35,7 @@ func GetPackageHandler(ctx context.Context, tracer trace.Tracer, log logr.Logger
 		}()
 	}
 
-	logger := log.WithName("PackageHandler")
+	logger := log.With("handler", "PackageHandler")
 
 	switch info.Info().OS.ID {
 	case "arch", "archarm":
@@ -57,7 +57,7 @@ func (h *PackageHandlerNull) UpgradeAll(_ context.Context) error        { return
 // FREEBSD
 type PackageHandlerFreeBSD struct {
 	tracer trace.Tracer
-	logger logr.Logger
+	logger *slog.Logger
 }
 
 func (h *PackageHandlerFreeBSD) Install(ctx context.Context, name string) error {
@@ -116,7 +116,7 @@ func (h *PackageHandlerFreeBSD) UpgradeAll(ctx context.Context) error {
 // ARCH
 type PackageHandlerArchlinux struct {
 	tracer trace.Tracer
-	logger logr.Logger
+	logger *slog.Logger
 }
 
 func (h *PackageHandlerArchlinux) Install(ctx context.Context, name string) error {

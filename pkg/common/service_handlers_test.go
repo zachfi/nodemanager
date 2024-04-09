@@ -2,9 +2,10 @@ package common
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"testing"
 
-	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,10 +51,13 @@ func Test_GetServiceHandler(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	var (
+		ctx    = context.Background()
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+	)
 
 	for _, tc := range cases {
-		p, err := GetServiceHandler(ctx, nil, logr.Discard(), &MockInfoResolver{info: tc.info})
+		p, err := GetServiceHandler(ctx, nil, logger, &MockInfoResolver{info: tc.info})
 		if tc.err != nil {
 			require.ErrorIs(t, tc.err, err)
 		} else {
