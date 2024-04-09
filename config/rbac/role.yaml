@@ -5,7 +5,7 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - common.nodemanager
+  - common.nodemanager.nodemanager
   resources:
   - configsets
   verbs:
@@ -17,13 +17,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - common.nodemanager
+  - common.nodemanager.nodemanager
   resources:
   - configsets/finalizers
   verbs:
   - update
 - apiGroups:
-  - common.nodemanager
+  - common.nodemanager.nodemanager
   resources:
   - configsets/status
   verbs:
@@ -31,7 +31,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - common.nodemanager
+  - common.nodemanager.nodemanager
   resources:
   - managednodes
   verbs:
@@ -43,13 +43,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - common.nodemanager
+  - common.nodemanager.nodemanager
   resources:
   - managednodes/finalizers
   verbs:
   - update
 - apiGroups:
-  - common.nodemanager
+  - common.nodemanager.nodemanager
   resources:
   - managednodes/status
   verbs:

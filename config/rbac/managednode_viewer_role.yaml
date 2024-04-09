@@ -2,19 +2,26 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: managednode-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: nodemanager
+    app.kubernetes.io/part-of: nodemanager
+    app.kubernetes.io/managed-by: kustomize
   name: managednode-viewer-role
 rules:
-  - apiGroups:
-      - common.nodemanager
-    resources:
-      - managednodes
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - common.nodemanager
-    resources:
-      - managednodes/status
-    verbs:
-      - get
+- apiGroups:
+  - common.nodemanager
+  resources:
+  - managednodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - common.nodemanager
+  resources:
+  - managednodes/status
+  verbs:
+  - get

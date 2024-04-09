@@ -1,6 +1,9 @@
 apiVersion: common.nodemanager/v1
 kind: ManagedNode
 metadata:
+  labels:
+    app.kubernetes.io/name: nodemanager
+    app.kubernetes.io/managed-by: kustomize
   name: managednode-sample
 spec:
   # TODO(user): Add fields here
