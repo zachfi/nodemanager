@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"log/slog"
+	"regexp"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zachfi/nodemanager/pkg/common"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // OPENRC
@@ -17,13 +19,13 @@ type ServiceHandlerOpenRC struct {
 func (h *ServiceHandlerOpenRC) Enable(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Enable")
 	defer span.End()
-	return common.SimpleRunCommand("/usr/bin/systemctl", "enable", name)
+	return common.SimpleRunCommand("/sbin/rc-update", "add", name)
 }
 
 func (h *ServiceHandlerOpenRC) Disable(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Disable")
 	defer span.End()
-	return common.SimpleRunCommand("/usr/bin/systemctl", "disable", name)
+	return common.SimpleRunCommand("/sbin/rc-update", "del", name)
 }
 
 func (h *ServiceHandlerOpenRC) SetArguments(ctx context.Context, _, _ string) error {
@@ -35,27 +37,40 @@ func (h *ServiceHandlerOpenRC) SetArguments(ctx context.Context, _, _ string) er
 func (h *ServiceHandlerOpenRC) Start(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Start")
 	defer span.End()
-	return common.SimpleRunCommand("/usr/bin/systemctl", "start", name)
+	return common.SimpleRunCommand("/sbin/rc-service", name, "start")
 }
 
 func (h *ServiceHandlerOpenRC) Stop(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Stop")
 	defer span.End()
-	return common.SimpleRunCommand("/usr/bin/systemctl", "stop", name)
+	return common.SimpleRunCommand("/sbin/rc-service", name, "stop")
 }
 
 func (h *ServiceHandlerOpenRC) Restart(ctx context.Context, name string) error {
 	_, span := h.tracer.Start(ctx, "Restart")
 	defer span.End()
-	return common.SimpleRunCommand("/usr/bin/systemctl", "restart", name)
+	return common.SimpleRunCommand("/sbin/rc-service", name, "restart")
 }
 
 func (h *ServiceHandlerOpenRC) Status(ctx context.Context, name string) (string, error) {
 	_, span := h.tracer.Start(ctx, "Status")
 	defer span.End()
-	_, exit, err := common.RunCommand("/usr/bin/systemctl", "is-active", "--quiet", name)
+
+	output, exit, err := common.RunCommand("/bin/rc-status", "sysinit", "-Cqf", "ini")
 	if exit == 0 {
 		return Running.String(), nil
+	}
+
+	re := regexp.MustCompile(`(\w+)\s+=\s+(\w+)`)
+	m := re.FindAllStringSubmatch(output, 0)
+	if m != nil {
+		for _, mm := range m {
+			if mm[1] == name {
+				if mm[2] == "running" {
+					return Running.String(), nil
+				}
+			}
+		}
 	}
 
 	return Stopped.String(), err
