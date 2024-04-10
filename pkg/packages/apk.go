@@ -1,15 +1,14 @@
 package packages
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
-	"github.com/zachfi/nodemanager/pkg/common"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zachfi/nodemanager/pkg/common"
 )
 
 // ALPINE
@@ -37,25 +36,12 @@ func (h *PackageHandlerAlpine) Remove(ctx context.Context, name string) error {
 func (h *PackageHandlerAlpine) List(ctx context.Context) ([]string, error) {
 	_, span := h.tracer.Start(ctx, "List")
 	defer span.End()
-	output, _, err := common.RunCommand(apk, "list")
+	output, _, err := common.RunCommand(apk, "list", "-I")
 	if err != nil {
 		return []string{}, err
 	}
 
-	var packages []string
-
-	reader := bytes.NewReader([]byte(output))
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Fields(line)
-		if len(parts) != 2 {
-			return []string{}, fmt.Errorf("unknown output")
-		}
-		packages = append(packages, parts[0])
-	}
-
-	return packages, nil
+	return h.matchPackageOutput(output), nil
 }
 
 func (h *PackageHandlerAlpine) UpgradeAll(ctx context.Context) error {
@@ -68,4 +54,24 @@ func (h *PackageHandlerAlpine) UpgradeAll(ctx context.Context) error {
 	}
 
 	return common.SimpleRunCommand(apk, "upgrade")
+}
+
+func (h *PackageHandlerAlpine) matchPackageOutput(output string) []string {
+	re := regexp.MustCompile(`^(.+)-([^-]+)-r([^-]+) (\S+) \{(\S+)\} \((.+?)\) \[(\w+)\]$`)
+	lines := strings.Split(output, "\n")
+
+	var packages []string
+
+	for _, l := range lines {
+		m := re.FindAllStringSubmatch(l, -1)
+		if m == nil {
+			continue
+		}
+
+		for _, mm := range m {
+			packages = append(packages, mm[1])
+		}
+	}
+
+	return packages
 }
