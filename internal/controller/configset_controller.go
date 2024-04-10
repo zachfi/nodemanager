@@ -38,6 +38,8 @@ import (
 
 	commonv1 "github.com/zachfi/nodemanager/api/v1"
 	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/packages"
+	"github.com/zachfi/nodemanager/pkg/services"
 )
 
 // ConfigSetReconciler reconciles a ConfigSet object
@@ -89,7 +91,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	resolver := &common.UnameInfoResolver{}
 
-	packageHandler, err := common.GetPackageHandler(ctx, r.tracer, r.logger, resolver)
+	packageHandler, err := packages.GetPackageHandler(ctx, r.tracer, r.logger, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -109,7 +111,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	serviceHandler, err := common.GetServiceHandler(ctx, r.tracer, r.logger, resolver)
+	serviceHandler, err := services.GetServiceHandler(ctx, r.tracer, r.logger, resolver)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -139,7 +141,7 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, handler common.PackageHandler, packageSet []commonv1.Package) error {
+func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, handler packages.PackageHandler, packageSet []commonv1.Package) error {
 	ctx, span := r.tracer.Start(ctx, "handlePackageSet")
 	defer span.End()
 
@@ -191,7 +193,7 @@ func (r *ConfigSetReconciler) WithLogger(logger *slog.Logger) {
 	r.logger = logger
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler common.ServiceHandler, serviceSet []commonv1.Service, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler services.Handler, serviceSet []commonv1.Service, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
 
@@ -201,7 +203,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler comm
 	for _, cf := range changedFiles {
 		for _, svc := range serviceSet {
 			// Only record services for restart that are supposed to be running
-			if svc.Ensure == common.Running.String() {
+			if svc.Ensure == services.Running.String() {
 				for _, sub := range svc.SusbscribeFiles {
 					if sub == cf {
 						restartServices = append(restartServices, svc.Name)
@@ -233,15 +235,15 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler comm
 
 		status, _ := handler.Status(ctx, svc.Name)
 		switch svc.Ensure {
-		case common.Running.String():
-			if status != common.Running.String() {
+		case services.Running.String():
+			if status != services.Running.String() {
 				err := handler.Start(ctx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to start service")
 				}
 			}
-		case common.Stopped.String():
-			if status != common.Stopped.String() {
+		case services.Stopped.String():
+			if status != services.Stopped.String() {
 				err := handler.Stop(ctx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to stop service")

@@ -52,7 +52,7 @@ func Test_GetExecHandler(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tc := range cases {
-		p, err := GetExecHandler(ctx, nil, &MockInfoResolver{info: tc.info})
+		p, err := GetExecHandler(ctx, nil, &MockInfoResolver{SysInfo: tc.info})
 		if tc.err != nil {
 			require.ErrorIs(t, tc.err, err)
 		} else {

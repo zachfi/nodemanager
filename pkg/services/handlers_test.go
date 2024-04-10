@@ -1,4 +1,4 @@
-package common
+package services
 
 import (
 	"context"
@@ -8,46 +8,55 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zachfi/nodemanager/pkg/common"
 )
 
 func Test_GetServiceHandler(t *testing.T) {
 	cases := []struct {
-		info       *SysInfo
-		resultType ServiceHandler
+		info       *common.SysInfo
+		resultType Handler
 		err        error
 	}{
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "arch",
 				},
 			},
 			resultType: &ServiceHandlerSystemd{},
 		},
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "archarm",
 				},
 			},
 			resultType: &ServiceHandlerSystemd{},
 		},
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "freebsd",
 				},
 			},
 			resultType: &ServiceHandlerFreeBSD{},
 		},
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
+					ID: "alpine",
+				},
+			},
+			resultType: &ServiceHandlerOpenRC{},
+		},
+		{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "none",
 				},
 			},
 			resultType: &ServiceHandlerNull{},
-			err:        ErrSystemNotFound,
+			err:        common.ErrSystemNotFound,
 		},
 	}
 
@@ -57,7 +66,7 @@ func Test_GetServiceHandler(t *testing.T) {
 	)
 
 	for _, tc := range cases {
-		p, err := GetServiceHandler(ctx, nil, logger, &MockInfoResolver{info: tc.info})
+		p, err := GetServiceHandler(ctx, nil, logger, &common.MockInfoResolver{SysInfo: tc.info})
 		if tc.err != nil {
 			require.ErrorIs(t, tc.err, err)
 		} else {

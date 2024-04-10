@@ -1,4 +1,4 @@
-package common
+package packages
 
 import (
 	"context"
@@ -8,46 +8,55 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zachfi/nodemanager/pkg/common"
 )
 
 func Test_GetPackageHandler(t *testing.T) {
 	cases := []struct {
-		info       *SysInfo
+		info       *common.SysInfo
 		resultType PackageHandler
 		err        error
 	}{
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "arch",
 				},
 			},
-			resultType: &PackageHandlerArchlinux{},
+			resultType: &PackageHandlerPacman{},
 		},
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "archarm",
 				},
 			},
-			resultType: &PackageHandlerArchlinux{},
+			resultType: &PackageHandlerPacman{},
 		},
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "freebsd",
 				},
 			},
 			resultType: &PackageHandlerFreeBSD{},
 		},
 		{
-			info: &SysInfo{
-				OS: OS{
+			info: &common.SysInfo{
+				OS: common.OS{
+					ID: "alpine",
+				},
+			},
+			resultType: &PackageHandlerAlpine{},
+		},
+		{
+			info: &common.SysInfo{
+				OS: common.OS{
 					ID: "none",
 				},
 			},
 			resultType: &PackageHandlerNull{},
-			err:        ErrSystemNotFound,
+			err:        common.ErrSystemNotFound,
 		},
 	}
 
@@ -57,7 +66,7 @@ func Test_GetPackageHandler(t *testing.T) {
 	)
 
 	for _, tc := range cases {
-		p, err := GetPackageHandler(ctx, nil, logger, &MockInfoResolver{info: tc.info})
+		p, err := GetPackageHandler(ctx, nil, logger, &common.MockInfoResolver{SysInfo: tc.info})
 		if tc.err != nil {
 			require.ErrorIs(t, tc.err, err)
 		} else {

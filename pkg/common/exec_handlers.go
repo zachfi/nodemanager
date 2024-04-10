@@ -47,5 +47,5 @@ func (h *ExecHandlerCommon) RunCommand(ctx context.Context, command string, arg 
 	_, span := h.tracer.Start(ctx, "RunCommand")
 	defer span.End()
 
-	return runCommand(command, arg...)
+	return RunCommand(command, arg...)
 }

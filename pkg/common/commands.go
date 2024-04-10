@@ -8,7 +8,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func runCommand(command string, arg ...string) (string, int, error) {
+func RunCommand(command string, arg ...string) (string, int, error) {
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -24,8 +24,8 @@ func runCommand(command string, arg ...string) (string, int, error) {
 	return out.String(), cmd.ProcessState.ExitCode(), nil
 }
 
-func simpleRunCommand(command string, arg ...string) error {
-	out, _, err := runCommand(command, arg...)
+func SimpleRunCommand(command string, arg ...string) error {
+	out, _, err := RunCommand(command, arg...)
 	if err != nil {
 		return errors.Wrap(err, out)
 	}

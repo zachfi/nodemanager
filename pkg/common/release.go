@@ -50,7 +50,7 @@ func (r *UnameInfoResolver) Info() *SysInfo {
 	sys.OS.Name = osrelease.Name
 
 	args := []string{"-snrm"}
-	output, _, err := runCommand("uname", args...)
+	output, _, err := RunCommand("uname", args...)
 	if err != nil {
 		return sys
 	}
@@ -95,9 +95,9 @@ func (r *UnameInfoResolver) readOSRelease(configfile string) map[string]string {
 }
 
 type MockInfoResolver struct {
-	info *SysInfo
+	SysInfo *SysInfo
 }
 
 func (r *MockInfoResolver) Info() *SysInfo {
-	return r.info
+	return r.SysInfo
 }
