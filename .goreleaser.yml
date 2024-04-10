@@ -29,6 +29,7 @@ builds:
       - goos: freebsd
         goarch: arm
         goarm: 7
+    main: './cmd/'
 checksum:
   name_template: 'checksums.txt'
 snapshot:

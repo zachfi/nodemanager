@@ -1,7 +1,8 @@
 RELEASE_SCRIPT ?= ./scripts/release.sh
 
-REL_CMD ?= goreleaser
+REL_CMD  ?= goreleaser
 DIST_DIR ?= ./dist
+SRCDIR   ?= .
 
 # Example usage: make release version=0.11.0
 release: build
