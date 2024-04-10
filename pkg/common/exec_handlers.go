@@ -26,7 +26,7 @@ func GetExecHandler(ctx context.Context, tracer trace.Tracer, info SysInfoResolv
 	}
 
 	switch info.Info().OS.ID {
-	case "arch", "archarm", "freebsd":
+	case "arch", "archarm", "alpine", "freebsd":
 		return &ExecHandlerCommon{tracer: tracer}, nil
 	}
 

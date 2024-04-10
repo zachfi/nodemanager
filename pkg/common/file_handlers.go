@@ -72,26 +72,26 @@ func GetFileHandler(ctx context.Context, tracer trace.Tracer, log *slog.Logger, 
 	logger := log.With("handler", "FileHandler")
 
 	switch info.Info().OS.ID {
-	case "arch", "freebsd":
-		return &FileHandler_Common{tracer: tracer, logger: logger}, nil
+	case "arch", "archarm", "alpine", "freebsd":
+		return &FileHandlerCommon{tracer: tracer, logger: logger}, nil
 	}
 
-	return &FileHandler_Null{}, fmt.Errorf("file handler not found for system")
+	return &FileHandlerNull{}, fmt.Errorf("file handler not found for system")
 }
 
-type FileHandler_Null struct{}
+type FileHandlerNull struct{}
 
-func (h *FileHandler_Null) Chown(_ context.Context, _, _, _ string) error                { return nil }
-func (h *FileHandler_Null) SetMode(_ context.Context, _, _ string) error                 { return nil }
-func (h *FileHandler_Null) WriteContentFile(_ context.Context, _ string, _ []byte) error { return nil }
-func (h *FileHandler_Null) WriteTemplateFile(_ context.Context, _, _ string) error       { return nil }
+func (h *FileHandlerNull) Chown(_ context.Context, _, _, _ string) error                { return nil }
+func (h *FileHandlerNull) SetMode(_ context.Context, _, _ string) error                 { return nil }
+func (h *FileHandlerNull) WriteContentFile(_ context.Context, _ string, _ []byte) error { return nil }
+func (h *FileHandlerNull) WriteTemplateFile(_ context.Context, _, _ string) error       { return nil }
 
-type FileHandler_Common struct {
+type FileHandlerCommon struct {
 	tracer trace.Tracer
 	logger *slog.Logger
 }
 
-func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group string) error {
+func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string) error {
 	var err error
 	_, span := h.tracer.Start(ctx, "Chown")
 	defer func() {
@@ -133,7 +133,7 @@ func (h *FileHandler_Common) Chown(ctx context.Context, path, owner, group strin
 	return nil
 }
 
-func (h *FileHandler_Common) SetMode(ctx context.Context, path, mode string) error {
+func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) error {
 	var err error
 	_, span := h.tracer.Start(ctx, "SetMode")
 	defer func() {
@@ -159,7 +159,7 @@ func (h *FileHandler_Common) SetMode(ctx context.Context, path, mode string) err
 	return nil
 }
 
-func (h *FileHandler_Common) WriteContentFile(ctx context.Context, path string, bytes []byte) error {
+func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, bytes []byte) error {
 	var err error
 	_, span := h.tracer.Start(ctx, "WriteContentFile")
 	defer func() {
@@ -185,7 +185,7 @@ func (h *FileHandler_Common) WriteContentFile(ctx context.Context, path string, 
 	return nil
 }
 
-func (h *FileHandler_Common) WriteTemplateFile(ctx context.Context, path, template string) error {
+func (h *FileHandlerCommon) WriteTemplateFile(ctx context.Context, path, template string) error {
 	var err error
 	_, span := h.tracer.Start(ctx, "WriteTemplateFile")
 	defer func() {
