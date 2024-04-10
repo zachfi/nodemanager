@@ -42,4 +42,4 @@ changelog:
       - '^test:'
 archives:
   - id: 'default'
-    files: ['contrib/arch/nodemanager.service']
+    files: []
