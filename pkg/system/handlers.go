@@ -77,11 +77,16 @@ func (h *HandlerFreeBSD) Upgrade(ctx context.Context) error {
 		return err
 	}
 
-	_, exit, err := common.RunCommand("/usr/sbin/freebsd-update", "fetch", "install")
+	output, exit, err := common.RunCommand("/usr/sbin/freebsd-update", "fetch")
+	if err != nil {
+		h.logger.Error("failed to run freebsd-udpate fetch", "err", err, "exit", exit, "output", output)
+	}
+
+	output, exit, err = common.RunCommand("/usr/sbin/freebsd-update", "install")
 	if exit == 2 {
 		return nil // no updates to install
 	} else if err != nil {
-		h.logger.Error("failed to call freebsd-update fetch install", "err", err)
+		h.logger.Error("failed to run freebsd-udpate install", "err", err, "exit", exit, "output", output)
 	}
 
 	return nil
