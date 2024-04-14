@@ -41,6 +41,15 @@ spec:
             properties:
               domain:
                 type: string
+              upgrade:
+                properties:
+                  delay:
+                    type: string
+                  group:
+                    type: string
+                  schedule:
+                    type: string
+                type: object
             type: object
           status:
             description: ManagedNodeStatus defines the observed state of ManagedNode

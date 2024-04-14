@@ -87,6 +87,9 @@ github.com/google/pprof/profile
 # github.com/google/uuid v1.3.0
 ## explicit
 github.com/google/uuid
+# github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75
+## explicit
+github.com/gorhill/cronexpr
 # github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0
 ## explicit; go 1.17
 github.com/grpc-ecosystem/grpc-gateway/v2/internal/httprule

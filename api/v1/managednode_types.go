@@ -22,7 +22,14 @@ import (
 
 // ManagedNodeSpec defines the desired state of ManagedNode
 type ManagedNodeSpec struct {
-	Domain string `json:"domain,omitempty"`
+	Domain  string  `json:"domain,omitempty"`
+	Upgrade Upgrade `json:"upgrade,omitempty"`
+}
+
+type Upgrade struct {
+	Group    string `json:"group,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
+	Delay    string `json:"delay,omitempty"`
 }
 
 // ManagedNodeStatus defines the observed state of ManagedNode
