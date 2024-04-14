@@ -4,10 +4,11 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/zachfi/nodemanager/pkg/common"
-	"github.com/zachfi/nodemanager/pkg/packages"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/packages"
 )
 
 type Handler interface {
@@ -55,10 +56,9 @@ func (h *HandlerFreeBSD) Reboot(ctx context.Context) {
 	_, span := h.tracer.Start(ctx, "Reboot")
 	defer span.End()
 
-	// /sbin/shutdown
 	err := common.SimpleRunCommand("/sbin/shutdown", "-r", "now")
 	if err != nil {
-		h.logger.Error("failed to call reboot")
+		h.logger.Error("failed to call reboot", "err", err)
 	}
 }
 
@@ -81,7 +81,7 @@ func (h *HandlerFreeBSD) Upgrade(ctx context.Context) error {
 	if exit == 2 {
 		return nil // no updates to install
 	} else if err != nil {
-		h.logger.Error("failed to call freebsd-update fetch install")
+		h.logger.Error("failed to call freebsd-update fetch install", "err", err)
 	}
 
 	return nil
@@ -98,7 +98,7 @@ func (h *HandlerSystemd) Reboot(ctx context.Context) {
 
 	err := common.SimpleRunCommand("/usr/sbin/systemctl", "reboot")
 	if err != nil {
-		h.logger.Error("failed to call reboot")
+		h.logger.Error("failed to call reboot", "err", err)
 	}
 }
 
