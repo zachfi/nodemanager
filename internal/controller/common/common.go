@@ -1,4 +1,4 @@
-package controller
+package common
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"os"
 
-	commonv1 "github.com/zachfi/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/types"

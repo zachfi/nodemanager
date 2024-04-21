@@ -38,8 +38,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	commonv1 "github.com/zachfi/nodemanager/api/v1"
-	"github.com/zachfi/nodemanager/internal/controller"
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	controller "github.com/zachfi/nodemanager/internal/controller/common"
 
 	//+kubebuilder:scaffold:imports
 	"github.com/zachfi/zkit/pkg/tracing"

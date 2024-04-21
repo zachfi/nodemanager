@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package common
 
 import (
 	"context"
@@ -30,7 +30,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	commonnodemanagerv1 "github.com/zachfi/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 )
 
 var _ = Describe("ConfigSet Controller", func() {
@@ -43,13 +43,13 @@ var _ = Describe("ConfigSet Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		configset := &commonnodemanagerv1.ConfigSet{}
+		configset := &commonv1.ConfigSet{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind ConfigSet")
 			err := k8sClient.Get(ctx, typeNamespacedName, configset)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &commonnodemanagerv1.ConfigSet{
+				resource := &commonv1.ConfigSet{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -62,7 +62,7 @@ var _ = Describe("ConfigSet Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &commonnodemanagerv1.ConfigSet{}
+			resource := &commonv1.ConfigSet{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

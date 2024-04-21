@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package common
 
 import (
 	"context"
@@ -30,7 +30,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	commonnodemanagerv1 "github.com/zachfi/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 )
 
 var _ = Describe("ManagedNode Controller", func() {
@@ -43,13 +43,13 @@ var _ = Describe("ManagedNode Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		managednode := &commonnodemanagerv1.ManagedNode{}
+		managednode := &commonv1.ManagedNode{}
 
 		BeforeEach(func() {
 			By("creating the custom resource for the Kind ManagedNode")
 			err := k8sClient.Get(ctx, typeNamespacedName, managednode)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &commonnodemanagerv1.ManagedNode{
+				resource := &commonv1.ManagedNode{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -62,7 +62,7 @@ var _ = Describe("ManagedNode Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &commonnodemanagerv1.ManagedNode{}
+			resource := &commonv1.ManagedNode{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 

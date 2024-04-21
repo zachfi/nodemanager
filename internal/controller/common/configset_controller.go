@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package common
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	commonv1 "github.com/zachfi/nodemanager/api/v1"
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/packages"
 	"github.com/zachfi/nodemanager/pkg/services"

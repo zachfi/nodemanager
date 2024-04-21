@@ -5,6 +5,7 @@
 domain: nodemanager
 layout:
 - go.kubebuilder.io/v4
+multigroup: true
 projectName: nodemanager
 repo: github.com/zachfi/nodemanager
 resources:
