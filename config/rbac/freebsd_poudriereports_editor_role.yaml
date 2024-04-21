@@ -1,0 +1,31 @@
+# permissions for end users to edit poudriereports.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: poudriereports-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: nodemanager
+    app.kubernetes.io/part-of: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: poudriereports-editor-role
+rules:
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudriereports
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudriereports/status
+  verbs:
+  - get

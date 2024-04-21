@@ -4,6 +4,9 @@
 resources:
 - bases/common.nodemanager_configsets.yaml
 - bases/common.nodemanager_managednodes.yaml
+- bases/freebsd.nodemanager_poudrierejails.yaml
+- bases/freebsd.nodemanager_poudriereports.yaml
+- bases/freebsd.nodemanager_poudrierebulks.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patches:
@@ -11,12 +14,18 @@ patches:
 # patches here are for enabling the conversion webhook for each CRD
 #- path: patches/webhook_in_configsets.yaml
 #- path: patches/webhook_in_managednodes.yaml
+#- path: patches/webhook_in_freebsd_poudrierejails.yaml
+#- path: patches/webhook_in_freebsd_poudriereports.yaml
+#- path: patches/webhook_in_freebsd_poudrierebulks.yaml
 #+kubebuilder:scaffold:crdkustomizewebhookpatch
 
 # [CERTMANAGER] To enable cert-manager, uncomment all the sections with [CERTMANAGER] prefix.
 # patches here are for enabling the CA injection for each CRD
 #- path: patches/cainjection_in_configsets.yaml
 #- path: patches/cainjection_in_managednodes.yaml
+#- path: patches/cainjection_in_freebsd_poudrierejails.yaml
+#- path: patches/cainjection_in_freebsd_poudriereports.yaml
+#- path: patches/cainjection_in_freebsd_poudrierebulks.yaml
 #+kubebuilder:scaffold:crdkustomizecainjectionpatch
 
 # [WEBHOOK] To enable webhook, uncomment the following section

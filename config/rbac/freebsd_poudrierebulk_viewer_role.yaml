@@ -1,0 +1,27 @@
+# permissions for end users to view poudrierebulks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: poudrierebulk-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: nodemanager
+    app.kubernetes.io/part-of: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: poudrierebulk-viewer-role
+rules:
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrierebulks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrierebulks/status
+  verbs:
+  - get

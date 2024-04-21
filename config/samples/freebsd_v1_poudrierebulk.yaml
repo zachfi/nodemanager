@@ -1,0 +1,9 @@
+apiVersion: freebsd.nodemanager/v1
+kind: PoudriereBulk
+metadata:
+  labels:
+    app.kubernetes.io/name: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: poudrierebulk-sample
+spec:
+  # TODO(user): Add fields here

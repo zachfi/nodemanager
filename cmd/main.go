@@ -40,6 +40,10 @@ import (
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	controller "github.com/zachfi/nodemanager/internal/controller/common"
+	"github.com/zachfi/nodemanager/pkg/common"
+
+	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	freebsdcontroller "github.com/zachfi/nodemanager/internal/controller/freebsd"
 
 	//+kubebuilder:scaffold:imports
 	"github.com/zachfi/zkit/pkg/tracing"
@@ -80,6 +84,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(commonv1.AddToScheme(scheme))
+	utilruntime.Must(freebsdv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -169,6 +174,7 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
+	// Common
 	managedNodeReconciler := &controller.ManagedNodeReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -192,13 +198,31 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
 	}
+
+	// OS specific
+	resolver := &common.UnameInfoResolver{}
+	switch resolver.Info().OS.ID {
+	case "freebsd":
+		poudriereReconciler := &freebsdcontroller.PoudriereReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}
+		poudriereReconciler.WithTracer(otel.Tracer("ConfigSet"))
+		poudriereReconciler.WithLogger(logger.With("reconciler", "Poudriere"))
+
+		if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
+			os.Exit(1)
+		}
+	}
+
 	//+kubebuilder:scaffold:builder
 
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+	if err = mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err = mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}

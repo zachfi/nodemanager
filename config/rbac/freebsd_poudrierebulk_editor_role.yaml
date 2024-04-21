@@ -1,0 +1,31 @@
+# permissions for end users to edit poudrierebulks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: poudrierebulk-editor-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: nodemanager
+    app.kubernetes.io/part-of: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: poudrierebulk-editor-role
+rules:
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrierebulks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrierebulks/status
+  verbs:
+  - get

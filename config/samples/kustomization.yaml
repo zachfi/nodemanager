@@ -2,4 +2,7 @@
 resources:
 - common_v1_configset.yaml
 - common_v1_managednode.yaml
+- freebsd_v1_poudrierejail.yaml
+- freebsd_v1_poudriereports.yaml
+- freebsd_v1_poudrierebulk.yaml
 #+kubebuilder:scaffold:manifestskustomizesamples

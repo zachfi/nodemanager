@@ -27,4 +27,33 @@ resources:
   kind: ManagedNode
   path: github.com/zachfi/nodemanager/api/v1
   version: v1
+- controller: true
+  domain: nodemanager
+  group: freebsd
+  kind: Poudriere
+  version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: nodemanager
+  group: freebsd
+  kind: PoudriereJail
+  path: github.com/zachfi/nodemanager/api/freebsd/v1
+  version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: nodemanager
+  group: freebsd
+  kind: PoudrierePorts
+  path: github.com/zachfi/nodemanager/api/freebsd/v1
+  version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: nodemanager
+  group: freebsd
+  kind: PoudriereBulk
+  path: github.com/zachfi/nodemanager/api/freebsd/v1
+  version: v1
 version: "3"

@@ -56,3 +56,29 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrieres
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrieres/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - poudrieres/status
+  verbs:
+  - get
+  - patch
+  - update
