@@ -62,13 +62,11 @@ func (h *ServiceHandlerOpenRC) Status(ctx context.Context, name string) (string,
 	}
 
 	re := regexp.MustCompile(`(\w+)\s+=\s+(\w+)`)
-	m := re.FindAllStringSubmatch(output, 0)
-	if m != nil {
-		for _, mm := range m {
-			if mm[1] == name {
-				if mm[2] == "running" {
-					return Running.String(), nil
-				}
+	m := re.FindAllStringSubmatch(output, -1)
+	for _, mm := range m {
+		if mm[1] == name {
+			if mm[2] == "running" {
+				return Running.String(), nil
 			}
 		}
 	}

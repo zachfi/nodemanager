@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
@@ -37,6 +36,7 @@ import (
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/system"
+	"github.com/zachfi/nodemanager/pkg/util"
 )
 
 // ManagedNodeReconciler reconciles a ManagedNode object
@@ -75,7 +75,7 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}()
 
 	logger.Info("msg", "namespace", req.Namespace, "namespacedName", req.NamespacedName)
-	node, err = r.getNode(ctx, req)
+	node, err = util.GetNode(ctx, r, req)
 	if err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -119,28 +119,6 @@ func (r *ManagedNodeReconciler) WithTracer(tracer trace.Tracer) {
 
 func (r *ManagedNodeReconciler) WithLogger(logger *slog.Logger) {
 	r.logger = logger
-}
-
-func (r *ManagedNodeReconciler) getNode(ctx context.Context, req ctrl.Request) (*commonv1.ManagedNode, error) {
-	var (
-		err  error
-		node commonv1.ManagedNode
-	)
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, client.IgnoreNotFound(err)
-	}
-
-	if hostname != req.Name {
-		return nil, nil
-	}
-
-	if err := r.Get(ctx, req.NamespacedName, &node); err != nil {
-		return nil, client.IgnoreNotFound(err)
-	}
-
-	return &node, nil
 }
 
 func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *commonv1.ManagedNode) error {

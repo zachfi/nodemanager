@@ -26,7 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/poudriere"
+	"github.com/zachfi/nodemanager/pkg/util"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 )
@@ -50,6 +52,23 @@ type PoudriereReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.2/pkg/reconcile
 func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
+
+	node, err := util.GetNode(ctx, r, req)
+	if err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Bail if this node is disabled
+	gate := common.LabelGate(common.NoneMatch, node.Labels, map[string]string{common.PoudriereBuild: "disabled"})
+	if gate {
+		return ctrl.Result{}, err
+	}
+
+	// Match only the key
+	gate = common.LabelGate(common.AnyKey, node.Labels, map[string]string{common.PoudriereBuild: ""})
+	if !gate {
+		return ctrl.Result{}, err
+	}
 
 	p, err := poudriere.NewPorts(r.logger, r.tracer)
 	if err != nil {
@@ -108,8 +127,6 @@ func (r *PoudriereReconciler) ensureAllTrees(ctx context.Context, p *poudriere.P
 	}
 
 	for _, t := range trees.Items {
-		// FIXME: Gatecheck on the labels
-
 		if v, ok := exists(t.Name, existing); ok {
 			err = p.Update(*v)
 			if err != nil {
@@ -153,8 +170,6 @@ func (r *PoudriereReconciler) ensureAllJails(ctx context.Context, p *poudriere.P
 	}
 
 	for _, t := range jails.Items {
-		// FIXME: Gatecheck on the labels
-
 		if v, ok := exists(t.Name, existing); ok {
 			err = p.Update(*v)
 			if err != nil {
