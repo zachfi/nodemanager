@@ -39,7 +39,8 @@ type Ports interface {
 var _ Ports = &PoudrierePorts{}
 
 const (
-	poudriere = "/usr/local/bin/poudriere"
+	poudriere  = "/usr/local/bin/poudriere"
+	portshaker = "/usr/local/bin/portshaker"
 )
 
 type PoudrierePorts struct {

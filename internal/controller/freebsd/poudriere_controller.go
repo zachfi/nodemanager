@@ -90,10 +90,15 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	/* err := r.buildAll(ctx, p) */
-	/* if err != nil { */
-	/* 	return ctrl.Result{}, err */
-	/* } */
+	b, err := poudriere.NewBulk(r.logger, r.tracer)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	err = r.buildAll(ctx, b)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -195,6 +200,25 @@ func (r *PoudriereReconciler) ensureAllJails(ctx context.Context, p *poudriere.P
 				continue
 			}
 		}
+	}
+
+	return nil
+}
+
+func (r *PoudriereReconciler) buildAll(ctx context.Context, p *poudriere.PoudriereBulk) error {
+	bulks := &freebsdv1.PoudriereBulkList{}
+	err := r.List(ctx, bulks)
+	if err != nil {
+		return err
+	}
+
+	err = p.Sync()
+	if err != nil {
+		return err
+	}
+
+	for _, b := range bulks.Items {
+		p.Build(b.Spec.Jail, b.Spec.Tree, b.Spec.Ports)
 	}
 
 	return nil
