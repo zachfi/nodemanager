@@ -274,14 +274,10 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 	for _, file := range fileSet {
 
-		var ensure common.FileEnsure
-		if file.Ensure == "" {
-			ensure = common.File
-		} else {
-			ensure = common.FileEnsureFromString(file.Ensure)
-			if ensure == common.UnhandledFileEnsure {
-				return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
-			}
+		var ensure common.FileEnsure = common.File
+		ensure = common.FileEnsureFromString(file.Ensure)
+		if ensure == common.UnhandledFileEnsure {
+			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
 		}
 
 		switch ensure {
@@ -351,6 +347,11 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				if err != nil {
 					return changedFiles, err
 				}
+			}
+		case common.Absent:
+			err = os.Remove(file.Path)
+			if err != nil {
+				return changedFiles, err
 			}
 		}
 	}

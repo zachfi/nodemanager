@@ -21,6 +21,7 @@ const (
 	File
 	Directory
 	Symlink
+	Absent
 )
 
 func (f FileEnsure) String() string {
@@ -33,20 +34,22 @@ func (f FileEnsure) String() string {
 		return "directory"
 	case Symlink:
 		return "symlink"
+	case Absent:
+		return "absent"
 	}
 	return "unhandled"
 }
 
 func FileEnsureFromString(ensure string) FileEnsure {
 	switch ensure {
-	case "unhandled":
-		return UnhandledFileEnsure
-	case "file":
+	case "file", "": // default
 		return File
 	case "directory":
 		return Directory
 	case "symlink":
 		return Symlink
+	case "absent":
+		return Absent
 	default:
 		return UnhandledFileEnsure
 	}
@@ -101,9 +104,11 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		span.End()
 	}()
 
-	span.SetAttributes(attribute.String("path", path))
-	span.SetAttributes(attribute.String("owner", owner))
-	span.SetAttributes(attribute.String("group", group))
+	span.SetAttributes(
+		attribute.String("path", path),
+		attribute.String("owner", owner),
+		attribute.String("group", group),
+	)
 
 	u, err := user.Lookup(owner)
 	if err != nil {
