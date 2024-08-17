@@ -6,8 +6,11 @@ import (
 	"log/slog"
 
 	"github.com/zachfi/nodemanager/pkg/common"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
+
+var _ Handler = &ServiceHandlerFreeBSD{}
 
 // FREEBSD
 type ServiceHandlerFreeBSD struct {
@@ -54,13 +57,22 @@ func (h *ServiceHandlerFreeBSD) Restart(ctx context.Context, name string) error 
 	return common.SimpleRunCommand("service", name, "restart")
 }
 
-func (h *ServiceHandlerFreeBSD) Status(ctx context.Context, name string) (string, error) {
+func (h *ServiceHandlerFreeBSD) Status(ctx context.Context, name string) (Status, error) {
+	var status Status = Stopped
+
 	_, span := h.tracer.Start(ctx, "Status")
-	defer span.End()
+	defer func() {
+		span.SetAttributes(attribute.String("status", status.String()))
+		span.End()
+	}()
+
 	_, exit, err := common.RunCommand("service", name, "status")
+	span.SetAttributes(
+		attribute.String("status", Running.String()),
+	)
 	if exit == 0 {
-		return Running.String(), nil
+		status = Running
 	}
 
-	return Stopped.String(), err
+	return status, err
 }

@@ -15,19 +15,25 @@ type Handler interface {
 	Start(context.Context, string) error
 	Stop(context.Context, string) error
 	Restart(context.Context, string) error
-	Status(context.Context, string) (string, error)
+	Status(context.Context, string) (Status, error)
 	SetArguments(context.Context, string, string) error
 }
 
-type ServiceStatus int64
+type Status int64
 
 const (
-	UnknownServiceStatus ServiceStatus = iota
+	UnknownServiceStatus Status = iota
 	Running
 	Stopped
 )
 
-func (s ServiceStatus) String() string {
+var StatusByName map[string]Status = map[string]Status{
+	"unknown": UnknownServiceStatus,
+	"running": Running,
+	"stopped": Stopped,
+}
+
+func (s Status) String() string {
 	switch s {
 	case UnknownServiceStatus:
 		return "unknown"
@@ -75,6 +81,6 @@ func (h *ServiceHandlerNull) Start(_ context.Context, _ string) error           
 func (h *ServiceHandlerNull) Stop(_ context.Context, _ string) error            { return nil }
 func (h *ServiceHandlerNull) Restart(_ context.Context, _ string) error         { return nil }
 func (h *ServiceHandlerNull) SetArguments(_ context.Context, _, _ string) error { return nil }
-func (h *ServiceHandlerNull) Status(_ context.Context, _ string) (string, error) {
-	return UnknownServiceStatus.String(), nil
+func (h *ServiceHandlerNull) Status(_ context.Context, _ string) (Status, error) {
+	return UnknownServiceStatus, nil
 }

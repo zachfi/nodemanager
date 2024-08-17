@@ -197,8 +197,10 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
 
-	var totalErrs error
-	var restartServices []string
+	var (
+		totalErrs       error
+		restartServices []string
+	)
 
 	for _, cf := range changedFiles {
 		for _, svc := range serviceSet {
@@ -234,16 +236,18 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 		}
 
 		status, _ := handler.Status(ctx, svc.Name)
+		span.SetAttributes(attribute.String("status", status.String()))
+
 		switch svc.Ensure {
 		case services.Running.String():
-			if status != services.Running.String() {
+			if status != services.Running {
 				err := handler.Start(ctx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to start service")
 				}
 			}
 		case services.Stopped.String():
-			if status != services.Stopped.String() {
+			if status != services.Stopped {
 				err := handler.Stop(ctx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to stop service")

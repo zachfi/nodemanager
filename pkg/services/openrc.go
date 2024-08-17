@@ -10,6 +10,8 @@ import (
 	"github.com/zachfi/nodemanager/pkg/common"
 )
 
+var _ Handler = &ServiceHandlerOpenRC{}
+
 // OPENRC
 type ServiceHandlerOpenRC struct {
 	tracer trace.Tracer
@@ -52,13 +54,13 @@ func (h *ServiceHandlerOpenRC) Restart(ctx context.Context, name string) error {
 	return common.SimpleRunCommand("/sbin/rc-service", name, "restart")
 }
 
-func (h *ServiceHandlerOpenRC) Status(ctx context.Context, name string) (string, error) {
+func (h *ServiceHandlerOpenRC) Status(ctx context.Context, name string) (Status, error) {
 	_, span := h.tracer.Start(ctx, "Status")
 	defer span.End()
 
 	output, exit, err := common.RunCommand("/bin/rc-status", "sysinit", "-Cqf", "ini")
 	if exit == 0 {
-		return Running.String(), nil
+		return Running, nil
 	}
 
 	re := regexp.MustCompile(`(\w+)\s+=\s+(\w+)`)
@@ -66,10 +68,10 @@ func (h *ServiceHandlerOpenRC) Status(ctx context.Context, name string) (string,
 	for _, mm := range m {
 		if mm[1] == name {
 			if mm[2] == "running" {
-				return Running.String(), nil
+				return Running, nil
 			}
 		}
 	}
 
-	return Stopped.String(), err
+	return Stopped, err
 }

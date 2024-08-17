@@ -8,6 +8,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+var _ Handler = &ServiceHandlerSystemd{}
+
 // SYSTEMD
 type ServiceHandlerSystemd struct {
 	tracer trace.Tracer
@@ -50,13 +52,13 @@ func (h *ServiceHandlerSystemd) Restart(ctx context.Context, name string) error 
 	return common.SimpleRunCommand("/usr/bin/systemctl", "restart", name)
 }
 
-func (h *ServiceHandlerSystemd) Status(ctx context.Context, name string) (string, error) {
+func (h *ServiceHandlerSystemd) Status(ctx context.Context, name string) (Status, error) {
 	_, span := h.tracer.Start(ctx, "Status")
 	defer span.End()
 	_, exit, err := common.RunCommand("/usr/bin/systemctl", "is-active", "--quiet", name)
 	if exit == 0 {
-		return Running.String(), nil
+		return Running, nil
 	}
 
-	return Stopped.String(), err
+	return Stopped, err
 }
