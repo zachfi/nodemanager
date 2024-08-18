@@ -116,7 +116,7 @@ func TestLabelGate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := LabelGate(tc.l, tc.source, tc.dest)
-			require.Equal(t, b, tc.b)
+			require.Equal(t, tc.b, b)
 		})
 	}
 }

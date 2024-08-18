@@ -31,29 +31,33 @@ func LabelGate(logic Logic, labels map[string]string, dest map[string]string) bo
 	var matches int
 	for key, value := range dest {
 		for k, v := range labels {
-			if k == key && logic == AnyKey {
-				return true
-			}
-
-			if k == key && v == value {
-				matches++
-				if logic == Or {
+			if k == key {
+				switch logic {
+				case AnyKey:
 					return true
 				}
-			} else {
-				if logic == And {
-					return false
+
+				if v == value {
+					matches++
+					switch logic {
+					case NoneMatch:
+						return false
+					case Or:
+						return true
+					}
 				}
 			}
 		}
 	}
 
 	switch logic {
+	case And:
+		return matches == len(labels)
 	case NoneMatch:
-		if matches > 0 {
-			return false
+		if matches == 0 {
+			return true
 		}
 	}
 
-	return matches == len(dest)
+	return false
 }
