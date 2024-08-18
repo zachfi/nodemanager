@@ -1,8 +1,8 @@
 module github.com/zachfi/nodemanager
 
-go 1.22
+go 1.23
 
-toolchain go1.22.1
+toolchain go1.23.0
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
