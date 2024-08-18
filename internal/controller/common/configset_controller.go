@@ -199,7 +199,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 
 	var (
 		totalErrs       error
-		restartServices []string
+		restartServices map[string]struct{}
 	)
 
 	for _, cf := range changedFiles {
@@ -208,7 +208,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 			if svc.Ensure == services.Running.String() {
 				for _, sub := range svc.SusbscribeFiles {
 					if sub == cf {
-						restartServices = append(restartServices, svc.Name)
+						restartServices[svc.Name] = struct{}{}
 					}
 				}
 			}
@@ -256,7 +256,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 		}
 	}
 
-	for _, restart := range restartServices {
+	for restart := range restartServices {
 		err := handler.Restart(ctx, restart)
 		r.logger.Info("restarting service", "name", restart)
 		if err != nil {
