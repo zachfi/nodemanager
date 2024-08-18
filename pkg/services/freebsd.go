@@ -58,7 +58,7 @@ func (h *ServiceHandlerFreeBSD) Restart(ctx context.Context, name string) error 
 }
 
 func (h *ServiceHandlerFreeBSD) Status(ctx context.Context, name string) (Status, error) {
-	var status Status = Stopped
+	status := Stopped
 
 	_, span := h.tracer.Start(ctx, "Status")
 	defer func() {
