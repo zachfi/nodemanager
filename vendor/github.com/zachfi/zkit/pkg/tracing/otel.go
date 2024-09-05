@@ -15,6 +15,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func InstallOpenTelemetryTracer(config *Config, logger *slog.Logger, appName, version string) (func(), error) {
@@ -37,7 +38,7 @@ func InstallOpenTelemetryTracer(config *Config, logger *slog.Logger, appName, ve
 		return nil, errors.Wrap(err, "failed to initialize trace resuorce")
 	}
 
-	conn, err := grpc.DialContext(ctx, config.OtelEndpoint, grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.NewClient(config.OtelEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to dial otel grpc")
 	}
