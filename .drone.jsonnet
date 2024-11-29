@@ -3,13 +3,19 @@ local pipeline(name) = {
   name: name,
   steps: [],
   depends_on: [],
-
+  trigger: {
+    ref: [
+      'refs/heads/main',
+      'refs/heads/dependabot/**',
+      'refs/tags/v*',
+    ],
+  },
 };
 
 local withPipelineTags() = {
-  trigger+: {
-    ref+: [
-      'refs/tags/*',
+  trigger: {
+    ref: [
+      'refs/tags/v*',
     ],
   },
 };
