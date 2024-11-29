@@ -13,6 +13,16 @@ steps:
   image: zachfi/build-image
   name: test
   pull: always
+trigger:
+  ref:
+  - refs/heads/main
+  - refs/heads/dependabot/**
+  - refs/tags/v*
+---
+depends_on: []
+kind: pipeline
+name: main
+steps:
 - commands:
   - make snapshot
   image: zachfi/build-image
@@ -21,8 +31,6 @@ steps:
 trigger:
   ref:
   - refs/heads/main
-  - refs/heads/dependabot/**
-  - refs/tags/v*
 ---
 depends_on: []
 kind: pipeline
@@ -44,6 +52,6 @@ trigger:
   - refs/tags/v*
 ---
 kind: signature
-hmac: e41449d69041d9104510a5027cf24fce399b8f86884ec19a0845cdb5d1f86b75
+hmac: 2583fac510e43550e9b5be98dee1075cad937e9e3836a476cd079c650bf76723
 
 ...

@@ -12,6 +12,14 @@ local pipeline(name) = {
   },
 };
 
+local withPipelineMain() = {
+  trigger: {
+    ref: [
+      'refs/heads/main',
+    ],
+  },
+};
+
 local withPipelineTags() = {
   trigger: {
     ref: [
@@ -62,6 +70,14 @@ local withGithub() = {
         [
           make('build'),
           make('test'),
+        ],
+    }
+  ),
+  (
+    pipeline('main')
+    + withPipelineMain() {
+      steps:
+        [
           make('snapshot'),
         ],
     }
