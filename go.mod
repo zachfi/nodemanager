@@ -1,6 +1,8 @@
 module github.com/zachfi/nodemanager
 
 go 1.23
+toolchain go1.24.1
+
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/go-ini/ini v1.67.0
@@ -12,8 +14,8 @@ require (
 	github.com/zachfi/zkit v0.1.2
 	go.opentelemetry.io/otel v1.34.0
 	go.opentelemetry.io/otel/trace v1.34.0
-	k8s.io/api v0.32.0
-	k8s.io/apimachinery v0.32.0
+	k8s.io/api v0.32.3
+	k8s.io/apimachinery v0.32.3
 	k8s.io/client-go v0.32.0
 	sigs.k8s.io/controller-runtime v0.20.1
 )
