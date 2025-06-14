@@ -199,7 +199,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 
 	var (
 		totalErrs       error
-		restartServices map[string]struct{}
+		restartServices = make(map[string]struct{})
 	)
 
 	for _, cf := range changedFiles {
@@ -274,8 +274,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 	for _, file := range fileSet {
 
-		var ensure common.FileEnsure = common.File
-		ensure = common.FileEnsureFromString(file.Ensure)
+		ensure := common.FileEnsureFromString(file.Ensure)
 		if ensure == common.UnhandledFileEnsure {
 			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
 		}
@@ -310,7 +309,15 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				}
 			}
 
+			if file.Mode != "" {
+				err := handler.SetMode(ctx, file.Path, file.Mode)
+				if err != nil {
+					return changedFiles, errors.Wrap(err, "failed to set file mode")
+				}
+			}
+
 		case common.Directory:
+			// Create the directory if it does not exist, with the correct mode.
 			if _, err := os.Stat(file.Path); os.IsNotExist(err) {
 				var fileMode os.FileMode
 
@@ -319,7 +326,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				} else {
 					fileMode, err = common.GetFileModeFromString(ctx, file.Mode)
 					if err != nil {
-						return changedFiles, err
+						return changedFiles, errors.Wrap(err, "failed to get file mode from string")
 					}
 				}
 
@@ -328,12 +335,20 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 					return changedFiles, err
 				}
 				changedFiles = append(changedFiles, file.Path)
+			} else {
+				// Set the mode
+				if file.Mode != "" {
+					err := handler.SetMode(ctx, file.Path, file.Mode)
+					if err != nil {
+						return changedFiles, errors.Wrap(err, "failed to set file mode")
+					}
+				}
 			}
 
 		case common.Symlink:
 			target, err := os.Readlink(file.Path)
 			if err != nil {
-				return changedFiles, err
+				return changedFiles, errors.Wrapf(err, "failed to read symlink %q", file.Path)
 			}
 
 			if target != file.Target {
@@ -345,13 +360,13 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 				err := os.Symlink(file.Target, file.Path)
 				if err != nil {
-					return changedFiles, err
+					return changedFiles, errors.Wrapf(err, "failed to create symlink %q -> %q", file.Path, file.Target)
 				}
 			}
 		case common.Absent:
 			err = os.Remove(file.Path)
 			if err != nil {
-				return changedFiles, err
+				return changedFiles, errors.Wrapf(err, "failed to remove file %q", file.Path)
 			}
 		}
 	}
