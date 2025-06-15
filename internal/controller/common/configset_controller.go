@@ -290,7 +290,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 				content, err := r.buildTemplate(ctx, file.Template, data)
 				if err != nil {
-					return changedFiles, err
+					return changedFiles, errors.Wrap(err, fmt.Sprintf("failed to build template for file %q: %s", file.Path, file.Template))
 				}
 
 				if len(content) > 0 {
