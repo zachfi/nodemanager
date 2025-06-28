@@ -202,6 +202,10 @@ func (h *FileHandlerCommon) WriteTemplateFile(ctx context.Context, path, templat
 
 	span.SetAttributes(attribute.String("path", path))
 
+	// Render the template into bytes
+	// b, err := render()
+	// return h.WriteContentFile(ctx, path, b)
+
 	return nil
 }
 
