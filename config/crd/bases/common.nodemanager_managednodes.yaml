@@ -46,6 +46,9 @@ spec:
                   delay:
                     type: string
                   group:
+                    description: |-
+                      TODO: move group to the label.  This makes querying easier since we can
+                      filter on label, and we can't filter on a field in the spec.
                     type: string
                   schedule:
                     type: string

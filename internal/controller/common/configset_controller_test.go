@@ -20,10 +20,11 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -41,7 +42,7 @@ var _ = Describe("ConfigSet Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
 		}
 		configset := &commonv1.ConfigSet{}
 
@@ -54,14 +55,28 @@ var _ = Describe("ConfigSet Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: commonv1.ConfigSetSpec{
+						Packages: []commonv1.Package{
+							{
+								Name:   "chrony",
+								Ensure: "installed",
+							},
+						},
+						Services: []commonv1.Service{
+							{
+								Name:      "chronyd",
+								Enable:    true,
+								Ensure:    "running",
+								Arguments: "--config /etc/chrony/chrony.conf",
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &commonv1.ConfigSet{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
@@ -74,16 +89,31 @@ var _ = Describe("ConfigSet Controller", func() {
 			controllerReconciler := &ConfigSetReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
-				tracer: trace.NewNoopTracerProvider().Tracer("test"),
+				tracer: noop.NewTracerProvider().Tracer("test"),
 				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: systemHandler,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+			// Check the system mock details
+			Expect(systemHandler.Package().(*mockPackageHandler).installCalls).To(HaveKey("chrony"))
+			Expect(systemHandler.Service().(*mockServiceHandler).enableCalls).To(HaveKey("chronyd"))
+			Expect(systemHandler.Service().(*mockServiceHandler).startCalls).To(HaveKey("chronyd"))
+			Expect(systemHandler.Service().(*mockServiceHandler).setArgsCalls).To(HaveKey("chronyd"))
 		})
 	})
 })
+
+func TestConfigSetController(t *testing.T) {
+	cases := []struct {
+		name string
+	}{}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+		})
+	}
+}

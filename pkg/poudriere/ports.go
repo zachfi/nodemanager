@@ -7,9 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/zachfi/nodemanager/pkg/execs"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/zachfi/nodemanager/pkg/common"
 )
 
 type PortsTree struct {
@@ -56,15 +55,15 @@ func NewPorts(logger *slog.Logger, tracer trace.Tracer) (*PoudrierePorts, error)
 }
 
 func (p *PoudrierePorts) Create(tree PortsTree) error {
-	return common.SimpleRunCommand(poudriere, "ports", "-c", "-p", tree.Name, "-m", tree.FetchMethod)
+	return execs.SimpleRunCommand(poudriere, "ports", "-c", "-p", tree.Name, "-m", tree.FetchMethod)
 }
 
 func (p *PoudrierePorts) Delete(tree PortsTree) error {
-	return common.SimpleRunCommand(poudriere, "ports", "-d", "-p", tree.Name)
+	return execs.SimpleRunCommand(poudriere, "ports", "-d", "-p", tree.Name)
 }
 
 func (p *PoudrierePorts) List() ([]*PortsTree, error) {
-	out, _, err := common.RunCommand(poudriere, "ports", "-l")
+	out, _, err := execs.RunCommand(poudriere, "ports", "-l")
 	if err != nil {
 		return nil, err
 	}

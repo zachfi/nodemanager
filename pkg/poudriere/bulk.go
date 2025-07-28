@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/execs"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -28,9 +28,9 @@ func NewBulk(logger *slog.Logger, tracer trace.Tracer) (*PoudriereBulk, error) {
 }
 
 func (p *PoudriereBulk) Build(jail string, tree string, ports []string) error {
-	return common.SimpleRunCommand(poudriere, "bulk", "-p", tree, "-j", jail, "-j", "2", strings.Join(ports, ""))
+	return execs.SimpleRunCommand(poudriere, "bulk", "-p", tree, "-j", jail, "-j", "2", strings.Join(ports, ""))
 }
 
 func (p *PoudriereBulk) Sync() error {
-	return common.SimpleRunCommand(portshaker, "-v")
+	return execs.SimpleRunCommand(portshaker, "-v")
 }

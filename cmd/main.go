@@ -22,9 +22,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
+	"github.com/grafana/dskit/backoff"
 	"go.opentelemetry.io/otel"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
@@ -42,6 +44,10 @@ import (
 	controller "github.com/zachfi/nodemanager/internal/controller/common"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/system"
+
+	// "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
 
 	//+kubebuilder:scaffold:imports
 	"github.com/zachfi/zkit/pkg/tracing"
@@ -172,6 +178,12 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
+	system, err := system.New(ctrl.SetupSignalHandler(), logger)
+	if err != nil {
+		setupLog.Error(err, "unable to create system handler", "err", err)
+		os.Exit(1)
+	}
+
 	// Common
 	managedNodeReconciler := &controller.ManagedNodeReconciler{
 		Client: mgr.GetClient(),
@@ -179,6 +191,15 @@ func main() {
 	}
 	managedNodeReconciler.WithTracer(otel.Tracer("ManagedNode"))
 	managedNodeReconciler.WithLogger(logger.With("reconciler", "ManagedNode"))
+	managedNodeReconciler.WithSystem(system)
+
+	backoffConfig := backoff.Config{
+		MinBackoff: 3 * time.Second,
+		MaxBackoff: 3 * time.Minute,
+	}
+
+	locker := controller.NewKeyLocker(logger, backoffConfig, mgr.GetClient(), common.AnnotationUpgradeLock)
+	managedNodeReconciler.WithLocker(locker)
 
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
@@ -191,16 +212,16 @@ func main() {
 	}
 	configSetReconciler.WithTracer(otel.Tracer("ConfigSet"))
 	configSetReconciler.WithLogger(logger.With("reconciler", "ConfigSet"))
+	configSetReconciler.WithSystem(system)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
 	}
 
-	// OS specific
-	// resolver := &common.UnameInfoResolver{}
-	// switch resolver.Info().OS.ID {
-	// case "freebsd":
+	// Switch on the system implemetation
+	// switch system.Node().(type) {
+	// case *freebsd.FreeBSD:
 	// 	poudriereReconciler := &freebsdcontroller.PoudriereReconciler{
 	// 		Client: mgr.GetClient(),
 	// 		Scheme: mgr.GetScheme(),

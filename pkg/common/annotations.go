@@ -1,6 +1,6 @@
 package common
 
 var (
-	AnnotationUpgrading   = "upgrade.nodemanager/upgrading"
+	AnnotationUpgradeLock = "upgrade.nodemanager/lock"
 	AnnotationLastUpgrade = "upgrade.nodemanager/last"
 )

@@ -26,3 +26,4 @@ go.work
 *.swo
 *~
 cover.cov
+dist/

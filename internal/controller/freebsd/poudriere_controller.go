@@ -26,7 +26,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/common/labels"
+	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/poudriere"
 	"github.com/zachfi/nodemanager/pkg/util"
 
@@ -39,6 +40,7 @@ type PoudriereReconciler struct {
 	Scheme *runtime.Scheme
 	tracer trace.Tracer
 	logger *slog.Logger
+	system handler.System
 }
 
 //+kubebuilder:rbac:groups=freebsd.nodemanager,resources=poudrieres,verbs=get;list;watch;create;update;patch;delete
@@ -53,19 +55,19 @@ type PoudriereReconciler struct {
 func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	node, err := util.GetNode(ctx, r, req)
+	node, err := util.GetNode(ctx, r, req, r.system.Node())
 	if err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
 	// Bail if this node is disabled
-	gate := common.LabelGate(common.NoneMatch, node.Labels, map[string]string{common.PoudriereBuild: "disabled"})
+	gate := labels.LabelGate(labels.NoneMatch, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"})
 	if gate {
 		return ctrl.Result{}, err
 	}
 
 	// Match only the key
-	gate = common.LabelGate(common.AnyKey, node.Labels, map[string]string{common.PoudriereBuild: ""})
+	gate = labels.LabelGate(labels.AnyKey, node.Labels, map[string]string{labels.PoudriereBuild: ""})
 	if !gate {
 		return ctrl.Result{}, err
 	}

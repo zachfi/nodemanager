@@ -2,21 +2,21 @@ package util
 
 import (
 	"context"
-	"os"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/pkg/handler"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func GetNode(ctx context.Context, r client.Reader, req ctrl.Request) (*commonv1.ManagedNode, error) {
+func GetNode(ctx context.Context, r client.Reader, req ctrl.Request, h handler.NodeHandler) (*commonv1.ManagedNode, error) {
 	var (
 		err  error
 		node commonv1.ManagedNode
 	)
 
-	hostname, err := os.Hostname()
+	hostname, err := h.Hostname()
 	if err != nil {
 		return nil, client.IgnoreNotFound(err)
 	}

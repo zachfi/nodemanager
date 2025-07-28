@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/execs"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -49,15 +49,15 @@ func NewJail(logger *slog.Logger, tracer trace.Tracer) (*PoudriereJail, error) {
 }
 
 func (p *PoudriereJail) Create(jail BuildJail) error {
-	return common.SimpleRunCommand(poudriere, "jail", "-c", "-j", jail.Name, "-v", jail.Version, "-m", "http")
+	return execs.SimpleRunCommand(poudriere, "jail", "-c", "-j", jail.Name, "-v", jail.Version, "-m", "http")
 }
 
 func (p *PoudriereJail) Delete(jail BuildJail) error {
-	return common.SimpleRunCommand(poudriere, "jail", "-d", "-j", jail.Name)
+	return execs.SimpleRunCommand(poudriere, "jail", "-d", "-j", jail.Name)
 }
 
 func (p *PoudriereJail) List() ([]*BuildJail, error) {
-	out, _, err := common.RunCommand(poudriere, "jail", "-l")
+	out, _, err := execs.RunCommand(poudriere, "jail", "-l")
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func (p *PoudriereJail) List() ([]*BuildJail, error) {
 }
 
 func (p *PoudriereJail) Update(jail BuildJail) error {
-	return common.SimpleRunCommand(poudriere, "jail", "-u", "-j", jail.Name)
+	return execs.SimpleRunCommand(poudriere, "jail", "-u", "-j", jail.Name)
 }
 
 func (p *PoudriereJail) readPoudriereJailList(r io.Reader) ([]*BuildJail, error) {
