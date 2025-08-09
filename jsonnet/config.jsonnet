@@ -9,9 +9,9 @@
 
     name:: name,
     description:: this.name + ' jsonnet library',
-    repository:: 'github.com/jsonnet-libs/' + this.name + this.suffix,
+    repository:: 'github.com/zachfi/' + this.name + this.suffix,
     branch:: 'main',
-    site_url:: 'https://jsonnet-libs.github.io/' + this.name + this.suffix,
+    site_url:: 'https://zachfi.github.io/' + this.name + this.suffix,
 
     'skel/LICENSE': importstr '../LICENSE',
 
