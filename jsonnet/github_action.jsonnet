@@ -1,5 +1,5 @@
 local config = {
-  projectName: 'nodemanager',
+  projectName: 'zachfi/nodemanager',
   branchRef: 'refs/heads/main',
   branch: 'main',
 };

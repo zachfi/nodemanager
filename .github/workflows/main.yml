@@ -4,7 +4,7 @@
     "name": "Debugging Github Action values"
     "runs-on": "ubuntu-latest"
     "steps":
-    - "run": "echo onMaster? ${{ github.ref == 'refs/heads/main' && github.repository == 'nodemanager' }}"
+    - "run": "echo onMaster? ${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
     - "run": "echo ${{ github.repository }}"
     - "run": "echo ${{ github.ref }}"
     - "run": "echo ${{ github.event_name }}"
@@ -42,7 +42,7 @@
       "run": "make load"
     - "env":
         "DIFF": "true"
-        "GEN_COMMIT": "${{ github.ref == 'refs/heads/main' && github.repository == 'nodemanager' }}"
+        "GEN_COMMIT": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
         "GIT_COMMITTER_EMAIL": "86770550+jsonnet-libs-bot@users.noreply.github.com"
         "GIT_COMMITTER_NAME": "jsonnet-libs-bot"
         "SSH_KEY": "${{ secrets.DEPLOY_KEY }}"
@@ -63,25 +63,25 @@
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'nodemanager'"
+      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
       "run": "terraform init"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'nodemanager'"
+      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
       "run": "terraform validate -no-color"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'nodemanager'"
+      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
       "run": "terraform plan -no-color"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'nodemanager' }}"
+      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
       "run": "terraform init && terraform apply -no-color -auto-approve"
       "working-directory": "tf"
   "repos_with_pages":
@@ -101,25 +101,25 @@
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'nodemanager'"
+      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
       "run": "terraform init"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'nodemanager'"
+      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
       "run": "terraform validate -no-color"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'nodemanager'"
+      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
       "run": "terraform plan -no-color"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'nodemanager' }}"
+      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
       "run": "terraform init && terraform apply -no-color -auto-approve"
       "working-directory": "tf"
 "on":
