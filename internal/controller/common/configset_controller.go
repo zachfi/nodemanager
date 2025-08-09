@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -37,7 +38,8 @@ import (
 	"github.com/pkg/errors"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
-	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/files"
+	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/packages"
 	"github.com/zachfi/nodemanager/pkg/services"
 )
@@ -48,14 +50,14 @@ type ConfigSetReconciler struct {
 	Scheme *runtime.Scheme
 	tracer trace.Tracer
 	logger *slog.Logger
+	system handler.System
 }
 
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets/finalizers,verbs=update
 
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.2/pkg/reconcile
+// Reconcile is part of the main kubernetes reconciliation loop which aims to handle changes to a ConfigSet object.
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var err error
 
@@ -89,44 +91,22 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
 
-	resolver := &common.UnameInfoResolver{}
-
-	packageHandler, err := packages.GetPackageHandler(ctx, r.tracer, r.logger, resolver)
+	err = r.handlePackageSet(ctx, configSet.Spec.Packages)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.handlePackageSet(ctx, packageHandler, configSet.Spec.Packages)
+	changedFiles, err := r.handleFileSet(ctx, req.Namespace, configSet.Spec.Files, node)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	fileHandler, err := common.GetFileHandler(ctx, r.tracer, r.logger, resolver)
+	err = r.handleServiceSet(ctx, configSet.Spec.Services, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	changedFiles, err := r.handleFileSet(ctx, req.Namespace, fileHandler, configSet.Spec.Files, node)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	serviceHandler, err := services.GetServiceHandler(ctx, r.tracer, r.logger, resolver)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	err = r.handleServiceSet(ctx, serviceHandler, configSet.Spec.Services, changedFiles)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	execHandler, err := common.GetExecHandler(ctx, r.tracer, resolver)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	err = r.handleExecutions(ctx, execHandler, configSet.Spec.Executions, changedFiles)
+	err = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -141,36 +121,32 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, handler packages.PackageHandler, packageSet []commonv1.Package) error {
+func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, packageSet []commonv1.Package) error {
 	ctx, span := r.tracer.Start(ctx, "handlePackageSet")
 	defer span.End()
 
-	currentlyInstalled := func(packages []string, pkg string) bool {
-		for _, p := range packages {
-			if p == pkg {
-				return true
-			}
-		}
+	handler := r.system.Package()
 
-		return false
+	currentlyInstalled := func(packages []string, pkg string) bool {
+		return slices.Contains(packages, pkg)
 	}
 
-	packages, err := handler.List(ctx)
+	pkgs, err := handler.List(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, pkg := range packageSet {
-		switch pkg.Ensure {
-		case "installed":
-			if !currentlyInstalled(packages, pkg.Name) {
+		switch packages.PackageEnsureFromString(pkg.Ensure) {
+		case packages.Installed:
+			if !currentlyInstalled(pkgs, pkg.Name) {
 				err := handler.Install(ctx, pkg.Name)
 				if err != nil {
 					return err
 				}
 			}
-		case "absent":
-			if currentlyInstalled(packages, pkg.Name) {
+		case packages.Absent:
+			if currentlyInstalled(pkgs, pkg.Name) {
 				err := handler.Remove(ctx, pkg.Name)
 				r.logger.Info("removing package", "name", pkg.Name)
 				if err != nil {
@@ -193,9 +169,15 @@ func (r *ConfigSetReconciler) WithLogger(logger *slog.Logger) {
 	r.logger = logger
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler services.Handler, serviceSet []commonv1.Service, changedFiles []string) error {
+func (r *ConfigSetReconciler) WithSystem(system handler.System) {
+	r.system = system
+}
+
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet []commonv1.Service, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
+
+	handler := r.system.Service()
 
 	var (
 		totalErrs       error
@@ -238,15 +220,15 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 		status, _ := handler.Status(ctx, svc.Name)
 		span.SetAttributes(attribute.String("status", status.String()))
 
-		switch svc.Ensure {
-		case services.Running.String():
+		switch services.ServiceStatusFromString(svc.Ensure) {
+		case services.Running:
 			if status != services.Running {
 				err := handler.Start(ctx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to start service")
 				}
 			}
-		case services.Stopped.String():
+		case services.Stopped:
 			if status != services.Stopped {
 				err := handler.Stop(ctx, svc.Name)
 				if err != nil {
@@ -268,19 +250,17 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, handler serv
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace string, handler common.FileHandler, fileSet []commonv1.File, node commonv1.ManagedNode) (changedFiles []string, err error) {
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, error) {
 	ctx, span := r.tracer.Start(ctx, "handleFileSet")
 	defer span.End()
 
+	handler := r.system.File()
+
+	changedFiles := make([]string, 0, len(fileSet))
+
 	for _, file := range fileSet {
-
-		ensure := common.FileEnsureFromString(file.Ensure)
-		if ensure == common.UnhandledFileEnsure {
-			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
-		}
-
-		switch ensure {
-		case common.File:
+		switch files.FileEnsureFromString(file.Ensure) {
+		case files.File:
 			// If we have a template, let's set the content based on the rendered template.
 			if file.Template != "" {
 				data, err := r.collectData(ctx, namespace, file, node)
@@ -298,7 +278,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				}
 			}
 
-			if file.Content != "" {
+			if file.Content != "" && file.Ensure != files.Absent.String() {
 				err, changed := r.writeFileContent(ctx, file, handler)
 				if err != nil {
 					return changedFiles, err
@@ -309,14 +289,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				}
 			}
 
-			if file.Mode != "" {
-				err := handler.SetMode(ctx, file.Path, file.Mode)
-				if err != nil {
-					return changedFiles, errors.Wrap(err, "failed to set file mode")
-				}
-			}
-
-		case common.Directory:
+		case files.Directory:
 			// Create the directory if it does not exist, with the correct mode.
 			if _, err := os.Stat(file.Path); os.IsNotExist(err) {
 				var fileMode os.FileMode
@@ -324,7 +297,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				if file.Mode == "" {
 					fileMode = os.FileMode(0o660)
 				} else {
-					fileMode, err = common.GetFileModeFromString(ctx, file.Mode)
+					fileMode, err = files.GetFileModeFromString(ctx, file.Mode)
 					if err != nil {
 						return changedFiles, errors.Wrap(err, "failed to get file mode from string")
 					}
@@ -345,7 +318,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				}
 			}
 
-		case common.Symlink:
+		case files.Symlink:
 			target, err := os.Readlink(file.Path)
 			if err != nil {
 				return changedFiles, errors.Wrapf(err, "failed to read symlink %q", file.Path)
@@ -363,20 +336,24 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 					return changedFiles, errors.Wrapf(err, "failed to create symlink %q -> %q", file.Path, file.Target)
 				}
 			}
-		case common.Absent:
-			err = os.Remove(file.Path)
+		case files.Absent:
+			err := os.Remove(file.Path)
 			if err != nil {
 				return changedFiles, errors.Wrapf(err, "failed to remove file %q", file.Path)
 			}
+		default:
+			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
 		}
 	}
 
-	return
+	return changedFiles, nil
 }
 
-func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, handler common.ExecHandler, serviceSet []commonv1.Exec, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet []commonv1.Exec, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleExecutions")
 	defer span.End()
+
+	handler := r.system.Exec()
 
 	var totalErrs error
 	var runExec []commonv1.Exec
@@ -501,7 +478,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
-func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler common.FileHandler) (err error, changed bool) {
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (err error, changed bool) {
 	// Determine the sha of the content
 	var b bytes.Buffer
 	_, err = b.WriteString(file.Content)

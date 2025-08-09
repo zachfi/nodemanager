@@ -27,6 +27,8 @@ type ManagedNodeSpec struct {
 }
 
 type Upgrade struct {
+	// TODO: move group to the label.  This makes querying easier since we can
+	// filter on label, and we can't filter on a field in the spec.
 	Group    string `json:"group,omitempty"`
 	Schedule string `json:"schedule,omitempty"`
 	Delay    string `json:"delay,omitempty"`

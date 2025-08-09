@@ -1,3 +1,4 @@
+// Package common contains common helper functions and types used across the nodemanager controllers.
 package common
 
 import (
