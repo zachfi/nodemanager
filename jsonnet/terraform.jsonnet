@@ -12,9 +12,9 @@ function(libs, pages=false) {
           },
           backend: {
             remote: {
-              organization: 'jsonnet-libs',
+              organization: 'zachfi',
               workspaces: {
-                name: 'jsonnet-libs',
+                name: 'zachfi',
               },
             },
           },
