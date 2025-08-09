@@ -20,7 +20,7 @@ function(libs, pages=false) {
           },
         },
         provider: {
-          github: { owner: 'jsonnet-libs' },
+          github: { owner: 'zachfi' },
         },
       }
       + std.foldl(
