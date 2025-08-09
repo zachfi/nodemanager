@@ -206,3 +206,4 @@ endef
 
 include build/release.mk
 include build/drone.mk
+include build/jsonnet.mk

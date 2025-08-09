@@ -1,0 +1,38 @@
+"edit_uri": ""
+"extra_css":
+  - "stylesheets/extra.css"
+"markdown_extensions":
+  - "pymdownx.highlight"
+  - "pymdownx.superfences"
+  - "mdx_truly_sane_lists":
+      "nested_indent": 2
+      "truly_sane": true
+"plugins":
+  - "search":
+      "separator": "[\\s\\-\\.]+"
+  - "minify":
+      "minify_html": true
+"repo_name": "jsonnet-libs/nodemanager-libsonnet"
+"repo_url": "https://github.com/jsonnet-libs/nodemanager-libsonnet"
+"site_name": "nodemanager jsonnet library"
+"site_url": "https://jsonnet-libs.github.io/nodemanager-libsonnet"
+"theme":
+  "features":
+    - "navigation.tabs"
+    - "navigation.indexes"
+  "name": "material"
+  "palette":
+    - "accent": "indigo"
+      "media": "(prefers-color-scheme: light)"
+      "primary": "indigo"
+      "scheme": "default"
+      "toggle":
+        "icon": "material/toggle-switch-off-outline"
+        "name": "Switch to dark mode"
+    - "accent": "red"
+      "media": "(prefers-color-scheme: dark)"
+      "primary": "red"
+      "scheme": "slate"
+      "toggle":
+        "icon": "material/toggle-switch"
+        "name": "Switch to light mode"

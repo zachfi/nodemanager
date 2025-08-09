@@ -1,0 +1,11 @@
+"repository": "github.com/jsonnet-libs/nodemanager-libsonnet"
+"specs":
+  - "crds":
+      - "/src/config/crd/bases/common.nodemanager_configsets.yaml"
+      - "/src/config/crd/bases/common.nodemanager_managednodes.yaml"
+    "localName": "nodemanager"
+    "openapi": "http://localhost:8001/openapi/v2"
+    "output": "main"
+    "prefix": ""
+    "proxy_port": 8001
+    "repository": "github.com/jsonnet-libs/nodemanager-libsonnet"
