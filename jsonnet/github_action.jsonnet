@@ -55,7 +55,7 @@ local terraform = {
 
 local libJob(name) = {
   name: 'Generate ' + name + ' Jsonnet library and docs',
-  needs: ['build', 'repos'],
+  needs: ['repos'],
   'runs-on': 'ubuntu-latest',
 
   steps: [
