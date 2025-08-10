@@ -37,8 +37,6 @@
       "with":
         "name": "docker-artifact"
         "path": "artifacts"
-    - "if": "steps.filter.outputs.workflows == 'true'"
-      "run": "make load"
     - "env":
         "DIFF": "true"
         "GEN_COMMIT": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"

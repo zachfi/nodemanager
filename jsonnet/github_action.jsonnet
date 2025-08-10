@@ -92,10 +92,6 @@ local libJob(name) = {
     },
     // Load docker image from cache
     {
-      run: 'make load',
-      'if': "steps.filter.outputs.workflows == 'true'",
-    },
-    {
       run: 'make libs/' + name,
       'if': "steps.filter.outputs.workflows == 'true'",
       env: {
