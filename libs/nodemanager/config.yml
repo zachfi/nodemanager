@@ -1,4 +1,4 @@
-"repository": "github.com/jsonnet-libs/nodemanager-libsonnet"
+"repository": "github.com/zachfi/nodemanager-libsonnet"
 "specs":
   - "crds":
       - "/src/config/crd/bases/common.nodemanager_configsets.yaml"
@@ -8,4 +8,5 @@
     "output": "main"
     "prefix": ""
     "proxy_port": 8001
-    "repository": "github.com/jsonnet-libs/nodemanager-libsonnet"
+    "repository": "github.com/zachfi/nodemanager-libsonnet"
+
