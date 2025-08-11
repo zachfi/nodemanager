@@ -78,7 +78,7 @@
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
+      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
       "run": "gh auth status"
       "working-directory": "tf"
     - "env":
@@ -122,7 +122,7 @@
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
-      "if": "github.event.pull_request.head.repo.full_name == 'zachfi/nodemanager'"
+      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
       "run": "gh auth status"
       "working-directory": "tf"
     - "env":
