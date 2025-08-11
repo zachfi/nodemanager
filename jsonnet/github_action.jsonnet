@@ -19,7 +19,7 @@ local terraform = {
       'working-directory': 'tf',
       env: {
         GITHUB_TOKEN: '${{ secrets.PAT }}',
-        TF_VAR_token: '${{ secrets.PAT }}',
+        TF_VAR_github_token: '${{ secrets.PAT }}',
         TF_IN_AUTOMATION: '1',
       },
     },
