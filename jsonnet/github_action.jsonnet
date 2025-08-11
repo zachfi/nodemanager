@@ -117,6 +117,10 @@ function(libs) {
           branches: [config.branch],
         },
       },
+      env: {
+        GITHUB_TOKEN: '${{ secrets.PAT }}',
+        TF_IN_AUTOMATION: '1',
+      },
       jobs: {
         [lib.name]: libJob(lib.name)
         for lib in libs
