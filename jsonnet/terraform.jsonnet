@@ -44,6 +44,7 @@ function(libs, pages=false) {
                     lifecycle: {
                       ignore_changes: ['pages'],
                     },
+                    visibility: 'public',
                   } + (
                     if pages
                     then {

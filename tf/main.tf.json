@@ -27,7 +27,8 @@
           "topics": [
             "jsonnet",
             "jsonnet-lib"
-          ]
+          ],
+          "visibility": "public"
         }
       }
     }
