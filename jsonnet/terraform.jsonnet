@@ -20,7 +20,7 @@ function(libs, pages=false) {
           },
         },
         provider: {
-          github: { owner: 'zachfi' },
+          github: { owner: 'zachfi', token: 'var.token' },
         },
       }
       + std.foldl(
