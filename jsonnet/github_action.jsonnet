@@ -131,6 +131,7 @@ function(libs) {
             { run: 'echo ${{ github.repository }}' },
             { run: 'echo ${{ github.ref }}' },
             { run: 'echo ${{ github.event_name }}' },
+            { run: 'gh auth status' },
           ],
         },
       },
