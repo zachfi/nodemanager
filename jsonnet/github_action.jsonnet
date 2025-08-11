@@ -39,6 +39,7 @@ local terraform = {
       self.tf_env + notFork + { run: 'terraform init' },
       self.tf_env + notFork + { run: 'terraform validate -no-color' },
       self.tf_env + notFork + { run: 'terraform plan -no-color' },
+      self.tf_env + notFork + { run: 'gh auth status' },
       self.tf_env + onMaster + { run: 'terraform init && terraform apply -no-color -auto-approve' },
     ],
   },
@@ -117,10 +118,6 @@ function(libs) {
           branches: [config.branch],
         },
       },
-      env: {
-        GITHUB_TOKEN: '${{ secrets.PAT }}',
-        TF_IN_AUTOMATION: '1',
-      },
       jobs: {
         [lib.name]: libJob(lib.name)
         for lib in libs
@@ -135,7 +132,6 @@ function(libs) {
             { run: 'echo ${{ github.repository }}' },
             { run: 'echo ${{ github.ref }}' },
             { run: 'echo ${{ github.event_name }}' },
-            { run: 'gh auth status' },
           ],
         },
       },
