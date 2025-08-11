@@ -32,18 +32,18 @@ function(libs, pages=false) {
                   [lib.name]: {
                     name: lib.name + lib.suffix,
                     description: lib.description,
-                    homepage_url: lib.site_url,
-                    topics: ['jsonnet', 'jsonnet-lib'],
-                    auto_init: true,
-                    has_downloads: false,
-                    has_issues: false,
-                    has_projects: false,
-                    has_wiki: false,
-                    allow_merge_commit: false,
-                    allow_rebase_merge: false,
-                    lifecycle: {
-                      ignore_changes: ['pages'],
-                    },
+                    // homepage_url: lib.site_url,
+                    // topics: ['jsonnet', 'jsonnet-lib'],
+                    // auto_init: true,
+                    // has_downloads: false,
+                    // has_issues: false,
+                    // has_projects: false,
+                    // has_wiki: false,
+                    // allow_merge_commit: false,
+                    // allow_rebase_merge: false,
+                    // lifecycle: {
+                    //   ignore_changes: ['pages'],
+                    // },
                     visibility: 'public',
                   } + (
                     if pages
