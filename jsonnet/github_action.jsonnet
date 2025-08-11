@@ -40,6 +40,7 @@ local terraform = {
       self.tf_env + notFork + { run: 'terraform validate -no-color' },
       self.tf_env + notFork + { run: 'terraform plan -no-color' },
       self.tf_env + onMaster + { run: 'terraform init' },
+      self.tf_env + onMaster + { run: 'gh auth status' },
       self.tf_env + onMaster + { run: 'terraform apply -no-color -auto-approve' },
     ],
   },

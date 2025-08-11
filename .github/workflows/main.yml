@@ -85,6 +85,12 @@
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
         "TF_IN_AUTOMATION": "1"
       "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
+      "run": "gh auth status"
+      "working-directory": "tf"
+    - "env":
+        "GITHUB_TOKEN": "${{ secrets.PAT }}"
+        "TF_IN_AUTOMATION": "1"
+      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
       "run": "terraform apply -no-color -auto-approve"
       "working-directory": "tf"
   "repos_with_pages":
@@ -124,6 +130,12 @@
         "TF_IN_AUTOMATION": "1"
       "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
       "run": "terraform init"
+      "working-directory": "tf"
+    - "env":
+        "GITHUB_TOKEN": "${{ secrets.PAT }}"
+        "TF_IN_AUTOMATION": "1"
+      "if": "${{ github.ref == 'refs/heads/main' && github.repository == 'zachfi/nodemanager' }}"
+      "run": "gh auth status"
       "working-directory": "tf"
     - "env":
         "GITHUB_TOKEN": "${{ secrets.PAT }}"
