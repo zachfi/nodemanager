@@ -15,28 +15,43 @@ var _ handler.System = (*AlpineLinux)(nil)
 
 type AlpineLinux struct {
 	logger *slog.Logger
+
+	exec handler.ExecHandler
+	f    handler.FileHandler
+	node handler.NodeHandler
+	pkg  handler.PackageHandler
+	svc  handler.ServiceHandler
 }
 
 func New(logger *slog.Logger) handler.System {
-	return &AlpineLinux{logger: logger}
-}
+	s := &AlpineLinux{
+		logger: logger,
+		exec:   &execs.ExecHandlerCommon{},
+		f:      files.New(logger),
+	}
+	s.pkg = apk.New(logger, s.exec)
+	s.svc = openrc.New(logger, s.exec)
+	s.node = alpine.New(logger, s.exec)
 
-func (a *AlpineLinux) Package() handler.PackageHandler {
-	return &apk.Apk{}
+	return s
 }
 
 func (a *AlpineLinux) Exec() handler.ExecHandler {
-	return &execs.ExecHandlerCommon{}
+	return a.exec
 }
 
 func (a *AlpineLinux) File() handler.FileHandler {
-	return &files.FileHandlerCommon{}
-}
-
-func (a *AlpineLinux) Service() handler.ServiceHandler {
-	return &openrc.OpenRC{}
+	return a.f
 }
 
 func (a *AlpineLinux) Node() handler.NodeHandler {
-	return alpine.New(a.logger)
+	return a.node
+}
+
+func (a *AlpineLinux) Package() handler.PackageHandler {
+	return a.pkg
+}
+
+func (a *AlpineLinux) Service() handler.ServiceHandler {
+	return a.svc
 }

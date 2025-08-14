@@ -9,9 +9,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/trace"
 )
 
 type FileEnsure int64
@@ -58,14 +58,19 @@ func FileEnsureFromString(ensure string) FileEnsure {
 
 var _ handler.FileHandler = (*FileHandlerCommon)(nil)
 
+var tracer = otel.Tracer("files/common")
+
 type FileHandlerCommon struct {
-	tracer trace.Tracer
 	logger *slog.Logger
+}
+
+func New(logger *slog.Logger) handler.FileHandler {
+	return &FileHandlerCommon{logger}
 }
 
 func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string) error {
 	var err error
-	_, span := h.tracer.Start(ctx, "Chown")
+	_, span := tracer.Start(ctx, "Chown")
 	defer func() {
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
@@ -109,7 +114,7 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 
 func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) error {
 	var err error
-	_, span := h.tracer.Start(ctx, "SetMode")
+	_, span := tracer.Start(ctx, "SetMode")
 	defer func() {
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
@@ -135,7 +140,7 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) erro
 
 func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, bytes []byte) error {
 	var err error
-	_, span := h.tracer.Start(ctx, "WriteContentFile")
+	_, span := tracer.Start(ctx, "WriteContentFile")
 	defer func() {
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())
@@ -161,7 +166,7 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, b
 
 func (h *FileHandlerCommon) WriteTemplateFile(ctx context.Context, path, template string) error {
 	var err error
-	_, span := h.tracer.Start(ctx, "WriteTemplateFile")
+	_, span := tracer.Start(ctx, "WriteTemplateFile")
 	defer func() {
 		if err != nil {
 			span.SetStatus(codes.Error, err.Error())

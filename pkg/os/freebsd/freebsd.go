@@ -6,37 +6,52 @@ import (
 	"github.com/zachfi/nodemanager/pkg/execs"
 	"github.com/zachfi/nodemanager/pkg/files"
 	"github.com/zachfi/nodemanager/pkg/handler"
-	nodeFreeBSD "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
+	freebsd_node "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
 	"github.com/zachfi/nodemanager/pkg/packages/pkgng"
-	svcFreeBSD "github.com/zachfi/nodemanager/pkg/services/freebsd"
+	freebsd_svc "github.com/zachfi/nodemanager/pkg/services/freebsd"
 )
 
 var _ handler.System = (*FreeBSD)(nil)
 
 type FreeBSD struct {
 	logger *slog.Logger
+
+	exec handler.ExecHandler
+	f    handler.FileHandler
+	node handler.NodeHandler
+	pkg  handler.PackageHandler
+	svc  handler.ServiceHandler
 }
 
 func New(logger *slog.Logger) handler.System {
-	return &FreeBSD{logger: logger}
-}
+	s := &FreeBSD{
+		logger: logger,
+		exec:   &execs.ExecHandlerCommon{},
+		f:      files.New(logger),
+	}
+	s.pkg = pkgng.New(logger, s.exec)
+	s.svc = freebsd_svc.New(logger, s.exec)
+	s.node = freebsd_node.New(logger, s.exec)
 
-func (a *FreeBSD) Package() handler.PackageHandler {
-	return &pkgng.Pkgng{}
+	return s
 }
 
 func (a *FreeBSD) Exec() handler.ExecHandler {
-	return &execs.ExecHandlerCommon{}
+	return a.exec
 }
 
 func (a *FreeBSD) File() handler.FileHandler {
-	return &files.FileHandlerCommon{}
-}
-
-func (a *FreeBSD) Service() handler.ServiceHandler {
-	return &svcFreeBSD.FreeBSD{}
+	return a.f
 }
 
 func (a *FreeBSD) Node() handler.NodeHandler {
-	return nodeFreeBSD.New(a.logger)
+	return a.node
+}
+
+func (a *FreeBSD) Package() handler.PackageHandler {
+	return a.pkg
+}
+
+func (a *FreeBSD) Service() handler.ServiceHandler {
+	return a.svc
 }

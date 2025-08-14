@@ -299,3 +299,8 @@ func (m *mockExecHandler) RunCommand(ctx context.Context, command string, arg ..
 	// Simulate command execution
 	return "output", 0, nil // Return simulated output and exit code
 }
+
+func (m *mockExecHandler) SimpleRunCommand(ctx context.Context, command string, arg ...string) error {
+	_, _, err := m.RunCommand(ctx, command, arg...)
+	return err
+}

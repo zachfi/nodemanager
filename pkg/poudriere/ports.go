@@ -3,12 +3,12 @@ package poudriere
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"strings"
 
-	"github.com/zachfi/nodemanager/pkg/execs"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/zachfi/nodemanager/pkg/handler"
 )
 
 type PortsTree struct {
@@ -29,13 +29,13 @@ func (p *PortsTree) GetName() string {
 // - poudriere
 
 type Ports interface {
-	Create(PortsTree) error
-	Delete(PortsTree) error
-	List() ([]*PortsTree, error)
-	Update(PortsTree) error
+	Create(context.Context, PortsTree) error
+	Delete(context.Context, PortsTree) error
+	List(context.Context) ([]*PortsTree, error)
+	Update(context.Context, PortsTree) error
 }
 
-var _ Ports = &PoudrierePorts{}
+var _ Ports = (*PoudrierePorts)(nil)
 
 const (
 	poudriere  = "/usr/local/bin/poudriere"
@@ -43,27 +43,28 @@ const (
 )
 
 type PoudrierePorts struct {
-	tracer trace.Tracer
 	logger *slog.Logger
+
+	exec handler.ExecHandler
 }
 
-func NewPorts(logger *slog.Logger, tracer trace.Tracer) (*PoudrierePorts, error) {
+func NewPorts(logger *slog.Logger, exec handler.ExecHandler) (*PoudrierePorts, error) {
 	return &PoudrierePorts{
 		logger: logger,
-		tracer: tracer,
+		exec:   exec,
 	}, nil
 }
 
-func (p *PoudrierePorts) Create(tree PortsTree) error {
-	return execs.SimpleRunCommand(poudriere, "ports", "-c", "-p", tree.Name, "-m", tree.FetchMethod)
+func (p *PoudrierePorts) Create(ctx context.Context, tree PortsTree) error {
+	return p.exec.SimpleRunCommand(ctx, poudriere, "ports", "-c", "-p", tree.Name, "-m", tree.FetchMethod)
 }
 
-func (p *PoudrierePorts) Delete(tree PortsTree) error {
-	return execs.SimpleRunCommand(poudriere, "ports", "-d", "-p", tree.Name)
+func (p *PoudrierePorts) Delete(ctx context.Context, tree PortsTree) error {
+	return p.exec.SimpleRunCommand(ctx, poudriere, "ports", "-d", "-p", tree.Name)
 }
 
-func (p *PoudrierePorts) List() ([]*PortsTree, error) {
-	out, _, err := execs.RunCommand(poudriere, "ports", "-l")
+func (p *PoudrierePorts) List(ctx context.Context) ([]*PortsTree, error) {
+	out, _, err := p.exec.RunCommand(ctx, poudriere, "ports", "-l")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +73,7 @@ func (p *PoudrierePorts) List() ([]*PortsTree, error) {
 	return p.readPoudrierePortsStatus(reader)
 }
 
-func (p *PoudrierePorts) Update(tree PortsTree) error {
+func (p *PoudrierePorts) Update(ctx context.Context, tree PortsTree) error {
 	return nil
 }
 

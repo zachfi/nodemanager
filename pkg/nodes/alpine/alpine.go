@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/zachfi/nodemanager/pkg/common/info"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"go.opentelemetry.io/otel"
 )
@@ -15,14 +16,16 @@ var _ handler.NodeHandler = (*Alpine)(nil)
 var tracer = otel.Tracer("nodes/alpine")
 
 type Alpine struct {
-	logger       *slog.Logger
-	infoResolver handler.UnameInfoResolver
+	logger *slog.Logger
+
+	info handler.InfoResolver
 }
 
-func New(logger *slog.Logger) handler.NodeHandler {
+func New(logger *slog.Logger, exec handler.ExecHandler) handler.NodeHandler {
 	return &Alpine{
-		infoResolver: handler.UnameInfoResolver{},
-		logger:       logger.With("node", "alpine"),
+		logger: logger.With("node", "alpine"),
+
+		info: info.NewInfoResolver(),
 	}
 }
 
@@ -40,5 +43,5 @@ func (h *Alpine) Hostname() (string, error) {
 }
 
 func (h *Alpine) Info(ctx context.Context) *handler.SysInfo {
-	return h.infoResolver.Info(ctx)
+	return h.info.Info(ctx)
 }

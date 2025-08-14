@@ -8,27 +8,23 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/zachfi/nodemanager/pkg/handler"
-	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel"
 )
 
 var _ handler.ExecHandler = (*ExecHandlerCommon)(nil)
 
-type ExecHandlerCommon struct {
-	tracer trace.Tracer
-}
+var tracer = otel.Tracer("execs/common")
+
+type ExecHandlerCommon struct{}
 
 func (h *ExecHandlerCommon) RunCommand(ctx context.Context, command string, arg ...string) (string, int, error) {
-	_, span := h.tracer.Start(ctx, "RunCommand")
+	_, span := tracer.Start(ctx, "RunCommand")
 	defer span.End()
 
-	return RunCommand(command, arg...)
-}
-
-func RunCommand(command string, arg ...string) (string, int, error) {
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 
-	cmd := exec.Command(command, arg...)
+	cmd := exec.CommandContext(ctx, command, arg...)
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr
 
@@ -40,8 +36,8 @@ func RunCommand(command string, arg ...string) (string, int, error) {
 	return out.String(), cmd.ProcessState.ExitCode(), nil
 }
 
-func SimpleRunCommand(command string, arg ...string) error {
-	out, _, err := RunCommand(command, arg...)
+func (h *ExecHandlerCommon) SimpleRunCommand(ctx context.Context, command string, arg ...string) error {
+	out, _, err := h.RunCommand(ctx, command, arg...)
 	if err != nil {
 		return errors.Wrap(err, out)
 	}

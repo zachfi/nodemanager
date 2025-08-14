@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/zachfi/nodemanager/pkg/common/info"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/os/alpine"
 	"github.com/zachfi/nodemanager/pkg/os/arch"
@@ -14,7 +15,7 @@ import (
 var ErrSystemNotFound = errors.New("not found for system")
 
 func New(ctx context.Context, logger *slog.Logger) (handler.System, error) {
-	resolver := &handler.UnameInfoResolver{}
+	resolver := info.NewInfoResolver()
 
 	switch OSIDFromString(resolver.Info(ctx).OS.ID) {
 	case Arch:
@@ -50,7 +51,7 @@ func (o OSID) String() string {
 	return "unhandled"
 }
 
-// Convert OSID from string to OSID type
+// OSIDFromString converts an OS ID string to an OSID type
 func OSIDFromString(osid string) OSID {
 	switch osid {
 	case "arch", "archarm":

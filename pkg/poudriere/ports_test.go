@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/zachfi/nodemanager/pkg/execs"
 )
 
 /*
@@ -18,9 +18,8 @@ personal  git+https 2022-09-15 23:42:46 /usr/local/poudriere/ports/personal
 */
 
 func Test_portsList(t *testing.T) {
-	tracer := trace.NewNoopTracerProvider().Tracer("test")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
-	_, err := NewPorts(logger, tracer)
+	_, err := NewPorts(logger, &execs.ExecHandlerCommon{})
 	require.NoError(t, err)
 }

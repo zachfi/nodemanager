@@ -6,39 +6,46 @@ import (
 	"regexp"
 	"strings"
 
-	"go.opentelemetry.io/otel/trace"
-
-	"github.com/zachfi/nodemanager/pkg/execs"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	"go.opentelemetry.io/otel"
 )
 
 const apk = "/sbin/apk"
 
 var _ handler.PackageHandler = (*Apk)(nil)
 
+var tracer = otel.Tracer("packages/apk")
+
 type Apk struct {
-	tracer trace.Tracer
+	exec   handler.ExecHandler
 	logger *slog.Logger
 }
 
+func New(logger *slog.Logger, exec handler.ExecHandler) handler.PackageHandler {
+	return &Apk{
+		logger: logger,
+		exec:   exec,
+	}
+}
+
 func (h *Apk) Install(ctx context.Context, name string) error {
-	_, span := h.tracer.Start(ctx, "Install")
+	_, span := tracer.Start(ctx, "Install")
 	defer span.End()
 
 	h.logger.Info("installing package", "name", name)
-	return execs.SimpleRunCommand(apk, "add", name)
+	return h.exec.SimpleRunCommand(ctx, apk, "add", name)
 }
 
 func (h *Apk) Remove(ctx context.Context, name string) error {
-	_, span := h.tracer.Start(ctx, "Remove")
+	_, span := tracer.Start(ctx, "Remove")
 	defer span.End()
-	return execs.SimpleRunCommand(apk, "del", name)
+	return h.exec.SimpleRunCommand(ctx, apk, "del", name)
 }
 
 func (h *Apk) List(ctx context.Context) ([]string, error) {
-	_, span := h.tracer.Start(ctx, "List")
+	_, span := tracer.Start(ctx, "List")
 	defer span.End()
-	output, _, err := execs.RunCommand(apk, "list", "-I")
+	output, _, err := h.exec.RunCommand(ctx, apk, "list", "-I")
 	if err != nil {
 		return []string{}, err
 	}
@@ -47,15 +54,15 @@ func (h *Apk) List(ctx context.Context) ([]string, error) {
 }
 
 func (h *Apk) UpgradeAll(ctx context.Context) error {
-	_, span := h.tracer.Start(ctx, "UpgradeAll")
+	_, span := tracer.Start(ctx, "UpgradeAll")
 	defer span.End()
 
-	err := execs.SimpleRunCommand(apk, "update")
+	err := h.exec.SimpleRunCommand(ctx, apk, "update")
 	if err != nil {
 		return err
 	}
 
-	return execs.SimpleRunCommand(apk, "upgrade")
+	return h.exec.SimpleRunCommand(ctx, apk, "upgrade")
 }
 
 func (h *Apk) matchPackageOutput(output string) []string {

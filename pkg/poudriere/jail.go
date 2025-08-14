@@ -3,14 +3,14 @@ package poudriere
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/zachfi/nodemanager/pkg/execs"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/zachfi/nodemanager/pkg/handler"
 )
 
 type BuildJail struct {
@@ -28,36 +28,37 @@ func (j *BuildJail) GetName() string {
 }
 
 type Jail interface {
-	Create(BuildJail) error
-	Delete(BuildJail) error
-	List() ([]*BuildJail, error)
-	Update(BuildJail) error
+	Create(context.Context, BuildJail) error
+	Delete(context.Context, BuildJail) error
+	List(context.Context) ([]*BuildJail, error)
+	Update(context.Context, BuildJail) error
 }
 
-var _ Jail = &PoudriereJail{}
+var _ Jail = (*PoudriereJail)(nil)
 
 type PoudriereJail struct {
-	tracer trace.Tracer
 	logger *slog.Logger
+
+	exec handler.ExecHandler
 }
 
-func NewJail(logger *slog.Logger, tracer trace.Tracer) (*PoudriereJail, error) {
+func NewJail(logger *slog.Logger, exec handler.ExecHandler) (*PoudriereJail, error) {
 	return &PoudriereJail{
 		logger: logger,
-		tracer: tracer,
+		exec:   exec,
 	}, nil
 }
 
-func (p *PoudriereJail) Create(jail BuildJail) error {
-	return execs.SimpleRunCommand(poudriere, "jail", "-c", "-j", jail.Name, "-v", jail.Version, "-m", "http")
+func (p *PoudriereJail) Create(ctx context.Context, jail BuildJail) error {
+	return p.exec.SimpleRunCommand(ctx, poudriere, "jail", "-c", "-j", jail.Name, "-v", jail.Version, "-m", "http")
 }
 
-func (p *PoudriereJail) Delete(jail BuildJail) error {
-	return execs.SimpleRunCommand(poudriere, "jail", "-d", "-j", jail.Name)
+func (p *PoudriereJail) Delete(ctx context.Context, jail BuildJail) error {
+	return p.exec.SimpleRunCommand(ctx, poudriere, "jail", "-d", "-j", jail.Name)
 }
 
-func (p *PoudriereJail) List() ([]*BuildJail, error) {
-	out, _, err := execs.RunCommand(poudriere, "jail", "-l")
+func (p *PoudriereJail) List(ctx context.Context) ([]*BuildJail, error) {
+	out, _, err := p.exec.RunCommand(ctx, poudriere, "jail", "-l")
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +67,8 @@ func (p *PoudriereJail) List() ([]*BuildJail, error) {
 	return p.readPoudriereJailList(reader)
 }
 
-func (p *PoudriereJail) Update(jail BuildJail) error {
-	return execs.SimpleRunCommand(poudriere, "jail", "-u", "-j", jail.Name)
+func (p *PoudriereJail) Update(ctx context.Context, jail BuildJail) error {
+	return p.exec.SimpleRunCommand(ctx, poudriere, "jail", "-u", "-j", jail.Name)
 }
 
 func (p *PoudriereJail) readPoudriereJailList(r io.Reader) ([]*BuildJail, error) {

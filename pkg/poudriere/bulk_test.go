@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel/trace"
+	"github.com/zachfi/nodemanager/pkg/execs"
 )
 
 func Test_Bulk(t *testing.T) {
-	tracer := trace.NewNoopTracerProvider().Tracer("test")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
-	_, err := NewBulk(logger, tracer)
+	_, err := NewBulk(logger, &execs.ExecHandlerCommon{})
 	require.NoError(t, err)
 }

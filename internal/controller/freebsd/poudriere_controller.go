@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/zachfi/nodemanager/pkg/common/labels"
+	"github.com/zachfi/nodemanager/pkg/execs"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/poudriere"
 	"github.com/zachfi/nodemanager/pkg/util"
@@ -72,7 +73,9 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	p, err := poudriere.NewPorts(r.logger, r.tracer)
+	exec := &execs.ExecHandlerCommon{}
+
+	p, err := poudriere.NewPorts(r.logger, exec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -82,7 +85,7 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	j, err := poudriere.NewJail(r.logger, r.tracer)
+	j, err := poudriere.NewJail(r.logger, exec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -92,7 +95,7 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	b, err := poudriere.NewBulk(r.logger, r.tracer)
+	b, err := poudriere.NewBulk(r.logger, exec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -128,19 +131,19 @@ func (r *PoudriereReconciler) ensureAllTrees(ctx context.Context, p *poudriere.P
 		return err
 	}
 
-	existing, err := p.List()
+	existing, err := p.List(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, t := range trees.Items {
 		if v, ok := exists(t.Name, existing); ok {
-			err = p.Update(*v)
+			err = p.Update(ctx, *v)
 			if err != nil {
 				return err
 			}
 		} else {
-			err = p.Create(poudriere.PortsTree{
+			err = p.Create(ctx, poudriere.PortsTree{
 				Name:        t.Name,
 				FetchMethod: t.Spec.FetchMethod,
 				Branch:      t.Spec.Branch,
@@ -152,7 +155,7 @@ func (r *PoudriereReconciler) ensureAllTrees(ctx context.Context, p *poudriere.P
 
 		for _, e := range existing {
 			if e.Name == t.Name {
-				err = p.Update(*e)
+				err = p.Update(ctx, *e)
 				if err != nil {
 					return err
 				}
@@ -171,19 +174,19 @@ func (r *PoudriereReconciler) ensureAllJails(ctx context.Context, p *poudriere.P
 		return err
 	}
 
-	existing, err := p.List()
+	existing, err := p.List(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, t := range jails.Items {
 		if v, ok := exists(t.Name, existing); ok {
-			err = p.Update(*v)
+			err = p.Update(ctx, *v)
 			if err != nil {
 				return err
 			}
 		} else {
-			err = p.Create(poudriere.BuildJail{
+			err = p.Create(ctx, poudriere.BuildJail{
 				Name:        t.Name,
 				FetchMethod: "http",
 				Version:     t.Spec.Version,
@@ -195,7 +198,7 @@ func (r *PoudriereReconciler) ensureAllJails(ctx context.Context, p *poudriere.P
 
 		for _, e := range existing {
 			if e.Name == t.Name {
-				err = p.Update(*e)
+				err = p.Update(ctx, *e)
 				if err != nil {
 					return err
 				}
@@ -214,13 +217,13 @@ func (r *PoudriereReconciler) buildAll(ctx context.Context, p *poudriere.Poudrie
 		return err
 	}
 
-	err = p.Sync()
+	err = p.Sync(ctx)
 	if err != nil {
 		return err
 	}
 
 	for _, b := range bulks.Items {
-		p.Build(b.Spec.Jail, b.Spec.Tree, b.Spec.Ports)
+		p.Build(ctx, b.Spec.Jail, b.Spec.Tree, b.Spec.Ports)
 	}
 
 	return nil
