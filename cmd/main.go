@@ -178,7 +178,9 @@ func main() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
-	system, err := system.New(ctrl.SetupSignalHandler(), logger)
+	ctx := ctrl.SetupSignalHandler()
+
+	system, err := system.New(ctx, logger)
 	if err != nil {
 		setupLog.Error(err, "unable to create system handler", "err", err)
 		os.Exit(1)
@@ -262,7 +264,7 @@ func main() {
 	defer shutdownTracer()
 
 	setupLog.Info("starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
