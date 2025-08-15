@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"strconv"
+	"syscall"
 
 	"github.com/pkg/errors"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -104,6 +105,23 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		return errors.Wrap(err, "failed to convert gid string")
 	}
 
+	// Check the current file owner and group.
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return errors.Wrap(err, "failed to stat file")
+	}
+
+	if stat, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
+		currentUID := int(stat.Uid)
+		currentGID := int(stat.Gid)
+
+		if currentGID == gid && currentUID == uid {
+			return nil
+		}
+	}
+
+	span.AddEvent("ownership set")
+
 	err = os.Chown(path, uid, gid)
 	if err != nil {
 		return errors.Wrap(err, "failed to chown file")
@@ -122,13 +140,29 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) erro
 		span.End()
 	}()
 
-	span.SetAttributes(attribute.String("path", path))
-	span.SetAttributes(attribute.String("mode", mode))
+	span.SetAttributes(
+		attribute.String("path", path),
+		attribute.String("mode", mode),
+	)
 
 	fileMode, err := GetFileModeFromString(ctx, mode)
 	if err != nil {
 		return err
 	}
+
+	// Check the current mode
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return errors.Wrap(err, "failed to stat file")
+	}
+
+	// Make no change to the file if the current mode matches the desired mode
+	currentMode := fileInfo.Mode()
+	if fileMode == currentMode {
+		return nil
+	}
+
+	span.AddEvent("mode set")
 
 	err = os.Chmod(path, fileMode)
 	if err != nil {
