@@ -87,7 +87,7 @@ LD_FLAGS=-ldflags " \
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
-	go build $(LD_FLAGS) -o bin/manager cmd/main.go
+	go build $(LD_FLAGS) -o bin/manager cmd/*.go
 
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
