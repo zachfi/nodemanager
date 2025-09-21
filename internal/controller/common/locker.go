@@ -36,8 +36,8 @@ type keyLocker struct {
 	annotation string
 }
 
-func NewKeyLocker(logger *slog.Logger, cfg backoff.Config, rw ReaderWriter, annotation string) Locker {
-	b := backoff.New(context.Background(), cfg)
+func NewKeyLocker(logger *slog.Logger, cfg LockerConfig, rw ReaderWriter, annotation string) Locker {
+	b := backoff.New(context.Background(), cfg.Backoff)
 
 	return &keyLocker{
 		logger:     logger,
@@ -86,6 +86,12 @@ func (l *keyLocker) Lock(ctx context.Context, req types.NamespacedName, key, val
 					lockedNodes++
 					l.logger.Info("node has the lock", "node", node.Name, "annotation", node.Annotations[l.annotation])
 				}
+			}
+
+			// TODO: if we encounter locked nodes, we should backoff.
+			if lockedNodes > 0 {
+				l.backoff.Wait()
+				continue
 			}
 
 			if lockedNodes == 0 {

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorhill/cronexpr"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -47,6 +48,19 @@ type ManagedNodeReconciler struct {
 	logger *slog.Logger
 	system handler.System
 	locker Locker
+	cfg    ManagedNodeConfig
+}
+
+func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker Locker) *ManagedNodeReconciler {
+	return &ManagedNodeReconciler{
+		Client: client,
+		Scheme: scheme,
+		tracer: otel.Tracer("controller.common.managednode"),
+		logger: logger.With("controller", "managednode"),
+		locker: locker,
+		system: system,
+		cfg:    cfg,
+	}
 }
 
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
@@ -113,22 +127,6 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *ManagedNodeReconciler) WithTracer(tracer trace.Tracer) {
-	r.tracer = tracer
-}
-
-func (r *ManagedNodeReconciler) WithLogger(logger *slog.Logger) {
-	r.logger = logger
-}
-
-func (r *ManagedNodeReconciler) WithSystem(system handler.System) {
-	r.system = system
-}
-
-func (r *ManagedNodeReconciler) WithLocker(locker Locker) {
-	r.locker = locker
-}
-
 func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *commonv1.ManagedNode) error {
 	labels := labels.DefaultLabels(ctx, r.system.Node())
 
@@ -184,7 +182,11 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 }
 
 func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv1.ManagedNode) (time.Time, error) {
-	var err error
+	var (
+		err        error
+		next, last time.Time
+		delay      time.Duration
+	)
 
 	// Check if we are a node that performs upgrades
 	if node.Spec.Upgrade.Schedule == "" {
@@ -192,9 +194,19 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return time.Time{}, nil
 	}
 
+	next, err = r.nextUpgradeTime(ctx, node.Spec.Upgrade.Schedule)
+	if err != nil {
+		return time.Time{}, err
+	}
+
 	if node.Spec.Upgrade.Delay == "" {
 		r.logger.Info("managed node has no upgrade delay")
 		return time.Time{}, nil
+	}
+
+	last, err = r.lastUpgradeTime(ctx, node)
+	if err != nil {
+		return time.Time{}, err
 	}
 
 	req := types.NamespacedName{
@@ -202,15 +214,15 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		Namespace: node.Namespace,
 	}
 
+	// If we have the lock: update status, unlock return
 	locked, err := r.locker.HasLock(ctx, req)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to check for upgrade lock: %w", err)
 	}
 
-	// If we already have the upgrade lock, we assume that we have just upgraded.
+	// Check the lock first.  If we are already locked, we assume we have just upgraded.
 	if locked {
 		defer r.locker.Unlock(ctx, req)
-
 		node.Annotations[common.AnnotationLastUpgrade] = time.Now().Format(time.RFC3339)
 
 		f := func() error {
@@ -221,65 +233,78 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 			return time.Time{}, fmt.Errorf("failed to set last upgrade time: %w", err)
 		}
 
-		return time.Time{}, nil
+		return next, nil
 	}
 
-	cron, err := cronexpr.Parse(node.Spec.Upgrade.Schedule)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse schedule as cron expression: %w", err)
-	}
+	// Check if we have upgraded recently
+	if !last.IsZero() {
+		delay, err = time.ParseDuration(node.Spec.Upgrade.Delay)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
+		}
 
-	next := cron.Next(time.Now())
+		if time.Since(last) < delay {
+			return next, nil
+		}
+	}
 
 	r.logger.Info("next upgrade time", "schedule", node.Spec.Upgrade.Schedule, "until", time.Until(next))
 
-	if time.Since(next) < 1*time.Minute {
-		// If the next upgrade time is less than a minute in teh past, we execute immediately.
-	} else if time.Until(next) < 1*time.Minute {
-		// The the upgrade time is less than a minute in the future, we wait and then continue to execute.
+	// Check if next is within the forgiveness period
+	if time.Since(next) < r.cfg.ForgivenessPeriod {
+		// If the next upgrade time is less than a minute in the past, we execute immediately.
+	} else if time.Until(next) < r.cfg.ForgivenessPeriod {
+		// If the upgrade time is less than a minute in the future, we wait and then continue to execute.
 		time.Sleep(time.Until(next))
 	} else {
 		// If we are outside of the minute range in either direction, return the time which we should check again.
 		return next, nil
 	}
 
-	var lastUpgrade time.Time
-	if last, ok := node.Annotations[common.AnnotationLastUpgrade]; ok {
-		r.logger.Info("last upgrade time found", "lastUpgrade", last)
-
-		lastUpgrade, err = time.Parse(time.RFC3339, last)
-		if err != nil {
-			r.logger.Error("failed to parse LastUpgrade annotation", "err", err)
-		}
-	}
-
-	delay, err := time.ParseDuration(node.Spec.Upgrade.Delay)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
-	}
-
-	if time.Since(lastUpgrade) < delay {
-		return lastUpgrade.Add(delay), nil
-	}
+	// Proceed with the upgrade
 
 	// TODO: Consider a kubernetes drain if we know we are running in a
 	// kubernetes cluster.  How do we know?
 
 	if err := r.locker.Lock(ctx, req, labels.LabelUpgradeGroup, node.Spec.Upgrade.Group); err != nil {
-		return time.Time{}, fmt.Errorf("failed to acquire upgrade lock: %w", err)
+		return next.Add(delay), fmt.Errorf("failed to acquire upgrade lock: %w", err)
 	}
 
 	err = r.system.Package().UpgradeAll(ctx)
 	if err != nil {
-		return time.Time{}, err
+		return next.Add(delay), err
 	}
 
 	err = r.system.Node().Upgrade(ctx)
 	if err != nil {
-		return time.Time{}, err
+		return next.Add(delay), err
 	}
 
 	r.system.Node().Reboot(ctx)
 
 	return time.Time{}, err
+}
+
+func (r *ManagedNodeReconciler) lastUpgradeTime(ctx context.Context, node *commonv1.ManagedNode) (time.Time, error) {
+	if last, ok := node.Annotations[common.AnnotationLastUpgrade]; ok {
+		r.logger.Info("last upgrade time found", "lastUpgrade", last)
+
+		lastUpgrade, err := time.Parse(time.RFC3339, last)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse LastUpgrade annotation: %w", err)
+		}
+
+		return lastUpgrade, nil
+	}
+
+	return time.Time{}, nil
+}
+
+func (r *ManagedNodeReconciler) nextUpgradeTime(ctx context.Context, schedule string) (time.Time, error) {
+	cron, err := cronexpr.Parse(schedule)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse schedule as cron expression: %w", err)
+	}
+
+	return cron.Next(time.Now().Add(-r.cfg.ForgivenessPeriod)), nil
 }

@@ -92,7 +92,7 @@ var _ = Describe("ManagedNode Controller", func() {
 			By("Cleanup the specific resource instance ManagedNode")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
-		It("should successfully reconcile the resource", func() {
+		It("should successfully reconcile a basic resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ManagedNodeReconciler{
 				Client: k8sClient,
@@ -100,7 +100,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				tracer: noop.NewTracerProvider().Tracer("test"),
 				logger: logger,
 				system: systemHandler,
-				locker: NewKeyLocker(logger, backoffConfig, k8sClient, common.AnnotationUpgradeLock),
+				locker: NewKeyLocker(logger, LockerConfig{Backoff: backoffConfig}, k8sClient, common.AnnotationUpgradeLock),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

@@ -22,12 +22,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
-	"github.com/grafana/dskit/backoff"
-	"go.opentelemetry.io/otel"
+
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -93,27 +91,7 @@ func init() {
 }
 
 func main() {
-	var metricsAddr string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", false,
-		"If set the metrics endpoint is served securely")
-	flag.BoolVar(&enableHTTP2, "enable-http2", false,
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-
-	var otelEndpoint string
-	var orgID string
-	var namespace string
-	flag.StringVar(&otelEndpoint, "otel-endpoint", "", "The URL to use when sending traces")
-	flag.StringVar(&orgID, "org-id", "", "The X-Scope-OrgID header to set when sending traces")
-	flag.StringVar(&namespace, "namespace", "nodemanager", "The namespace to operate within")
+	cfg := NewDefaultConfig()
 
 	opts := zap.Options{
 		Development: true,
@@ -135,7 +113,7 @@ func main() {
 	}
 
 	tlsOpts := []func(*tls.Config){}
-	if !enableHTTP2 {
+	if !cfg.EnableHTTP2 {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
@@ -147,17 +125,17 @@ func main() {
 		Scheme: scheme,
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
-				namespace: {},
+				cfg.Namespace: {},
 			},
 		},
 		Metrics: metricsserver.Options{
-			BindAddress:   metricsAddr,
-			SecureServing: secureMetrics,
+			BindAddress:   cfg.MetricsAddr,
+			SecureServing: cfg.SecureMetrics,
 			TLSOpts:       tlsOpts,
 		},
 		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
+		HealthProbeBindAddress: cfg.ProbeAddr,
+		LeaderElection:         cfg.EnableLeaderElection,
 		LeaderElectionID:       "0c551175.nodemanager",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
@@ -176,9 +154,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-
-	ctx := ctrl.SetupSignalHandler()
+	var (
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+		ctx    = ctrl.SetupSignalHandler()
+		client = mgr.GetClient()
+		scheme = mgr.GetScheme()
+		locker = controller.NewKeyLocker(logger, cfg.ControllerConfig.Locker, client, common.AnnotationUpgradeLock)
+	)
 
 	system, err := system.New(ctx, logger)
 	if err != nil {
@@ -186,42 +168,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Common
-	managedNodeReconciler := &controller.ManagedNodeReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-	managedNodeReconciler.WithTracer(otel.Tracer("ManagedNode"))
-	managedNodeReconciler.WithLogger(logger.With("reconciler", "ManagedNode"))
-	managedNodeReconciler.WithSystem(system)
-
-	backoffConfig := backoff.Config{
-		MinBackoff: 3 * time.Second,
-		MaxBackoff: 3 * time.Minute,
-	}
-
-	locker := controller.NewKeyLocker(logger, backoffConfig, mgr.GetClient(), common.AnnotationUpgradeLock)
-	managedNodeReconciler.WithLocker(locker)
+	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, system, locker)
 
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)
 	}
 
-	configSetReconciler := &controller.ConfigSetReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}
-	configSetReconciler.WithTracer(otel.Tracer("ConfigSet"))
-	configSetReconciler.WithLogger(logger.With("reconciler", "ConfigSet"))
-	configSetReconciler.WithSystem(system)
+	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, system, locker)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
 	}
 
-	// Switch on the system implemetation
+	// TODO: Switch on the system implementation
 	// switch system.Node().(type) {
 	// case *freebsd.FreeBSD:
 	// 	poudriereReconciler := &freebsdcontroller.PoudriereReconciler{
@@ -249,10 +210,7 @@ func main() {
 	}
 
 	shutdownTracer, err := tracing.InstallOpenTelemetryTracer(
-		&tracing.Config{
-			OtelEndpoint: otelEndpoint,
-			OrgID:        orgID,
-		},
+		&cfg.Tracing,
 		logger,
 		"nodemanager",
 		versionString(),

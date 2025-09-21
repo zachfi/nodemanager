@@ -50,9 +50,16 @@ func (h *FreeBSD) Upgrade(ctx context.Context) error {
 	_, span := tracer.Start(ctx, "Upgrade")
 	defer span.End()
 
+	// TODO: freebsd-update updatesready If the above returns exit code 2, then
+	// there are no updates to install. A slight catch here is that occasionally
+	// we get here when there are udpates pending, but then we fetch.  If we
+	// return after a failed fetch because there are updates to install, then we
+	// should install them, fetch, and then install again.  Probably.
+
 	output, exit, err := h.exec.RunCommand(ctx, freebsdUpdate, "fetch")
 	if err != nil {
 		h.logger.Error("failed to run freebsd-udpate fetch", "err", err, "exit", exit, "output", output)
+		return err
 	}
 
 	output, exit, err = h.exec.RunCommand(ctx, freebsdUpdate, "install")

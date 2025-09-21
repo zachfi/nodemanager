@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"slices"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -51,6 +52,20 @@ type ConfigSetReconciler struct {
 	tracer trace.Tracer
 	logger *slog.Logger
 	system handler.System
+	locker Locker
+	cfg    ConfigSetConfig
+}
+
+func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker Locker) *ConfigSetReconciler {
+	return &ConfigSetReconciler{
+		Client: client,
+		Scheme: scheme,
+		tracer: otel.Tracer("controller.common.configset"),
+		logger: logger.With("controller", "configset"),
+		locker: locker,
+		system: system,
+		cfg:    cfg,
+	}
 }
 
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets,verbs=get;list;watch;create;update;patch;delete
