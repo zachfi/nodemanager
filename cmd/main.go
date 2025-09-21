@@ -91,14 +91,26 @@ func init() {
 }
 
 func main() {
-	cfg := NewDefaultConfig()
+	cfg, configVerify, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed parsing config: %v\n", err)
+		os.Exit(1)
+	}
+
+	isValid := configIsValid(cfg)
+
+	// Exit if config.verify flag is true
+	if configVerify {
+		if !isValid {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
-
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -113,7 +125,7 @@ func main() {
 	}
 
 	tlsOpts := []func(*tls.Config){}
-	if !cfg.EnableHTTP2 {
+	if !cfg.ControllerConfig.EnableHTTP2 {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
@@ -125,17 +137,17 @@ func main() {
 		Scheme: scheme,
 		Cache: cache.Options{
 			DefaultNamespaces: map[string]cache.Config{
-				cfg.Namespace: {},
+				cfg.ControllerConfig.Namespace: {},
 			},
 		},
 		Metrics: metricsserver.Options{
-			BindAddress:   cfg.MetricsAddr,
-			SecureServing: cfg.SecureMetrics,
+			BindAddress:   cfg.ControllerConfig.MetricsAddr,
+			SecureServing: cfg.ControllerConfig.SecureMetrics,
 			TLSOpts:       tlsOpts,
 		},
 		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: cfg.ProbeAddr,
-		LeaderElection:         cfg.EnableLeaderElection,
+		HealthProbeBindAddress: cfg.ControllerConfig.ProbeAddr,
+		LeaderElection:         cfg.ControllerConfig.EnableLeaderElection,
 		LeaderElectionID:       "0c551175.nodemanager",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
