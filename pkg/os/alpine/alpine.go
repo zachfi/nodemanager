@@ -27,7 +27,7 @@ func New(logger *slog.Logger) handler.System {
 	s := &AlpineLinux{
 		logger: logger,
 		exec:   &execs.ExecHandlerCommon{},
-		f:      files.New(logger, "root"),
+		f:      files.New(logger, "root", "root"),
 	}
 	s.pkg = apk.New(logger, s.exec)
 	s.svc = openrc.New(logger, s.exec)

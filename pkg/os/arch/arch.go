@@ -27,7 +27,7 @@ func New(logger *slog.Logger) handler.System {
 	s := &ArchLinux{
 		logger: logger,
 		exec:   &execs.ExecHandlerCommon{},
-		f:      files.New(logger, "root"),
+		f:      files.New(logger, "root", "root"),
 	}
 	s.pkg = pacman.New(logger, s.exec)
 	s.svc = systemd_svc.New(logger, s.exec)
