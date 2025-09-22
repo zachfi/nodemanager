@@ -62,11 +62,12 @@ var _ handler.FileHandler = (*FileHandlerCommon)(nil)
 var tracer = otel.Tracer("files/common")
 
 type FileHandlerCommon struct {
-	logger *slog.Logger
+	logger       *slog.Logger
+	defaultGroup string
 }
 
-func New(logger *slog.Logger) handler.FileHandler {
-	return &FileHandlerCommon{logger}
+func New(logger *slog.Logger, defaultGroup string) handler.FileHandler {
+	return &FileHandlerCommon{logger, defaultGroup}
 }
 
 func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string) error {
@@ -78,6 +79,10 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		}
 		span.End()
 	}()
+
+	if group == "" {
+		group = h.defaultGroup
+	}
 
 	span.SetAttributes(
 		attribute.String("path", path),

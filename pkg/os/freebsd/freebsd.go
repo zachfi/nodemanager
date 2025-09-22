@@ -27,7 +27,7 @@ func New(logger *slog.Logger) handler.System {
 	s := &FreeBSD{
 		logger: logger,
 		exec:   &execs.ExecHandlerCommon{},
-		f:      files.New(logger),
+		f:      files.New(logger, "wheel"),
 	}
 	s.pkg = pkgng.New(logger, s.exec)
 	s.svc = freebsd_svc.New(logger, s.exec)
