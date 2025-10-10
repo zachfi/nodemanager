@@ -18,6 +18,7 @@ var tracer = otel.Tracer("services/systemd")
 type Systemd struct {
 	exec   handler.ExecHandler
 	logger *slog.Logger
+	user   string
 }
 
 func New(logger *slog.Logger, exec handler.ExecHandler) handler.ServiceHandler {
@@ -73,3 +74,25 @@ func (h *Systemd) Status(ctx context.Context, name string) (services.ServiceStat
 
 	return services.Stopped, err
 }
+
+// WithContext receives a context and checks if a user value is set, and
+// returns a new handler with the user set on the struct.  This allows the
+// systemd specific handler to manage user services when set on the CRD.
+// NOTE: WithContext is not part of the ServiceHandler interface.  Passing the
+// user on the context allows keeping the interface clean and allowing the
+// specific feature of systemd.
+func (h *Systemd) WithContext(ctx context.Context) handler.ServiceHandler {
+	if user, ok := ctx.Value(UserContextKey).(string); ok && user != "" && user != h.user {
+		return &Systemd{
+			exec:   h.exec,
+			logger: h.logger.With("user", user),
+			user:   user,
+		}
+	}
+
+	return h
+}
+
+type contextKey string
+
+const UserContextKey contextKey = "user"

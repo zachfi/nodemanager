@@ -43,6 +43,7 @@ import (
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/packages"
 	"github.com/zachfi/nodemanager/pkg/services"
+	"github.com/zachfi/nodemanager/pkg/services/systemd"
 )
 
 // ConfigSetReconciler reconciles a ConfigSet object
@@ -196,16 +197,17 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 
 	var (
 		totalErrs       error
-		restartServices = make(map[string]struct{})
+		restartServices = make(map[string]context.Context)
 	)
 
 	for _, cf := range changedFiles {
 		for _, svc := range serviceSet {
+			svcCtx := serviceContext(ctx, svc.User)
 			// Only record services for restart that are supposed to be running
 			if svc.Ensure == services.Running.String() {
 				for _, sub := range svc.SusbscribeFiles {
 					if sub == cf {
-						restartServices[svc.Name] = struct{}{}
+						restartServices[svc.Name] = svcCtx
 					}
 				}
 			}
@@ -213,39 +215,41 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 	}
 
 	for _, svc := range serviceSet {
+		svcCtx := serviceContext(ctx, svc.User)
+
 		if svc.Enable {
-			err := handler.Enable(ctx, svc.Name)
+			err := handler.Enable(svcCtx, svc.Name)
 			if err != nil {
 				return errors.Wrap(err, "failed to enable service")
 			}
 		} else {
-			err := handler.Disable(ctx, svc.Name)
+			err := handler.Disable(svcCtx, svc.Name)
 			if err != nil {
 				return errors.Wrap(err, "failed to disable service")
 			}
 		}
 
 		if svc.Arguments != "" {
-			err := handler.SetArguments(ctx, svc.Name, svc.Arguments)
+			err := handler.SetArguments(svcCtx, svc.Name, svc.Arguments)
 			if err != nil {
 				return errors.Wrap(err, "failed to set service arguments")
 			}
 		}
 
-		status, _ := handler.Status(ctx, svc.Name)
+		status, _ := handler.Status(svcCtx, svc.Name)
 		span.SetAttributes(attribute.String("status", status.String()))
 
 		switch services.ServiceStatusFromString(svc.Ensure) {
 		case services.Running:
 			if status != services.Running {
-				err := handler.Start(ctx, svc.Name)
+				err := handler.Start(svcCtx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to start service")
 				}
 			}
 		case services.Stopped:
 			if status != services.Stopped {
-				err := handler.Stop(ctx, svc.Name)
+				err := handler.Stop(svcCtx, svc.Name)
 				if err != nil {
 					return errors.Wrap(err, "failed to stop service")
 				}
@@ -253,8 +257,8 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 		}
 	}
 
-	for restart := range restartServices {
-		err := handler.Restart(ctx, restart)
+	for restart, svcCtx := range restartServices {
+		err := handler.Restart(svcCtx, restart)
 		r.logger.Info("restarting service", "name", restart)
 		if err != nil {
 			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
@@ -262,6 +266,13 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 	}
 
 	return totalErrs
+}
+
+func serviceContext(ctx context.Context, user string) context.Context {
+	if user != "" {
+		ctx = context.WithValue(ctx, systemd.UserContextKey, user)
+	}
+	return ctx
 }
 
 // handleFileSet

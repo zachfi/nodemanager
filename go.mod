@@ -7,6 +7,7 @@ toolchain go1.24.1
 require (
 	github.com/drone/envsubst v1.0.3
 	github.com/go-ini/ini v1.67.0
+	github.com/go-logr/logr v1.4.3
 	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75
 	github.com/grafana/dskit v0.0.0-20250808065120-c54005d12afc
 	github.com/onsi/ginkgo/v2 v2.23.4
@@ -36,7 +37,6 @@ require (
 	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
-	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
