@@ -223,6 +223,25 @@ func (h *FileHandlerCommon) WriteTemplateFile(ctx context.Context, path, templat
 	return nil
 }
 
+func (h *FileHandlerCommon) Remove(ctx context.Context, path string) error {
+	var err error
+	_, span := tracer.Start(ctx, "Remove")
+	defer func() {
+		if err != nil {
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	_, err = os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	err = os.Remove(path)
+	return err
+}
+
 func GetFileModeFromString(_ context.Context, mode string) (os.FileMode, error) {
 	octalMode, err := strconv.ParseUint(mode, 0, 32)
 	if err != nil {

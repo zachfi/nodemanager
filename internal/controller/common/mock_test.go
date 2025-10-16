@@ -186,6 +186,7 @@ type mockFileHandler struct {
 	fileExistsCalls map[string]int
 	fileWriteCalls  map[string]int
 	fileReadCalls   map[string]int
+	fileRemoveCalls map[string]int
 }
 
 // type FileHandler interface {
@@ -233,6 +234,14 @@ func (m *mockFileHandler) WriteTemplateFile(ctx context.Context, path, template 
 	}
 	m.fileWriteCalls[path]++
 	return nil // Simulate writing a template file
+}
+
+func (m *mockFileHandler) Remove(ctx context.Context, path string) error {
+	if m.fileRemoveCalls == nil {
+		m.fileRemoveCalls = make(map[string]int)
+	}
+	m.fileRemoveCalls[path]++
+	return nil // Simulate removing a file file
 }
 
 // mockNodeHandler implements the NodeHandler interface for testing.

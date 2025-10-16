@@ -7,4 +7,5 @@ type FileHandler interface {
 	SetMode(ctx context.Context, path, mode string) error
 	WriteContentFile(ctx context.Context, path string, content []byte) error
 	WriteTemplateFile(ctx context.Context, path, template string) error
+	Remove(ctx context.Context, path string) error
 }

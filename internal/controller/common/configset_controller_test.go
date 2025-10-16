@@ -70,6 +70,12 @@ var _ = Describe("ConfigSet Controller", func() {
 								Arguments: "--config /etc/chrony/chrony.conf",
 							},
 						},
+						Files: []commonv1.File{
+							{
+								Path:   "/tmp/does/not/exist",
+								Ensure: "absent",
+							},
+						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

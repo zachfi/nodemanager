@@ -289,6 +289,10 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 		case files.File:
 			// If we have a template, let's set the content based on the rendered template.
 			if file.Template != "" {
+
+				// TODO: the file handler interface has a method for writing the
+				// template file.  Push the following into the handler for simpler
+				// testing.  Adjust the interface if necessary, since it isn't used anywhere.
 				data, err := r.collectData(ctx, namespace, file, node)
 				if err != nil {
 					return changedFiles, err
@@ -351,21 +355,23 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 			}
 
 			if target != file.Target {
-				r.logger.Info("symlinking file", "name", file.Path)
-
-				if _, err := os.Lstat(file.Path); err == nil {
-					os.Remove(file.Path)
+				err := handler.Remove(ctx, file.Path)
+				if err != nil {
+					r.logger.Error("failed removing existing link", "path", file.Path, "err", err)
+					continue
 				}
 
-				err := os.Symlink(file.Target, file.Path)
+				r.logger.Info("symlinking file", "name", file.Path)
+
+				err = os.Symlink(file.Target, file.Path)
 				if err != nil {
 					return changedFiles, errors.Wrapf(err, "failed to create symlink %q -> %q", file.Path, file.Target)
 				}
 			}
 		case files.Absent:
-			err := os.Remove(file.Path)
+			err := handler.Remove(ctx, file.Path)
 			if err != nil {
-				return changedFiles, errors.Wrapf(err, "failed to remove file %q", file.Path)
+				r.logger.Error("failed removing file", "path", file.Path, "err", err)
 			}
 		default:
 			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
@@ -500,7 +506,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 
 	content = stdout.Bytes()
 
-	return
+	return content, err
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
@@ -511,6 +517,8 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv
 	if err != nil {
 		return err, changed
 	}
+
+	// TODO: push lots of this into the handler
 
 	chsh := sha256.New()
 	contentHash := fmt.Sprintf("%x", chsh.Sum(b.Bytes()))
