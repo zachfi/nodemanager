@@ -292,7 +292,9 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 				// TODO: the file handler interface has a method for writing the
 				// template file.  Push the following into the handler for simpler
-				// testing.  Adjust the interface if necessary, since it isn't used anywhere.
+				// testing.  Adjust the interface if necessary, since it isn't used
+				// anywhere.  Or delete the interface method.
+
 				data, err := r.collectData(ctx, namespace, file, node)
 				if err != nil {
 					return changedFiles, err
