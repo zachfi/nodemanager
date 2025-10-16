@@ -31,13 +31,13 @@ func New(logger *slog.Logger, exec handler.ExecHandler) handler.ServiceHandler {
 func (h *Systemd) Enable(ctx context.Context, name string) error {
 	_, span := tracer.Start(ctx, "Enable")
 	defer span.End()
-	return h.exec.SimpleRunCommand(ctx, systemctl, "enable", name)
+	return h.systemctlSimple(ctx, "enable", name)
 }
 
 func (h *Systemd) Disable(ctx context.Context, name string) error {
 	_, span := tracer.Start(ctx, "Disable")
 	defer span.End()
-	return h.exec.SimpleRunCommand(ctx, systemctl, "disable", name)
+	return h.systemctlSimple(ctx, "disable", name)
 }
 
 func (h *Systemd) SetArguments(ctx context.Context, _, _ string) error {
@@ -49,25 +49,26 @@ func (h *Systemd) SetArguments(ctx context.Context, _, _ string) error {
 func (h *Systemd) Start(ctx context.Context, name string) error {
 	_, span := tracer.Start(ctx, "Start")
 	defer span.End()
-	return h.exec.SimpleRunCommand(ctx, systemctl, "start", name)
+	return h.systemctlSimple(ctx, "start", name)
 }
 
 func (h *Systemd) Stop(ctx context.Context, name string) error {
 	_, span := tracer.Start(ctx, "Stop")
 	defer span.End()
-	return h.exec.SimpleRunCommand(ctx, systemctl, "stop", name)
+	return h.systemctlSimple(ctx, "stop", name)
 }
 
 func (h *Systemd) Restart(ctx context.Context, name string) error {
 	_, span := tracer.Start(ctx, "Restart")
 	defer span.End()
-	return h.exec.SimpleRunCommand(ctx, systemctl, "restart", name)
+	return h.systemctlSimple(ctx, "restart", name)
 }
 
 func (h *Systemd) Status(ctx context.Context, name string) (services.ServiceStatus, error) {
 	_, span := tracer.Start(ctx, "Status")
 	defer span.End()
-	_, exit, err := h.exec.RunCommand(ctx, systemctl, "is-active", "--quiet", name)
+
+	_, exit, err := h.systemctl(ctx, "is-active", "--quiet", name)
 	if exit == 0 {
 		return services.Running, nil
 	}
@@ -96,3 +97,25 @@ func (h *Systemd) WithContext(ctx context.Context) handler.ServiceHandler {
 type contextKey string
 
 const UserContextKey contextKey = "user"
+
+func (h *Systemd) systemctl(ctx context.Context, args ...string) (string, int, error) {
+	if h.user != "" {
+
+		finalArgs := []string{
+			"--user",
+			"-M",
+			h.user + "@",
+		}
+
+		finalArgs = append(finalArgs, args...)
+
+		return h.exec.RunCommand(ctx, systemctl, finalArgs...)
+	}
+
+	return h.exec.RunCommand(ctx, systemctl, args...)
+}
+
+func (h *Systemd) systemctlSimple(ctx context.Context, args ...string) error {
+	_, _, err := h.systemctl(ctx, args...)
+	return err
+}
