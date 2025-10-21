@@ -2,6 +2,8 @@ package files
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"os/user"
@@ -182,7 +184,7 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) erro
 	return nil
 }
 
-func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, bytes []byte) error {
+func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, data []byte) error {
 	var err error
 	_, span := tracer.Start(ctx, "WriteContentFile")
 	defer func() {
@@ -194,31 +196,29 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, b
 
 	span.SetAttributes(attribute.String("path", path))
 
+	// Read the current file if it exists
+	fileBytes, err := os.ReadFile(path)
+	if !os.IsNotExist(err) {
+		// If the file exists, but we failed to read it for other reason, return the error.
+		return err
+	}
+
+	// Check if the incoming data matches what is already on disk
+	if h.hash(ctx, fileBytes) == h.hash(ctx, data) {
+		return nil
+	}
+
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	_, err = f.Write(bytes)
+	h.logger.Info("writing file", "path", path)
+	_, err = f.Write(data)
 	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func (h *FileHandlerCommon) WriteTemplateFile(ctx context.Context, path, template string) error {
-	var err error
-	_, span := tracer.Start(ctx, "WriteTemplateFile")
-	defer func() {
-		if err != nil {
-			span.SetStatus(codes.Error, err.Error())
-		}
-		span.End()
-	}()
-
-	span.SetAttributes(attribute.String("path", path))
 
 	return nil
 }
@@ -238,8 +238,16 @@ func (h *FileHandlerCommon) Remove(ctx context.Context, path string) error {
 		return nil
 	}
 
-	err = os.Remove(path)
+	err = os.Remove(path) // set the error on the span
 	return err
+}
+
+func (h *FileHandlerCommon) hash(ctx context.Context, data []byte) string {
+	_, span := tracer.Start(ctx, "hash")
+	defer span.End()
+
+	b := sha256.Sum256(data)
+	return hex.EncodeToString(b[:])
 }
 
 func GetFileModeFromString(_ context.Context, mode string) (os.FileMode, error) {

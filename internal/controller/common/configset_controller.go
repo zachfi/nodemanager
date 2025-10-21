@@ -18,10 +18,10 @@ package common
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"slices"
@@ -289,12 +289,6 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 		case files.File:
 			// If we have a template, let's set the content based on the rendered template.
 			if file.Template != "" {
-
-				// TODO: the file handler interface has a method for writing the
-				// template file.  Push the following into the handler for simpler
-				// testing.  Adjust the interface if necessary, since it isn't used
-				// anywhere.  Or delete the interface method.
-
 				data, err := r.collectData(ctx, namespace, file, node)
 				if err != nil {
 					return changedFiles, err
@@ -435,9 +429,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string,
 			return Data{}, err
 		}
 
-		for k, v := range secret.Data {
-			secrets[k] = v
-		}
+		maps.Copy(secrets, secret.Data)
 	}
 	nodeData.Secrets = secrets
 
@@ -452,9 +444,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string,
 			return Data{}, err
 		}
 
-		for k, v := range configMap.Data {
-			configMaps[k] = v
-		}
+		maps.Copy(configMaps, configMap.Data)
 	}
 	nodeData.ConfigMaps = configMaps
 
@@ -512,53 +502,30 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
-func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (err error, changed bool) {
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (error, bool) {
+	var err error
+
 	// Determine the sha of the content
 	var b bytes.Buffer
 	_, err = b.WriteString(file.Content)
 	if err != nil {
-		return err, changed
+		return err, false
 	}
 
-	// TODO: push lots of this into the handler
-
-	chsh := sha256.New()
-	contentHash := fmt.Sprintf("%x", chsh.Sum(b.Bytes()))
-
-	if _, err = os.Stat(file.Path); os.IsNotExist(err) {
-		_, err = os.Create(file.Path)
-		if err != nil {
-			return errors.Wrap(err, "failed to create new file"), changed
-		}
-	}
-
-	// Read the sha of the file
-	fileBytes, err := os.ReadFile(file.Path)
+	err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 	if err != nil {
-		return errors.Wrap(err, "failed to read file"), changed
-	}
-	fhsh := sha256.New()
-	fileHash := fmt.Sprintf("%x", fhsh.Sum(fileBytes))
-
-	// Write only when necessary
-	if contentHash != fileHash {
-		r.logger.Info("writing file", "path", file.Path)
-		err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
-		if err != nil {
-			return err, changed
-		}
-		changed = true
+		return errors.Wrap(err, "failed to write content to file"), false
 	}
 
 	err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
 	if err != nil {
-		return errors.Wrap(err, "failed to chown file"), changed
+		return errors.Wrap(err, "failed to chown file"), true
 	}
 
 	err = handler.SetMode(ctx, file.Path, file.Mode)
 	if err != nil {
-		return errors.Wrap(err, "failed to set file mode"), changed
+		return errors.Wrap(err, "failed to set file mode"), true
 	}
 
-	return nil, changed
+	return nil, true
 }

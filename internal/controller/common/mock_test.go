@@ -228,14 +228,6 @@ func (m *mockFileHandler) WriteContentFile(ctx context.Context, path string, con
 	return nil // Return nil to indicate success
 }
 
-func (m *mockFileHandler) WriteTemplateFile(ctx context.Context, path, template string) error {
-	if m.fileWriteCalls == nil {
-		m.fileWriteCalls = make(map[string]int)
-	}
-	m.fileWriteCalls[path]++
-	return nil // Simulate writing a template file
-}
-
 func (m *mockFileHandler) Remove(ctx context.Context, path string) error {
 	if m.fileRemoveCalls == nil {
 		m.fileRemoveCalls = make(map[string]int)

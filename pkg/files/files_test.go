@@ -2,7 +2,9 @@ package files
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,5 +36,19 @@ func TestFiles(t *testing.T) {
 
 		err = h.WriteContentFile(tc.ctx, p, []byte("f"))
 		require.NoError(t, err)
+
+		err = h.SetMode(tc.ctx, p, "0600")
+		require.NoError(t, err)
+
+		fileInfo, err := os.Stat(p)
+		require.NoError(t, err)
+		require.Equal(t, fs.FileMode(0o600), fileInfo.Mode())
+
+		err = h.SetMode(tc.ctx, p, "0400")
+		require.NoError(t, err)
+
+		fileInfo, err = os.Stat(p)
+		require.NoError(t, err)
+		require.Equal(t, fs.FileMode(0o400), fileInfo.Mode())
 	}
 }
