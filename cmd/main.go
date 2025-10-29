@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/go-logr/logr"
+
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	controller "github.com/zachfi/nodemanager/internal/controller/common"
 
@@ -47,6 +48,7 @@ import (
 
 	// "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
 
+	freebsdcontroller "github.com/zachfi/nodemanager/internal/controller/freebsd"
 	//+kubebuilder:scaffold:imports
 	"github.com/zachfi/zkit/pkg/tracing"
 )
@@ -228,6 +230,13 @@ func main() {
 	// 	}
 	// }
 
+	if err := (&freebsdcontroller.BastilleJailReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BastilleJail")
+		os.Exit(1)
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err = mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
