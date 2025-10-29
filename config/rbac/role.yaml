@@ -51,6 +51,7 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
+  - bastillejails
   - poudrieres
   verbs:
   - create
@@ -63,12 +64,14 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
+  - bastillejails/finalizers
   - poudrieres/finalizers
   verbs:
   - update
 - apiGroups:
   - freebsd.nodemanager
   resources:
+  - bastillejails/status
   - poudrieres/status
   verbs:
   - get
