@@ -18,19 +18,39 @@ package freebsd
 
 import (
 	"context"
+	"log/slog"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	"github.com/zachfi/nodemanager/pkg/handler"
 )
 
 // BastilleJailReconciler reconciles a BastilleJail object
 type BastilleJailReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	tracer trace.Tracer
+	logger *slog.Logger
+	system handler.System
+	cfg    BastilleConfig
+}
+
+func NewBastilleJailReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg BastilleConfig, system handler.System) *BastilleJailReconciler {
+	return &BastilleJailReconciler{
+		Client: client,
+		Scheme: scheme,
+		tracer: otel.Tracer("controller.common.configset"),
+		logger: logger.With("controller", "configset"),
+		system: system,
+		cfg:    cfg,
+	}
 }
 
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=bastillejails,verbs=get;list;watch;create;update;patch;delete

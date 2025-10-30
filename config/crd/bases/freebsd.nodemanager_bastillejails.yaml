@@ -39,9 +39,11 @@ spec:
           spec:
             description: spec defines the desired state of BastilleJail
             properties:
-              foo:
-                description: foo is an example field of BastilleJail. Edit bastillejail_types.go
-                  to remove/update
+              interface:
+                type: string
+              ip:
+                type: string
+              version:
                 type: string
             type: object
           status:

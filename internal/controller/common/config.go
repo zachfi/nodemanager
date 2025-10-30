@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/grafana/dskit/backoff"
+	"github.com/zachfi/nodemanager/internal/controller/freebsd"
 )
 
 type ControllerConfig struct {
@@ -18,6 +19,8 @@ type ControllerConfig struct {
 	ManagedNode ManagedNodeConfig
 	ConfigSet   ConfigSetConfig
 	Locker      LockerConfig
+
+	FreeBSD freebsd.ControllerConfig
 }
 
 func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
@@ -32,6 +35,9 @@ func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.
 	c.ManagedNode.RegisterFlagsAndApplyDefaults("managednode", f)
 	c.ConfigSet.RegisterFlagsAndApplyDefaults("configset", f)
 	c.Locker.RegisterFlagsAndApplyDefaults("locker", f)
+
+	// OS specific controller settings
+	c.FreeBSD.RegisterFlagsAndApplyDefaults("freebsd", f)
 }
 
 type ManagedNodeConfig struct {
