@@ -14,19 +14,19 @@ import (
 
 var ErrSystemNotFound = errors.New("not found for system")
 
-func New(ctx context.Context, logger *slog.Logger) (handler.System, error) {
+func New(ctx context.Context, logger *slog.Logger) (handler.System, OSID, error) {
 	resolver := info.NewInfoResolver()
 
 	switch OSIDFromString(resolver.Info(ctx).OS.ID) {
 	case Arch:
-		return arch.New(logger), nil
+		return arch.New(logger), Arch, nil
 	case Alpine:
-		return alpine.New(logger), nil
+		return alpine.New(logger), Alpine, nil
 	case FreeBSD:
-		return freebsd.New(logger), nil
+		return freebsd.New(logger), FreeBSD, nil
 	}
 
-	return nil, ErrSystemNotFound
+	return nil, UnhandledOsID, ErrSystemNotFound
 }
 
 type OSID int64
