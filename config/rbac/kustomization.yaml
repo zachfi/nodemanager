@@ -23,7 +23,4 @@ resources:
 - freebsd_jail_admin_role.yaml
 - freebsd_jail_editor_role.yaml
 - freebsd_jail_viewer_role.yaml
-- freebsd_bastillejail_admin_role.yaml
-- freebsd_bastillejail_editor_role.yaml
-- freebsd_bastillejail_viewer_role.yaml
 

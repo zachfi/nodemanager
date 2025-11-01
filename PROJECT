@@ -62,15 +62,6 @@ resources:
   controller: true
   domain: nodemanager
   group: freebsd
-  kind: BastilleJail
-  path: github.com/zachfi/nodemanager/api/freebsd/v1
-  version: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: nodemanager
-  group: freebsd
   kind: Jail
   path: github.com/zachfi/nodemanager/api/freebsd/v1
   version: v1

@@ -51,7 +51,6 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
-  - bastillejails
   - jails
   - poudrieres
   verbs:
@@ -65,7 +64,6 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
-  - bastillejails/finalizers
   - jails/finalizers
   - poudrieres/finalizers
   verbs:
@@ -73,7 +71,6 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
-  - bastillejails/status
   - jails/status
   - poudrieres/status
   verbs:
