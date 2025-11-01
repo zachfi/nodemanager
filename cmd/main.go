@@ -221,12 +221,6 @@ func main() {
 			os.Exit(1)
 		}
 
-		bastilleJailReconciler := freebsd.NewBastilleJailReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.BastilleJail, sys)
-		if err = bastilleJailReconciler.SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "BastilleJail")
-			os.Exit(1)
-		}
-
 		jailReconciler := freebsd.NewJailReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys)
 		if err = jailReconciler.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Jail")

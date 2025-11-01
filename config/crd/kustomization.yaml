@@ -7,7 +7,6 @@ resources:
 - bases/freebsd.nodemanager_poudrierejails.yaml
 - bases/freebsd.nodemanager_poudriereports.yaml
 - bases/freebsd.nodemanager_poudrierebulks.yaml
-- bases/freebsd.nodemanager_bastillejails.yaml
 - bases/freebsd.nodemanager_jails.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
