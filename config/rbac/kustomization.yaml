@@ -20,6 +20,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the nodemanager itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- freebsd_jail_admin_role.yaml
+- freebsd_jail_editor_role.yaml
+- freebsd_jail_viewer_role.yaml
 - freebsd_bastillejail_admin_role.yaml
 - freebsd_bastillejail_editor_role.yaml
 - freebsd_bastillejail_viewer_role.yaml

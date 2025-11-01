@@ -6,4 +6,5 @@ resources:
 - freebsd_v1_poudriereports.yaml
 - freebsd_v1_poudrierebulk.yaml
 - freebsd_v1_bastillejail.yaml
+- freebsd_v1_jail.yaml
 #+kubebuilder:scaffold:manifestskustomizesamples

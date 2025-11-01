@@ -226,6 +226,12 @@ func main() {
 			setupLog.Error(err, "unable to create controller", "controller", "BastilleJail")
 			os.Exit(1)
 		}
+
+		jailReconciler := freebsd.NewJailReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys)
+		if err = jailReconciler.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Jail")
+			os.Exit(1)
+		}
 	}
 
 	//+kubebuilder:scaffold:builder
