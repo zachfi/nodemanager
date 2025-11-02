@@ -21,4 +21,7 @@ type JailConfig struct {
 	ZfsDataset   string
 }
 
-func (c *JailConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {}
+func (c *JailConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+	f.StringVar(&c.JailDataPath, prefix+".data-path", "/usr/local/nodemanager", "The base path where jail data is stored.")
+	f.StringVar(&c.ZfsDataset, prefix+".zfs-dataset", "zroot/nodemanager", "The ZFS dataset to use for jail storage.")
+}

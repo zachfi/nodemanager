@@ -22,10 +22,10 @@ import (
 
 // JailSpec defines the desired state of Jail
 type JailSpec struct {
-	Inet6     *string `json:"inet6,omitempty"`
-	Inet      *string `json:"inet,omitempty"`
-	Interface *string `json:"interface,omitempty"`
-	Release   *string `json:"release,omitempty"`
+	Inet6     string `json:"inet6,omitempty"`
+	Inet      string `json:"inet,omitempty"`
+	Interface string `json:"interface,omitempty"`
+	Release   string `json:"release,omitempty"`
 }
 
 // JailStatus defines the observed state of Jail.
