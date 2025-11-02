@@ -9,9 +9,8 @@ import (
 const zfsCmd = "/sbin/zfs"
 
 type Manager interface {
-	// ListDataset checks if a ZFS dataset with the given name exists.
 	Check(ctx context.Context, datasetName string) error
-	CreateDataset(ctx context.Context, datasetName string) error
+	CreateDataset(ctx context.Context, datasetName string, opts ...string) error
 	DeleteDataset(ctx context.Context, datasetName string) error
 }
 
@@ -36,10 +35,17 @@ func (z *zfsManager) Check(ctx context.Context, datasetName string) error {
 	return err
 }
 
-func (z *zfsManager) CreateDataset(ctx context.Context, name string) error {
+func (z *zfsManager) CreateDataset(ctx context.Context, name string, opts ...string) error {
 	// zfs create <name>
-	// TODO: consider receiving a mount option, or a list of options.
-	return z.exec.SimpleRunCommand(ctx, zfsCmd, "create", name)
+
+	options := make([]string, 0, len(opts)+2)
+	options = append(options, "create")
+	options = append(options, name)
+	for _, o := range opts {
+		options = append(options, "-o", o)
+	}
+
+	return z.exec.SimpleRunCommand(ctx, zfsCmd, options...)
 }
 
 func (z *zfsManager) DeleteDataset(ctx context.Context, name string) error {
