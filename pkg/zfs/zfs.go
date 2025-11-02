@@ -10,9 +10,9 @@ const zfsCmd = "/sbin/zfs"
 
 type Manager interface {
 	// ListDataset checks if a ZFS dataset with the given name exists.
-	Check(ctx context.Context, name string) error
-	CreateDataset(ctx context.Context, name string) error
-	DeleteDataset(ctx context.Context, name string) error
+	Check(ctx context.Context, datasetName string) error
+	CreateDataset(ctx context.Context, datasetName string) error
+	DeleteDataset(ctx context.Context, datasetName string) error
 }
 
 var _ Manager = (*zfsManager)(nil)
@@ -21,13 +21,13 @@ type zfsManager struct {
 	exec handler.ExecHandler
 }
 
-func NewZfsManager(ctx context.Context, exec handler.ExecHandler) Manager {
+func NewZfsManager(exec handler.ExecHandler) Manager {
 	return &zfsManager{exec}
 }
 
-func (z *zfsManager) Check(ctx context.Context, name string) error {
+func (z *zfsManager) Check(ctx context.Context, datasetName string) error {
 	// zfs list <name>
-	_, e, err := z.exec.RunCommand(ctx, zfsCmd, "list", name)
+	_, e, err := z.exec.RunCommand(ctx, zfsCmd, "list", datasetName)
 	if e == 1 {
 		// dataset does not exist
 		return ErrDatasetNotFound
@@ -38,6 +38,7 @@ func (z *zfsManager) Check(ctx context.Context, name string) error {
 
 func (z *zfsManager) CreateDataset(ctx context.Context, name string) error {
 	// zfs create <name>
+	// TODO: consider receiving a mount option, or a list of options.
 	return z.exec.SimpleRunCommand(ctx, zfsCmd, "create", name)
 }
 

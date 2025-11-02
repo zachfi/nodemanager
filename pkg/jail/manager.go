@@ -1,9 +1,12 @@
 package jail
 
 import (
+	"context"
 	"os"
 
+	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	"github.com/zachfi/nodemanager/pkg/zfs"
 )
 
 const zfsCmd = "/sbin/zfs"
@@ -13,11 +16,11 @@ const zfsCmd = "/sbin/zfs"
 // - fetches the release if not already present
 // - sets up the jail configuration
 type Manager interface {
-	CreateJail(name, template, release string) error
-	DeleteJail(name string) error
-	CreateRelease(release string) error
-	ExtractRelease(release, dest string) error
-	DeleteRelease(release string) error
+	CreateJail(ctx context.Context, j freebsdv1.Jail) error
+	DeleteJail(ctx context.Context, name string) error
+	createRelease(ctx context.Context, release string) error
+	extractRelease(ctx context.Context, release, dest string) error
+	deleteRelease(ctx context.Context, release string) error
 }
 
 var _ Manager = (*manager)(nil)
@@ -27,25 +30,31 @@ type manager struct {
 	// The path where data for the manager is stored.
 	dir string
 
-	exec handler.ExecHandler
+	exec       handler.ExecHandler
+	zfsManager zfs.Manager
 }
 
-func NewManager(dir string, exec handler.ExecHandler) (Manager, error) {
-	// TODO: use ZFS if available for better performance and snapshot capabilities
+func NewManager(basePath string, zfsDataset string, exec handler.ExecHandler) (Manager, error) {
+	// TODO: implement zfs
+	zfsManager := zfs.NewZfsManager(exec)
 
-	err := os.MkdirAll(dir, 0x700)
+	err := os.MkdirAll(basePath, 0x700)
 	if err != nil {
 		return nil, err
 	}
 
 	return &manager{
-		dir:  dir,
-		exec: exec,
+		dir:        basePath,
+		exec:       exec,
+		zfsManager: zfsManager,
 	}, nil
 }
 
-func (m *manager) CreateJail(name, template, release string) error {
+func (m *manager) CreateJail(ctx context.Context, j freebsdv1.Jail) error {
 	// Implementation to create a jail using the specified template
+
+	// Check the release specified in the jail spec.
+	// If the release does not exist, create it.
 
 	// Check if the path for the jail exists.  Path specified as m.dir/name/root
 	// use zfs
@@ -56,25 +65,25 @@ func (m *manager) CreateJail(name, template, release string) error {
 	return nil
 }
 
-func (m *manager) DeleteJail(name string) error {
+func (m *manager) DeleteJail(ctx context.Context, name string) error {
 	// Implementation to delete the specified jail
 	return nil
 }
 
 // CreateRelease creates a FreeBSD release for use in jails.
 // - fetches the release if not already present
-func (m *manager) CreateRelease(release string) error {
+func (m *manager) createRelease(ctx context.Context, release string) error {
 	// Implementation to create the specified release
 	return nil
 }
 
 // ExtractRelease extracts the specified FreeBSD release to the given destination.
-func (m *manager) ExtractRelease(release, dest string) error {
+func (m *manager) extractRelease(ctx context.Context, release, dest string) error {
 	// Implementation to extract the specified release to the destination
 	return nil
 }
 
-func (m *manager) DeleteRelease(release string) error {
+func (m *manager) deleteRelease(ctx context.Context, release string) error {
 	// Implementation to delete the specified release
 	return nil
 }

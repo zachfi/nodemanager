@@ -221,7 +221,12 @@ func main() {
 			os.Exit(1)
 		}
 
-		jailReconciler := freebsd.NewJailReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys)
+		jailReconciler, jailErr := freebsd.NewJailReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys)
+		if jailErr != nil {
+			setupLog.Error(jailErr, "unable to create controller", "controller", "Jail")
+			os.Exit(1)
+		}
+
 		if err = jailReconciler.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Jail")
 			os.Exit(1)

@@ -16,6 +16,9 @@ type PoudriereConfig struct{}
 
 func (c *PoudriereConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {}
 
-type JailConfig struct{}
+type JailConfig struct {
+	JailDataPath string
+	ZfsDataset   string
+}
 
 func (c *JailConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {}

@@ -39,9 +39,13 @@ spec:
           spec:
             description: spec defines the desired state of Jail
             properties:
-              foo:
-                description: foo is an example field of Jail. Edit jail_types.go to
-                  remove/update
+              inet:
+                type: string
+              inet6:
+                type: string
+              interface:
+                type: string
+              release:
                 type: string
             type: object
           status:

@@ -39,7 +39,7 @@ func TestZfs(t *testing.T) {
 		var (
 			ctx                     = context.Background()
 			m   handler.ExecHandler = &handler.MockExecHandler{Status: tc.status}
-			z                       = NewZfsManager(ctx, m)
+			z                       = NewZfsManager(m)
 			err error
 		)
 
