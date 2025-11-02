@@ -46,8 +46,8 @@ type JailReconciler struct {
 	manager jail.Manager
 }
 
-func NewJailReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System) (*JailReconciler, error) {
-	manager, err := jail.NewManager(cfg.JailDataPath, cfg.ZfsDataset, system.Exec())
+func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System) (*JailReconciler, error) {
+	manager, err := jail.NewManager(ctx, cfg.JailDataPath, cfg.ZfsDataset, system.Exec())
 	if err != nil {
 		return nil, err
 	}
