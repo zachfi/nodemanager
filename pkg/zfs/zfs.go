@@ -9,6 +9,7 @@ import (
 const zfsCmd = "/sbin/zfs"
 
 type Manager interface {
+	Ensure(ctx context.Context, datasetName string, opts ...string) error
 	Check(ctx context.Context, datasetName string) error
 	CreateDataset(ctx context.Context, datasetName string, opts ...string) error
 	DeleteDataset(ctx context.Context, datasetName string) error
@@ -51,4 +52,22 @@ func (z *zfsManager) CreateDataset(ctx context.Context, name string, opts ...str
 func (z *zfsManager) DeleteDataset(ctx context.Context, name string) error {
 	// zfs destroy <name>
 	return z.exec.SimpleRunCommand(ctx, zfsCmd, "destroy", name)
+}
+
+func (z *zfsManager) Ensure(ctx context.Context, datasetName string, opts ...string) error {
+	err := z.Check(ctx, datasetName)
+	if err != nil {
+		if err == ErrDatasetNotFound {
+			err = z.CreateDataset(ctx, datasetName, opts...)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// TODO: consider checking and applying options here
+
+	return nil
 }
