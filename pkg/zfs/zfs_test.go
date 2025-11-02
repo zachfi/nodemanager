@@ -14,6 +14,7 @@ func TestZfs(t *testing.T) {
 		status      int
 		dataset     string
 		err         error
+		options     []string
 		checkArgs   []string
 		createArgs  []string
 		destroyArgs []string
@@ -33,6 +34,15 @@ func TestZfs(t *testing.T) {
 			createArgs:  []string{"create", "yep"},
 			destroyArgs: []string{"destroy", "yep"},
 		},
+		{
+			name:        "withopts",
+			status:      0,
+			err:         nil,
+			options:     []string{"mountpoint=/data/jails", "compression=lz4"},
+			checkArgs:   []string{"list", "withopts"},
+			createArgs:  []string{"create", "withopts", "-o", "mountpoint=/data/jails", "-o", "compression=lz4"},
+			destroyArgs: []string{"destroy", "withopts"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -51,7 +61,7 @@ func TestZfs(t *testing.T) {
 			continue
 		}
 
-		err = z.CreateDataset(ctx, tc.name)
+		err = z.CreateDataset(ctx, tc.name, tc.options...)
 		require.NoError(t, err)
 		require.Equal(t, tc.createArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd])
 

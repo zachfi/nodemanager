@@ -89,7 +89,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	finalizer := "freebsd.nodemanager/finalizer"
 
 	// examine DeletionTimestamp to determine if object is under deletion
-	if j.ObjectMeta.DeletionTimestamp.IsZero() {
+	if j.DeletionTimestamp.IsZero() {
 		// The object is not being deleted, so if it does not have our finalizer,
 		// then let's add the finalizer and update the object. This is equivalent
 		// to registering our finalizer.
@@ -102,7 +102,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	} else {
 		// The object is being deleted
 		if controllerutil.ContainsFinalizer(j, finalizer) {
-			if err := r.manager.DeleteJail(ctx, j.ObjectMeta.Name); err != nil {
+			if err := r.manager.DeleteJail(ctx, j.Name); err != nil {
 				return ctrl.Result{}, err
 			}
 

@@ -2,7 +2,6 @@ package jail
 
 import (
 	"context"
-	"os"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -34,14 +33,25 @@ type manager struct {
 	zfsManager zfs.Manager
 }
 
-func NewManager(basePath string, zfsDataset string, exec handler.ExecHandler) (Manager, error) {
-	// TODO: implement zfs
+func NewManager(ctx context.Context, basePath string, zfsDataset string, exec handler.ExecHandler) (Manager, error) {
 	zfsManager := zfs.NewZfsManager(exec)
-
-	err := os.MkdirAll(basePath, 0x700)
+	err := zfsManager.Check(ctx, zfsDataset)
 	if err != nil {
-		return nil, err
+		if err == zfs.ErrDatasetNotFound {
+			err = zfsManager.CreateDataset(ctx, zfsDataset, basePath)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
+
+	// FIXME: instead of mkdir, set the mountpoint of the zfs dataset to basePath
+	// err = os.MkdirAll(basePath, 0x700)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	return &manager{
 		dir:        basePath,
