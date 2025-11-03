@@ -48,32 +48,19 @@ func NewManager(ctx context.Context, basePath string, zfsDataset string, exec ha
 	zfsManager := zfs.NewZfsManager(exec)
 
 	// Ensure the base ZFS dataset exists
-	err := zfsManager.Check(ctx, zfsDataset)
+	err := zfsManager.Ensure(ctx, zfsDataset, "mountpoint="+basePath)
 	if err != nil {
-		if err == zfs.ErrDatasetNotFound {
-			err = zfsManager.CreateDataset(ctx, zfsDataset, "mountpoint="+basePath)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	// Create additional datasets for releases and jails
 	additionalDataSets := []string{JailRootDir, ReleaseRootDir}
 	for _, ds := range additionalDataSets {
-		fullDS := zfsDataset + "/" + ds
-		err = zfsManager.Check(ctx, fullDS)
+		fullDS := filepath.Join(zfsDataset, ds)
+
+		err := zfsManager.Ensure(ctx, fullDS)
 		if err != nil {
-			if err == zfs.ErrDatasetNotFound {
-				err = zfsManager.CreateDataset(ctx, fullDS)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 	}
 
@@ -88,16 +75,10 @@ func NewManager(ctx context.Context, basePath string, zfsDataset string, exec ha
 func (m *manager) CreateJail(ctx context.Context, j freebsdv1.Jail) error {
 	// Check and create the necessary ZFS dataset for the jail
 	jailDataset := filepath.Join(m.dir, JailRootDir, j.Name)
-	err := m.zfsManager.Check(ctx, jailDataset)
+
+	err := m.zfsManager.Ensure(ctx, jailDataset)
 	if err != nil {
-		if err == zfs.ErrDatasetNotFound {
-			err = m.zfsManager.CreateDataset(ctx, jailDataset)
-			if err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
+		return err
 	}
 
 	err = m.extractRelease(ctx, j.Spec.Release, filepath.Join(m.dir, ReleaseRootDir, j.Spec.Release))
@@ -132,16 +113,9 @@ func (m *manager) ensureRelease(ctx context.Context, release string) error {
 		releasePath    = filepath.Join(m.dir, ReleaseRootDir, release)
 		releaseDataset = filepath.Join(m.dataset, ReleaseRootDir, release)
 	)
-	err := m.zfsManager.Check(ctx, releaseDataset)
+	err := m.zfsManager.Ensure(ctx, releaseDataset)
 	if err != nil {
-		if err == zfs.ErrDatasetNotFound {
-			err = m.zfsManager.CreateDataset(ctx, releaseDataset)
-			if err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
+		return err
 	}
 
 	// Fetch the release is not already present

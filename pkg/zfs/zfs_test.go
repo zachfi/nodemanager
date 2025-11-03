@@ -8,10 +8,10 @@ import (
 	"github.com/zachfi/nodemanager/pkg/handler"
 )
 
-func TestZfs(t *testing.T) {
+func TestZfsInternal(t *testing.T) {
 	cases := []struct {
 		name        string
-		status      int
+		status      []int
 		dataset     string
 		err         error
 		options     []string
@@ -21,14 +21,14 @@ func TestZfs(t *testing.T) {
 	}{
 		{
 			name:      "nope",
-			status:    1,
+			status:    []int{1},
 			err:       ErrDatasetNotFound,
 			checkArgs: []string{"list", "nope"},
 		},
 
 		{
 			name:        "yep",
-			status:      0,
+			status:      []int{0},
 			err:         nil,
 			checkArgs:   []string{"list", "yep"},
 			createArgs:  []string{"create", "yep"},
@@ -36,7 +36,7 @@ func TestZfs(t *testing.T) {
 		},
 		{
 			name:        "withopts",
-			status:      0,
+			status:      []int{0},
 			err:         nil,
 			options:     []string{"mountpoint=/data/jails", "compression=lz4"},
 			checkArgs:   []string{"list", "withopts"},
@@ -53,21 +53,61 @@ func TestZfs(t *testing.T) {
 			err error
 		)
 
-		err = z.Check(ctx, tc.name)
+		err = z.check(ctx, tc.name)
 		require.Equal(t, tc.err, err)
-		require.Equal(t, tc.checkArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd])
+		require.Equal(t, tc.checkArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd][0])
 
 		if tc.err != nil {
 			continue
 		}
 
-		err = z.CreateDataset(ctx, tc.name, tc.options...)
+		err = z.createDataset(ctx, tc.name, tc.options...)
 		require.NoError(t, err)
-		require.Equal(t, tc.createArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd])
+		require.Equal(t, tc.createArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd][1])
 
-		err = z.DeleteDataset(ctx, tc.name)
+		err = z.DestroyDataset(ctx, tc.name)
 		require.NoError(t, err)
-		require.Equal(t, tc.destroyArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd])
+		require.Equal(t, tc.destroyArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd][2])
+
+	}
+}
+
+func TestZfsInterface(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     []int
+		options    []string
+		ensureArgs [][]string
+	}{
+		{
+			name:       "alpha",
+			ensureArgs: [][]string{{"list", "alpha"}, {"create", "alpha"}},
+			status:     []int{1},
+		},
+		{
+			name:       "bravo",
+			ensureArgs: [][]string{{"list", "bravo"}},
+			status:     []int{0},
+		},
+		{
+			name:       "charlie",
+			ensureArgs: [][]string{{"list", "charlie"}, {"create", "charlie", "-o", "mountpoint=/data/charlie", "-o", "compression=lz4"}},
+			status:     []int{1},
+			options:    []string{"mountpoint=/data/charlie", "compression=lz4"},
+		},
+	}
+
+	for _, tc := range cases {
+		var (
+			ctx                     = context.Background()
+			m   handler.ExecHandler = &handler.MockExecHandler{Status: tc.status}
+			z                       = NewZfsManager(m)
+			err error
+		)
+
+		err = z.Ensure(ctx, tc.name, tc.options...)
+		require.Nil(t, err)
+		require.Equal(t, tc.ensureArgs, m.(*handler.MockExecHandler).Recorder[zfsCmd])
 
 	}
 }
