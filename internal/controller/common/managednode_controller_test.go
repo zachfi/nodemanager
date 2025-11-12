@@ -18,6 +18,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -26,6 +27,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"go.opentelemetry.io/otel/trace/noop"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -34,14 +36,17 @@ import (
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/common"
-	"github.com/zachfi/nodemanager/pkg/common/labels"
+	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
-var backoffConfig = backoff.Config{
-	MinBackoff: 100 * time.Millisecond,
-	MaxBackoff: 200 * time.Millisecond,
+var lockerConfig = &locker.Config{
+	Backoff: backoff.Config{
+		MinBackoff: 100 * time.Millisecond,
+		MaxBackoff: 200 * time.Millisecond,
+	},
+	LeaseDuration: 20 * time.Second,
 }
 
 var _ = Describe("ManagedNode Controller", func() {
@@ -54,6 +59,7 @@ var _ = Describe("ManagedNode Controller", func() {
 			Name:      resourceName,
 			Namespace: "default",
 		}
+
 		managednode := &commonv1.ManagedNode{}
 
 		BeforeEach(func() {
@@ -64,9 +70,7 @@ var _ = Describe("ManagedNode Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
-						Labels: map[string]string{
-							labels.LabelUpgradeGroup: "stable",
-						},
+						Labels:    map[string]string{},
 					},
 					Spec: commonv1.ManagedNodeSpec{
 						Domain: "example.com",
@@ -100,7 +104,8 @@ var _ = Describe("ManagedNode Controller", func() {
 				tracer: noop.NewTracerProvider().Tracer("test"),
 				logger: logger,
 				system: systemHandler,
-				locker: NewKeyLocker(logger, LockerConfig{Backoff: backoffConfig}, k8sClient, common.AnnotationUpgradeLock),
+				// locker: NewKeyLocker(ctx, logger, LockerConfig{Backoff: backoffConfig}, k8sClient, common.AnnotationUpgradeLock),
+				locker: locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, typeNamespacedName.Namespace, hostname),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -115,9 +120,24 @@ var _ = Describe("ManagedNode Controller", func() {
 			k8sClient.Get(ctx, typeNamespacedName, managednode)
 
 			// The node should have the lock annotation set
-			Expect(managednode.Annotations).To(HaveKey(common.AnnotationUpgradeLock), "Expected the upgrade lock annotation to be set after reconciliation.")
+			Expect(managednode.Annotations).To(HaveKey(common.AnnotationLastUpgrade), "Expected the upgrade lock annotation to be set after reconciliation.")
 
-			// A second reconcile should remove the lock, but not call upgrade or reboot again.
+			leaseName := types.NamespacedName{
+				Name:      managednode.Spec.Upgrade.Group,
+				Namespace: "default",
+			}
+			lease := &coordinationv1.Lease{}
+
+			err = k8sClient.Get(ctx, leaseName, lease)
+			Expect(err).ToNot(HaveOccurred())
+
+			Expect(*lease.Spec.HolderIdentity).To(Equal(hostname))
+			Expect(controllerReconciler.locker.Locked(ctx, leaseName)).To(Equal(true))
+
+			logger.Info("leaseName", "leaseName", fmt.Sprintf("%+v", leaseName))
+			logger.Info("lease", "lease", fmt.Sprintf("%+v", lease))
+
+			// A second reconcile should remove the lock, but not call upgrade or reboot .
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
@@ -129,7 +149,11 @@ var _ = Describe("ManagedNode Controller", func() {
 
 			k8sClient.Get(ctx, typeNamespacedName, managednode)
 
-			Expect(managednode.Annotations).ToNot(HaveKey(common.AnnotationUpgradeLock), "Expect the ugprade lock annotation to be removed after reconciliation.")
+			// Check that we no longer hold the lease
+			err = k8sClient.Get(ctx, leaseName, lease)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(lease.Spec.HolderIdentity).To(BeNil())
+			Expect(controllerReconciler.locker.Locked(ctx, leaseName)).To(Equal(false))
 
 			lastUpgrade, err := time.Parse(time.RFC3339, managednode.Annotations[common.AnnotationLastUpgrade])
 			Expect(err).NotTo(HaveOccurred())

@@ -98,7 +98,7 @@ func TestLeaseLocker_Lock(t *testing.T) {
 
 	// locker := controller.NewLeaseLocker(ctx, logger, cfg.ControllerConfig.Locker, clientset, cfg.ControllerConfig.Namespace, hostname)
 
-	cfg := &LockerConfig{}
+	cfg := &Config{}
 	cfg.RegisterFlagsAndApplyDefaults("", &flag.FlagSet{})
 
 	for _, tt := range tests {
@@ -148,7 +148,7 @@ func TestLeaseLocker_Unlock(t *testing.T) {
 	// Create a Lease held by another ID
 	heldByOthers := createLease(otherID, now, int32(leaseDuration.Seconds()))
 
-	cfg := &LockerConfig{}
+	cfg := &Config{}
 	cfg.RegisterFlagsAndApplyDefaults("", &flag.FlagSet{})
 
 	ctx := context.Background()

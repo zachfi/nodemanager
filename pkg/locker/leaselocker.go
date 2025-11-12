@@ -23,12 +23,12 @@ type leaseLocker struct {
 	namespace string
 	id        string
 
-	cfg *LockerConfig
+	cfg *Config
 
 	mtx sync.Mutex
 }
 
-func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg *LockerConfig, clientset kubernetes.Interface, namespace, id string) Locker {
+func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg *Config, clientset kubernetes.Interface, namespace, id string) Locker {
 	return &leaseLocker{
 		logger:    logger,
 		cfg:       cfg,
@@ -62,7 +62,7 @@ func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error 
 	// Attempt to create the lease
 	_, err := leaseInterface.Create(ctx, newLease, metav1.CreateOptions{})
 	if err == nil {
-		l.logger.Info("Lock acquired", "lease", req.String())
+		l.logger.Info("lock acquired", "lease", req.String(), "id", l.id, "lease", fmt.Sprintf("%+v", newLease))
 		return nil
 	}
 
@@ -83,7 +83,7 @@ func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error 
 		)
 
 		if isHeldByMe {
-			l.logger.Info("Lock already held by this instance (treating as acquired)", "lease", req.String())
+			l.logger.Info("lock already held by this instance (treating as acquired)", "lease", req.String())
 			return nil // Already holding the lock
 		}
 
@@ -150,7 +150,7 @@ func (l *leaseLocker) Unlock(ctx context.Context, req types.NamespacedName) erro
 		// D. Attempt the Update
 		_, updateErr := leaseInterface.Update(ctx, existingLease, metav1.UpdateOptions{})
 		if updateErr == nil {
-			l.logger.Info("Lock explicitly released via Lease update", "lease", req.String())
+			l.logger.Info("lock released", "lease", req.String(), "id", l.id)
 			return nil // Success!
 		}
 

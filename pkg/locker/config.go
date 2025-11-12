@@ -7,12 +7,12 @@ import (
 	"github.com/grafana/dskit/backoff"
 )
 
-type LockerConfig struct {
+type Config struct {
 	Backoff       backoff.Config
 	LeaseDuration time.Duration
 }
 
-func (c *LockerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+func (c *Config) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	f.DurationVar(&c.Backoff.MinBackoff, prefix+".backoff-min-period", 3*time.Second, "Minimum delay when backing off.")
 	f.DurationVar(&c.Backoff.MaxBackoff, prefix+".backoff-max-period", 3*time.Minute, "Maximum delay when backing off.")
 	f.IntVar(&c.Backoff.MaxRetries, prefix+".backoff-max-retries", 0, "The maximum number of retries. 0 means no limit.")

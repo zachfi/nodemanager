@@ -25,6 +25,7 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 
+	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,7 +42,7 @@ import (
 	controller "github.com/zachfi/nodemanager/internal/controller/common"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
-	"github.com/zachfi/nodemanager/pkg/common"
+	"github.com/zachfi/nodemanager/pkg/locker"
 	"github.com/zachfi/nodemanager/pkg/system"
 
 	// "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
@@ -166,14 +167,28 @@ func main() {
 		ctx    = ctrl.SetupSignalHandler()
 		client = mgr.GetClient()
 		scheme = mgr.GetScheme()
-		locker = controller.NewKeyLocker(logger, cfg.ControllerConfig.Locker, client, common.AnnotationUpgradeLock)
+		config = mgr.GetConfig()
 	)
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		setupLog.Error(err, "failed to create clinetset", "err", err)
+		os.Exit(1)
+	}
 
 	system, err := system.New(ctx, logger)
 	if err != nil {
 		setupLog.Error(err, "unable to create system handler", "err", err)
 		os.Exit(1)
 	}
+
+	hostname, err := system.Node().Hostname()
+	if err != nil {
+		setupLog.Error(err, "failed to get hostname")
+		os.Exit(1)
+	}
+
+	locker := locker.NewLeaseLocker(ctx, logger, cfg.ControllerConfig.Locker, clientset, cfg.ControllerConfig.Namespace, hostname)
 
 	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, system, locker)
 
