@@ -20,7 +20,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
 var _ = Describe("ConfigSet Controller", func() {
@@ -68,6 +68,7 @@ var _ = Describe("ConfigSet Controller", func() {
 								Enable:    true,
 								Ensure:    "running",
 								Arguments: "--config /etc/chrony/chrony.conf",
+								LockGroup: "testing",
 							},
 						},
 						Files: []commonv1.File{
@@ -92,12 +93,16 @@ var _ = Describe("ConfigSet Controller", func() {
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
+
+			locker := locker.NewLeaseLocker(ctx, logger, &locker.Config{}, clientset, typeNamespacedName.Namespace, hostname)
+
 			controllerReconciler := &ConfigSetReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 				tracer: noop.NewTracerProvider().Tracer("test"),
 				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
 				system: systemHandler,
+				locker: locker,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -112,14 +117,3 @@ var _ = Describe("ConfigSet Controller", func() {
 		})
 	})
 })
-
-func TestConfigSetController(t *testing.T) {
-	cases := []struct {
-		name string
-	}{}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-		})
-	}
-}

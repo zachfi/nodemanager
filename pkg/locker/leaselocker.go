@@ -62,7 +62,7 @@ func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error 
 	// Attempt to create the lease
 	_, err := leaseInterface.Create(ctx, newLease, metav1.CreateOptions{})
 	if err == nil {
-		l.logger.Info("lock acquired", "lease", req.String(), "id", l.id, "lease", fmt.Sprintf("%+v", newLease))
+		l.logger.Info("lock acquired", "lease", req.String(), "id", l.id)
 		return nil
 	}
 

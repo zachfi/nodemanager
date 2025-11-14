@@ -96,8 +96,6 @@ func TestLeaseLocker_Lock(t *testing.T) {
 		},
 	}
 
-	// locker := controller.NewLeaseLocker(ctx, logger, cfg.ControllerConfig.Locker, clientset, cfg.ControllerConfig.Namespace, hostname)
-
 	cfg := &Config{}
 	cfg.RegisterFlagsAndApplyDefaults("", &flag.FlagSet{})
 
