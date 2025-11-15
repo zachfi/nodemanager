@@ -5,12 +5,12 @@ name: ci
 steps:
 - commands:
   - make build
-  image: zachfi/build-image
+  image: reg.dist.svc.cluster.znet:5000/zachfi/tools
   name: build
   pull: always
 - commands:
   - make test
-  image: zachfi/build-image
+  image: reg.dist.svc.cluster.znet:5000/zachfi/tools
   name: test
   pull: always
 trigger:
@@ -25,7 +25,7 @@ name: main
 steps:
 - commands:
   - make snapshot
-  image: zachfi/build-image
+  image: reg.dist.svc.cluster.znet:5000/zachfi/tools
   name: snapshot
   pull: always
 trigger:
@@ -41,7 +41,7 @@ steps:
   environment:
     GITHUB_TOKEN:
       from_secret: GITHUB_TOKEN
-  image: zachfi/build-image
+  image: reg.dist.svc.cluster.znet:5000/zachfi/tools
   name: release
   pull: always
   when:
@@ -52,6 +52,6 @@ trigger:
   - refs/tags/v*
 ---
 kind: signature
-hmac: 2583fac510e43550e9b5be98dee1075cad937e9e3836a476cd079c650bf76723
+hmac: a4e92a688e3663b2ca2a0366567b0f041df4ea8d8e7967d886f24c28dc17992f
 
 ...

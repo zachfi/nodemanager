@@ -1,3 +1,6 @@
+local owner = 'zachfi';
+local localRegistry = 'reg.dist.svc.cluster.znet:5000';
+
 local pipeline(name) = {
   kind: 'pipeline',
   name: name,
@@ -30,7 +33,7 @@ local withPipelineTags() = {
 
 local step(name) = {
   name: name,
-  image: 'zachfi/build-image',
+  image: '%s/%s/tools' % [localRegistry, owner],
   pull: 'always',
   commands: [],
 };
