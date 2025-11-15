@@ -8,31 +8,6 @@ rules:
   - common.nodemanager.nodemanager
   resources:
   - configsets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - common.nodemanager.nodemanager
-  resources:
-  - configsets/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - common.nodemanager.nodemanager
-  resources:
-  - configsets/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - common.nodemanager.nodemanager
-  resources:
   - managednodes
   verbs:
   - create
@@ -45,12 +20,14 @@ rules:
 - apiGroups:
   - common.nodemanager.nodemanager
   resources:
+  - configsets/finalizers
   - managednodes/finalizers
   verbs:
   - update
 - apiGroups:
   - common.nodemanager.nodemanager
   resources:
+  - configsets/status
   - managednodes/status
   verbs:
   - get
