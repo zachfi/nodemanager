@@ -11,8 +11,6 @@ var (
 	LabelArch      = "kubernetes.io/arch"
 	LabelHostname  = "kubernetes.io/hostname"
 	PoudriereBuild = "freebsd.nodemanager/poudriere"
-
-	LabelUpgradeGroup = "upgrade.nodemanager/group"
 )
 
 type Logic int

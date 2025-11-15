@@ -9,6 +9,8 @@ import (
 
 var systemHandler = &mockSystemHandler{}
 
+var hostname, err = systemHandler.Node().Hostname()
+
 var (
 	_ handler.PackageHandler = (*mockPackageHandler)(nil)
 	_ handler.ServiceHandler = (*mockServiceHandler)(nil)

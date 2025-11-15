@@ -37,6 +37,7 @@ import (
 	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	"github.com/zachfi/nodemanager/pkg/locker"
 	"github.com/zachfi/nodemanager/pkg/util"
 )
 
@@ -47,11 +48,11 @@ type ManagedNodeReconciler struct {
 	tracer trace.Tracer
 	logger *slog.Logger
 	system handler.System
-	locker Locker
+	locker locker.Locker
 	cfg    ManagedNodeConfig
 }
 
-func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker Locker) *ManagedNodeReconciler {
+func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker) *ManagedNodeReconciler {
 	return &ManagedNodeReconciler{
 		Client: client,
 		Scheme: scheme,
@@ -188,9 +189,18 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		delay      time.Duration
 	)
 
+	// NOTE: we require that the node spec has an upgrade schedule, and delay.
+	// If the group is present, then we use the locker using the group to ensure
+	// that only one member of the group is upgrading at a time.
+
 	// Check if we are a node that performs upgrades
 	if node.Spec.Upgrade.Schedule == "" {
 		r.logger.Info("managed node has no upgrade schedule")
+		return time.Time{}, nil
+	}
+
+	if node.Spec.Upgrade.Delay == "" {
+		r.logger.Info("managed node has no upgrade delay")
 		return time.Time{}, nil
 	}
 
@@ -199,44 +209,28 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return time.Time{}, err
 	}
 
-	if node.Spec.Upgrade.Delay == "" {
-		r.logger.Info("managed node has no upgrade delay")
-		return time.Time{}, nil
-	}
-
 	last, err = r.lastUpgradeTime(ctx, node)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	req := types.NamespacedName{
-		Name:      node.Name,
-		Namespace: node.Namespace,
-	}
+	var req types.NamespacedName
 
-	// If we have the lock: update status, unlock return
-	locked, err := r.locker.HasLock(ctx, req)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to check for upgrade lock: %w", err)
-	}
-
-	// Check the lock first.  If we are already locked, we assume we have just upgraded.
-	if locked {
-		defer r.locker.Unlock(ctx, req)
-		node.Annotations[common.AnnotationLastUpgrade] = time.Now().Format(time.RFC3339)
-
-		f := func() error {
-			return r.Update(ctx, node)
+	// Only lock if we have an upgrade group set
+	if node.Spec.Upgrade.Group != "" {
+		req = types.NamespacedName{
+			Name:      node.Spec.Upgrade.Group,
+			Namespace: node.Namespace,
 		}
 
-		if err = retry.RetryOnConflict(retry.DefaultBackoff, f); err != nil {
-			return time.Time{}, fmt.Errorf("failed to set last upgrade time: %w", err)
+		// If we have the lock, assume we have just upgraded.
+		if r.locker.Locked(ctx, req) {
+			r.locker.Unlock(ctx, req)
+			return next, nil
 		}
-
-		return next, nil
 	}
 
-	// Check if we have upgraded recently
+	// Skip an upgrade if an upgrade has already happened within the delay window.
 	if !last.IsZero() {
 		delay, err = time.ParseDuration(node.Spec.Upgrade.Delay)
 		if err != nil {
@@ -266,8 +260,11 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	// TODO: Consider a kubernetes drain if we know we are running in a
 	// kubernetes cluster.  How do we know?
 
-	if err := r.locker.Lock(ctx, req, labels.LabelUpgradeGroup, node.Spec.Upgrade.Group); err != nil {
-		return next.Add(delay), fmt.Errorf("failed to acquire upgrade lock: %w", err)
+	if node.Spec.Upgrade.Group != "" {
+		err = r.locker.Lock(ctx, req)
+		if err != nil {
+			return time.Time{}, err
+		}
 	}
 
 	err = r.system.Package().UpgradeAll(ctx)
@@ -280,6 +277,23 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return next.Add(delay), err
 	}
 
+	// Set the upgrade time
+
+	if node.Annotations == nil {
+		node.Annotations = make(map[string]string)
+	}
+
+	node.Annotations[common.AnnotationLastUpgrade] = time.Now().Format(time.RFC3339)
+
+	f := func() error {
+		return r.Update(ctx, node)
+	}
+
+	if err = retry.RetryOnConflict(retry.DefaultBackoff, f); err != nil {
+		return time.Time{}, fmt.Errorf("failed to set last upgrade time: %w", err)
+	}
+
+	// Reboot the system after we've marked the system as upgraded
 	r.system.Node().Reboot(ctx)
 
 	return time.Time{}, err

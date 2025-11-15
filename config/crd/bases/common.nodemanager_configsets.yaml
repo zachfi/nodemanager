@@ -101,6 +101,8 @@ spec:
                       type: boolean
                     ensure:
                       type: string
+                    lock_group:
+                      type: string
                     name:
                       type: string
                     subscribe_files:

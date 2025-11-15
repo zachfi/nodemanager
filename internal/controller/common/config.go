@@ -4,7 +4,7 @@ import (
 	"flag"
 	"time"
 
-	"github.com/grafana/dskit/backoff"
+	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
 type ControllerConfig struct {
@@ -17,7 +17,7 @@ type ControllerConfig struct {
 
 	ManagedNode ManagedNodeConfig
 	ConfigSet   ConfigSetConfig
-	Locker      LockerConfig
+	Locker      *locker.Config
 }
 
 func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
@@ -45,14 +45,4 @@ func (c *ManagedNodeConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag
 type ConfigSetConfig struct{}
 
 func (c *ConfigSetConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
-}
-
-type LockerConfig struct {
-	Backoff backoff.Config
-}
-
-func (c *LockerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
-	f.DurationVar(&c.Backoff.MinBackoff, prefix+".backoff-min-period", 3*time.Second, "Minimum delay when backing off.")
-	f.DurationVar(&c.Backoff.MaxBackoff, prefix+".backoff-max-period", 3*time.Minute, "Maximum delay when backing off.")
-	f.IntVar(&c.Backoff.MaxRetries, prefix+".backoff-max-retries", 0, "The maximum number of retries. 0 means no limit.")
 }

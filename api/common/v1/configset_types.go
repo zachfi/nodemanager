@@ -40,6 +40,7 @@ type Service struct {
 	SusbscribeFiles []string `json:"subscribe_files,omitempty"`
 	Arguments       string   `json:"arguments,omitempty"`
 	User            string   `json:"user,omitempty"`
+	LockGroup       string   `json:"lock_group,omitempty"`
 }
 
 type File struct {

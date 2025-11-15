@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -36,11 +37,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/pkg/errors"
-
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/files"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	"github.com/zachfi/nodemanager/pkg/locker"
 	"github.com/zachfi/nodemanager/pkg/packages"
 	"github.com/zachfi/nodemanager/pkg/services"
 	"github.com/zachfi/nodemanager/pkg/services/systemd"
@@ -53,11 +53,11 @@ type ConfigSetReconciler struct {
 	tracer trace.Tracer
 	logger *slog.Logger
 	system handler.System
-	locker Locker
+	locker locker.Locker
 	cfg    ConfigSetConfig
 }
 
-func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker Locker) *ConfigSetReconciler {
+func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker) *ConfigSetReconciler {
 	return &ConfigSetReconciler{
 		Client: client,
 		Scheme: scheme,
@@ -117,7 +117,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	err = r.handleServiceSet(ctx, configSet.Spec.Services, changedFiles)
+	err = r.handleServiceSet(ctx, req.Namespace, configSet.Spec.Services, changedFiles)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -189,15 +189,21 @@ func (r *ConfigSetReconciler) WithSystem(system handler.System) {
 	r.system = system
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet []commonv1.Service, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace string, serviceSet []commonv1.Service, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
 
 	handler := r.system.Service()
 
+	type restartService struct {
+		// Context is used to pass a user value on the systemd handler.
+		context.Context
+		commonv1.Service
+	}
+
 	var (
-		totalErrs       error
-		restartServices = make(map[string]context.Context)
+		errs            []error
+		restartServices = make(map[string]restartService)
 	)
 
 	for _, cf := range changedFiles {
@@ -207,7 +213,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 			if svc.Ensure == services.Running.String() {
 				for _, sub := range svc.SusbscribeFiles {
 					if sub == cf {
-						restartServices[svc.Name] = svcCtx
+						restartServices[svc.Name] = restartService{svcCtx, svc}
 					}
 				}
 			}
@@ -220,19 +226,19 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 		if svc.Enable {
 			err := handler.Enable(svcCtx, svc.Name)
 			if err != nil {
-				return errors.Wrap(err, "failed to enable service")
+				return fmt.Errorf("failed to enable service: %w", err)
 			}
 		} else {
 			err := handler.Disable(svcCtx, svc.Name)
 			if err != nil {
-				return errors.Wrap(err, "failed to disable service")
+				return fmt.Errorf("failed to disable service: %w", err)
 			}
 		}
 
 		if svc.Arguments != "" {
 			err := handler.SetArguments(svcCtx, svc.Name, svc.Arguments)
 			if err != nil {
-				return errors.Wrap(err, "failed to set service arguments")
+				return fmt.Errorf("failed to set service arguments: %w", err)
 			}
 		}
 
@@ -244,28 +250,60 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, serviceSet [
 			if status != services.Running {
 				err := handler.Start(svcCtx, svc.Name)
 				if err != nil {
-					return errors.Wrap(err, "failed to start service")
+					return fmt.Errorf("failed to start service: %w", err)
 				}
 			}
 		case services.Stopped:
 			if status != services.Stopped {
 				err := handler.Stop(svcCtx, svc.Name)
 				if err != nil {
-					return errors.Wrap(err, "failed to stop service")
+					return fmt.Errorf("failed to stop service: %w", err)
 				}
 			}
 		}
 	}
 
-	for restart, svcCtx := range restartServices {
-		err := handler.Restart(svcCtx, restart)
+	var (
+		req types.NamespacedName
+		err error
+	)
+
+	restartF := func(restart string, restartSvc restartService) error {
+		if restartSvc.LockGroup != "" {
+			req = types.NamespacedName{
+				Namespace: namespace,
+				Name:      restartSvc.LockGroup,
+			}
+
+			if err = r.locker.Lock(ctx, req); err != nil {
+				return fmt.Errorf("failed to acquire lock: %w", err)
+			}
+
+			defer func() {
+				unlockErr := r.locker.Unlock(ctx, req)
+				if unlockErr != nil {
+					r.logger.Error("failed to unlock", "err", err)
+				}
+			}()
+		}
+
 		r.logger.Info("restarting service", "name", restart)
+		err = handler.Restart(restartSvc.Context, restart)
 		if err != nil {
-			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
+			return fmt.Errorf("failed to restart service %q: %w", restart, err)
+		}
+
+		return nil
+	}
+
+	for restart, restartSvc := range restartServices {
+		err = restartF(restart, restartSvc)
+		if err != nil {
+			errs = append(errs, err)
 		}
 	}
 
-	return totalErrs
+	return errors.Join(errs...)
 }
 
 func serviceContext(ctx context.Context, user string) context.Context {
@@ -296,7 +334,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 				content, err := r.buildTemplate(ctx, file.Template, data)
 				if err != nil {
-					return changedFiles, errors.Wrap(err, fmt.Sprintf("failed to build template for file %q: %s", file.Path, file.Template))
+					return changedFiles, fmt.Errorf("failed to build template for file %q: %s: %w", file.Path, file.Template, err)
 				}
 
 				if len(content) > 0 {
@@ -325,7 +363,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				} else {
 					fileMode, err = files.GetFileModeFromString(ctx, file.Mode)
 					if err != nil {
-						return changedFiles, errors.Wrap(err, "failed to get file mode from string")
+						return changedFiles, fmt.Errorf("failed to get file mode from string: %w", err)
 					}
 				}
 
@@ -339,7 +377,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				if file.Mode != "" {
 					err := handler.SetMode(ctx, file.Path, file.Mode)
 					if err != nil {
-						return changedFiles, errors.Wrap(err, "failed to set file mode")
+						return changedFiles, fmt.Errorf("failed to set file mode: %w", err)
 					}
 				}
 			}
@@ -347,7 +385,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 		case files.Symlink:
 			target, err := os.Readlink(file.Path)
 			if err != nil {
-				return changedFiles, errors.Wrapf(err, "failed to read symlink %q", file.Path)
+				return changedFiles, fmt.Errorf("failed to read symlink %q: %w", file.Path, err)
 			}
 
 			if target != file.Target {
@@ -361,7 +399,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 
 				err = os.Symlink(file.Target, file.Path)
 				if err != nil {
-					return changedFiles, errors.Wrapf(err, "failed to create symlink %q -> %q", file.Path, file.Target)
+					return changedFiles, fmt.Errorf("failed to create symlink %q -> %q: %w", file.Path, file.Target, err)
 				}
 			}
 		case files.Absent:
@@ -417,7 +455,7 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string,
 		// Render the secretRef in case it is a template string
 		st, err := r.buildTemplate(ctx, s, Data{Node: nodeData})
 		if err != nil {
-			return Data{}, errors.Wrap(err, "failed to build template string rendering secretRef")
+			return Data{}, fmt.Errorf("failed to build template string rendering secretRef: %w", err)
 		}
 
 		var secret corev1.Secret
@@ -493,7 +531,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 
 	err = cmd.Run()
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("failed to execute %q: %s", command, stderr.String()))
+		return nil, fmt.Errorf("failed to execute %q: %s: %w", command, stderr.String(), err)
 	}
 
 	content = stdout.Bytes()
@@ -514,17 +552,17 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv
 
 	err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 	if err != nil {
-		return errors.Wrap(err, "failed to write content to file"), false
+		return fmt.Errorf("failed to write content to file: %w", err), false
 	}
 
 	err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
 	if err != nil {
-		return errors.Wrap(err, "failed to chown file"), true
+		return fmt.Errorf("failed to chown file: %w", err), true
 	}
 
 	err = handler.SetMode(ctx, file.Path, file.Mode)
 	if err != nil {
-		return errors.Wrap(err, "failed to set file mode"), true
+		return fmt.Errorf("failed to set file mode: %w", err), true
 	}
 
 	return nil, true
