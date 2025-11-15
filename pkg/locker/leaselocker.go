@@ -23,12 +23,12 @@ type leaseLocker struct {
 	namespace string
 	id        string
 
-	cfg *Config
+	cfg Config
 
 	mtx sync.Mutex
 }
 
-func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg *Config, clientset kubernetes.Interface, namespace, id string) Locker {
+func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg Config, clientset kubernetes.Interface, namespace, id string) Locker {
 	return &leaseLocker{
 		logger:    logger,
 		cfg:       cfg,

@@ -94,7 +94,7 @@ var _ = Describe("ConfigSet Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 
-			locker := locker.NewLeaseLocker(ctx, logger, &locker.Config{}, clientset, typeNamespacedName.Namespace, hostname)
+			locker := locker.NewLeaseLocker(ctx, logger, locker.Config{}, clientset, typeNamespacedName.Namespace, hostname)
 
 			controllerReconciler := &ConfigSetReconciler{
 				Client: k8sClient,

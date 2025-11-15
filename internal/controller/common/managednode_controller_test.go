@@ -41,7 +41,7 @@ import (
 
 var logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 
-var lockerConfig = &locker.Config{
+var lockerConfig = locker.Config{
 	Backoff: backoff.Config{
 		MinBackoff: 100 * time.Millisecond,
 		MaxBackoff: 200 * time.Millisecond,

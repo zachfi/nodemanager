@@ -17,7 +17,7 @@ type ControllerConfig struct {
 
 	ManagedNode ManagedNodeConfig
 	ConfigSet   ConfigSetConfig
-	Locker      *locker.Config
+	Locker      locker.Config
 }
 
 func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
