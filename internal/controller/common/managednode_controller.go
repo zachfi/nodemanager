@@ -31,7 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/common"
@@ -123,9 +126,31 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	hostname, err := r.system.Node().Hostname()
+	if err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&commonv1.ManagedNode{}).
+		For(&commonv1.ManagedNode{}, builder.WithPredicates(newNameFilterPredicate(hostname))).
 		Complete(r)
+}
+
+func newNameFilterPredicate(targetName string) predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return e.Object.GetName() == targetName
+		},
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectNew.GetName() == targetName
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return e.Object.GetName() == targetName
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return e.Object.GetName() == targetName
+		},
+	}
 }
 
 func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *commonv1.ManagedNode) error {
