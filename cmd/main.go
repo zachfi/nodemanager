@@ -107,7 +107,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
+	level, err := parseLevel(cfg.LogLevel)
+	if err != nil {
+		setupLog.Error(err, "unable to parse log-level")
+		os.Exit(1)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: level,
+	}))
 	ctrl.SetLogger(logr.FromSlogHandler(logger.Handler()))
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -243,7 +251,7 @@ func main() {
 	}
 	defer shutdownTracer()
 
-	setupLog.Info("starting manager")
+	setupLog.Info("starting manager", "hostname", hostname)
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/drone/envsubst"
@@ -21,11 +22,15 @@ func NewDefaultConfig() *Config {
 }
 
 type Config struct {
-	Tracing          tracing.Config
+	LogLevel string
+
 	ControllerConfig common.ControllerConfig
+	Tracing          tracing.Config
 }
 
 func (c *Config) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+	f.StringVar(&c.LogLevel, "log-level", "INFO", "The level to set on the logger")
+
 	c.Tracing.RegisterFlagsAndApplyDefaults("tracing", f)
 	c.ControllerConfig.RegisterFlagsAndApplyDefaults("controller", f)
 }
@@ -110,4 +115,10 @@ func configIsValid(config *Config) bool {
 	// 	return false
 	// }
 	return true
+}
+
+func parseLevel(s string) (slog.Level, error) {
+	var level slog.Level
+	err := level.UnmarshalText([]byte(s))
+	return level, err
 }
