@@ -114,6 +114,7 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(systemHandler.Service().(*mockServiceHandler).enableCalls).To(HaveKey("chronyd"))
 			Expect(systemHandler.Service().(*mockServiceHandler).startCalls).To(HaveKey("chronyd"))
 			Expect(systemHandler.Service().(*mockServiceHandler).setArgsCalls).To(HaveKey("chronyd"))
+			Expect(systemHandler.Service().(*mockServiceHandler).restartCalls).ToNot(HaveKey("chronyd"))
 		})
 	})
 })

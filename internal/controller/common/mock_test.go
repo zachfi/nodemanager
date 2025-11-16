@@ -198,27 +198,27 @@ type mockFileHandler struct {
 // 	WriteTemplateFile(ctx context.Context, path, template string) error
 // }
 
-func (m *mockFileHandler) Chown(ctx context.Context, path, owner, group string) error {
+func (m *mockFileHandler) Chown(ctx context.Context, path, owner, group string) (bool, error) {
 	if m.fileExistsCalls == nil {
 		m.fileExistsCalls = make(map[string]int)
 	}
 	m.fileExistsCalls[path]++
 
 	// Simulate changing ownership
-	return nil // Return nil to indicate success
+	return true, nil // Return nil to indicate success
 }
 
-func (m *mockFileHandler) SetMode(ctx context.Context, path, mode string) error {
+func (m *mockFileHandler) SetMode(ctx context.Context, path, mode string) (bool, error) {
 	if m.fileWriteCalls == nil {
 		m.fileWriteCalls = make(map[string]int)
 	}
 	m.fileWriteCalls[path]++
 
 	// Simulate setting file mode
-	return nil // Return nil to indicate success
+	return true, nil // Return nil to indicate success
 }
 
-func (m *mockFileHandler) WriteContentFile(ctx context.Context, path string, content []byte) error {
+func (m *mockFileHandler) WriteContentFile(ctx context.Context, path string, content []byte) (bool, error) {
 	if m.fileWriteCalls == nil {
 		m.fileWriteCalls = make(map[string]int)
 	}
@@ -227,15 +227,20 @@ func (m *mockFileHandler) WriteContentFile(ctx context.Context, path string, con
 	// TODO: record the content
 
 	// Simulate writing content to a file
-	return nil // Return nil to indicate success
+	return true, nil // Return nil to indicate success
 }
 
-func (m *mockFileHandler) Remove(ctx context.Context, path string) error {
+func (m *mockFileHandler) Remove(ctx context.Context, path string) (bool, error) {
 	if m.fileRemoveCalls == nil {
 		m.fileRemoveCalls = make(map[string]int)
 	}
+
+	if _, ok := m.fileRemoveCalls[path]; ok {
+		return false, nil
+	}
+
 	m.fileRemoveCalls[path]++
-	return nil // Simulate removing a file file
+	return true, nil // Simulate removing a file file
 }
 
 // mockNodeHandler implements the NodeHandler interface for testing.

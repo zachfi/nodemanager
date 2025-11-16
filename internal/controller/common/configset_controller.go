@@ -77,6 +77,10 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var err error
 
+	if ctx.Err() != nil {
+		return ctrl.Result{}, nil
+	}
+
 	attributes := []attribute.KeyValue{
 		attribute.String("req", req.String()),
 		attribute.String("namespace", req.Namespace),
@@ -213,6 +217,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace st
 			if svc.Ensure == services.Running.String() {
 				for _, sub := range svc.SusbscribeFiles {
 					if sub == cf {
+						r.logger.Debug("changed file will notify service", "file", cf, "svc", svc, "sub", sub)
 						restartServices[svc.Name] = restartService{svcCtx, svc}
 					}
 				}
@@ -343,11 +348,10 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 			}
 
 			if file.Content != "" && file.Ensure != files.Absent.String() {
-				err, changed := r.writeFileContent(ctx, file, handler)
+				changed, err := r.writeFileContent(ctx, file, handler)
 				if err != nil {
 					return changedFiles, err
 				}
-
 				if changed {
 					changedFiles = append(changedFiles, file.Path)
 				}
@@ -375,9 +379,12 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 			} else {
 				// Set the mode
 				if file.Mode != "" {
-					err := handler.SetMode(ctx, file.Path, file.Mode)
+					changed, err := handler.SetMode(ctx, file.Path, file.Mode)
 					if err != nil {
 						return changedFiles, fmt.Errorf("failed to set file mode: %w", err)
+					}
+					if changed {
+						changedFiles = append(changedFiles, file.Path)
 					}
 				}
 			}
@@ -389,10 +396,13 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 			}
 
 			if target != file.Target {
-				err := handler.Remove(ctx, file.Path)
+				changed, err := handler.Remove(ctx, file.Path)
 				if err != nil {
 					r.logger.Error("failed removing existing link", "path", file.Path, "err", err)
 					continue
+				}
+				if changed {
+					changedFiles = append(changedFiles, file.Path)
 				}
 
 				r.logger.Info("symlinking file", "name", file.Path)
@@ -403,9 +413,12 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 				}
 			}
 		case files.Absent:
-			err := handler.Remove(ctx, file.Path)
+			changed, err := handler.Remove(ctx, file.Path)
 			if err != nil {
 				r.logger.Error("failed removing file", "path", file.Path, "err", err)
+			}
+			if changed {
+				changedFiles = append(changedFiles, file.Path)
 			}
 		default:
 			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
@@ -540,30 +553,32 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
-func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (error, bool) {
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (bool, error) {
 	var err error
 
 	// Determine the sha of the content
 	var b bytes.Buffer
 	_, err = b.WriteString(file.Content)
 	if err != nil {
-		return err, false
+		return false, err
 	}
 
-	err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
+	var contentChanged, ownerChanged, modeChanged bool
+
+	contentChanged, err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 	if err != nil {
-		return fmt.Errorf("failed to write content to file: %w", err), false
+		return false, fmt.Errorf("failed to write content to file: %w", err)
 	}
 
-	err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
+	ownerChanged, err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
 	if err != nil {
-		return fmt.Errorf("failed to chown file: %w", err), true
+		return true, fmt.Errorf("failed to chown file: %w", err)
 	}
 
-	err = handler.SetMode(ctx, file.Path, file.Mode)
+	modeChanged, err = handler.SetMode(ctx, file.Path, file.Mode)
 	if err != nil {
-		return fmt.Errorf("failed to set file mode: %w", err), true
+		return true, fmt.Errorf("failed to set file mode: %w", err)
 	}
 
-	return nil, true
+	return contentChanged || ownerChanged || modeChanged, nil
 }
