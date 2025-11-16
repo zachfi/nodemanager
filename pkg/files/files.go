@@ -157,29 +157,41 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) (boo
 		attribute.String("mode", mode),
 	)
 
-	fileMode, err := GetFileModeFromString(ctx, mode)
-	if err != nil {
-		return false, err
-	}
-
 	// Check the current mode
 	fileInfo, err := os.Stat(path)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to stat file")
 	}
 
-	// Make no change to the file if the current mode matches the desired mode
-	currentMode := fileInfo.Mode()
-	if fileMode == currentMode {
-		return false, nil
-	}
-
-	span.AddEvent("mode set")
-
-	err = os.Chmod(path, fileMode)
+	desiredFileMode, err := GetFileModeFromString(ctx, mode)
 	if err != nil {
 		return false, err
 	}
+
+	// NOTE: we use os.ModePerm to extract only the permission bits for comparison.
+	var (
+		currentPerms = fileInfo.Mode() & os.ModePerm
+		desiredPerms = desiredFileMode & os.ModePerm
+	)
+
+	// Make no change to the file if the current mode matches the desired mode
+	if desiredPerms == currentPerms {
+		return false, nil
+	}
+
+	h.logger.Debug(
+		"mode differs",
+		"current", currentPerms.String(),
+		"desired", desiredPerms.String(),
+		"path", path,
+	)
+
+	err = os.Chmod(path, desiredFileMode)
+	if err != nil {
+		return false, err
+	}
+
+	span.AddEvent("mode set")
 
 	return true, nil
 }
