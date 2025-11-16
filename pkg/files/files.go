@@ -73,7 +73,7 @@ func New(logger *slog.Logger, defaultOwner, defaultGroup string) handler.FileHan
 	return &FileHandlerCommon{logger, defaultOwner, defaultGroup}
 }
 
-func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string) error {
+func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string) (bool, error) {
 	var err error
 	_, span := tracer.Start(ctx, "Chown")
 	defer func() {
@@ -99,28 +99,28 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 
 	u, err := user.Lookup(owner)
 	if err != nil {
-		return errors.Wrap(err, "failed to lookup user")
+		return false, errors.Wrap(err, "failed to lookup user")
 	}
 
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
-		return errors.Wrap(err, "failed to convert uid string")
+		return false, errors.Wrap(err, "failed to convert uid string")
 	}
 
 	g, err := user.LookupGroup(group)
 	if err != nil {
-		return errors.Wrap(err, "failed to lookup group")
+		return false, errors.Wrap(err, "failed to lookup group")
 	}
 
 	gid, err := strconv.Atoi(g.Gid)
 	if err != nil {
-		return errors.Wrap(err, "failed to convert gid string")
+		return false, errors.Wrap(err, "failed to convert gid string")
 	}
 
 	// Check the current file owner and group.
 	fileInfo, err := os.Stat(path)
 	if err != nil {
-		return errors.Wrap(err, "failed to stat file")
+		return false, errors.Wrap(err, "failed to stat file")
 	}
 
 	if stat, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
@@ -128,21 +128,21 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		currentGID := int(stat.Gid)
 
 		if currentGID == gid && currentUID == uid {
-			return nil
+			return false, nil
 		}
+	}
+
+	err = os.Chown(path, uid, gid)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to chown file")
 	}
 
 	span.AddEvent("ownership set")
 
-	err = os.Chown(path, uid, gid)
-	if err != nil {
-		return errors.Wrap(err, "failed to chown file")
-	}
-
-	return nil
+	return true, nil
 }
 
-func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) error {
+func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) (bool, error) {
 	var err error
 	_, span := tracer.Start(ctx, "SetMode")
 	defer func() {
@@ -159,32 +159,32 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) erro
 
 	fileMode, err := GetFileModeFromString(ctx, mode)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Check the current mode
 	fileInfo, err := os.Stat(path)
 	if err != nil {
-		return errors.Wrap(err, "failed to stat file")
+		return false, errors.Wrap(err, "failed to stat file")
 	}
 
 	// Make no change to the file if the current mode matches the desired mode
 	currentMode := fileInfo.Mode()
 	if fileMode == currentMode {
-		return nil
+		return false, nil
 	}
 
 	span.AddEvent("mode set")
 
 	err = os.Chmod(path, fileMode)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
-func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, data []byte) error {
+func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, data []byte) (bool, error) {
 	var err error
 	_, span := tracer.Start(ctx, "WriteContentFile")
 	defer func() {
@@ -198,32 +198,35 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, d
 
 	// Read the current file if it exists
 	fileBytes, err := os.ReadFile(path)
-	if !os.IsNotExist(err) {
+	if err != nil && !os.IsNotExist(err) {
 		// If the file exists, but we failed to read it for other reason, return the error.
-		return err
+		return false, err
 	}
 
 	// Check if the incoming data matches what is already on disk
-	if h.hash(ctx, fileBytes) == h.hash(ctx, data) {
-		return nil
+	dataHash := h.hash(ctx, data)
+	if h.hash(ctx, fileBytes) == dataHash {
+		return false, nil
 	}
 
 	f, err := os.Create(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = f.Close() }()
 
-	h.logger.Info("writing file", "path", path)
+	// NOTE: the file has been truncated on the Create() above.
+
+	h.logger.Info("writing file", "path", path, "hash", dataHash)
 	_, err = f.Write(data)
 	if err != nil {
-		return err
+		return true, err
 	}
 
-	return nil
+	return true, nil
 }
 
-func (h *FileHandlerCommon) Remove(ctx context.Context, path string) error {
+func (h *FileHandlerCommon) Remove(ctx context.Context, path string) (bool, error) {
 	var err error
 	_, span := tracer.Start(ctx, "Remove")
 	defer func() {
@@ -235,11 +238,11 @@ func (h *FileHandlerCommon) Remove(ctx context.Context, path string) error {
 
 	_, err = os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 
 	err = os.Remove(path) // set the error on the span
-	return err
+	return true, err
 }
 
 func (h *FileHandlerCommon) hash(ctx context.Context, data []byte) string {
