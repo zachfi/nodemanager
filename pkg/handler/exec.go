@@ -10,19 +10,24 @@ type ExecHandler interface {
 var _ ExecHandler = (*MockExecHandler)(nil)
 
 type MockExecHandler struct {
-	Recorder    map[string][]string
+	Recorder    map[string][][]string
 	expectedErr error
-	Status      int
+	Status      []int
 }
 
 func (h *MockExecHandler) RunCommand(ctx context.Context, command string, args ...string) (string, int, error) {
 	if h.Recorder == nil {
-		h.Recorder = make(map[string][]string)
+		h.Recorder = make(map[string][][]string)
 	}
 
-	h.Recorder[command] = args
+	h.Recorder[command] = append(h.Recorder[command], args)
 
-	return "", h.Status, h.expectedErr
+	status := 0
+	if len(h.Status) > 0 {
+		status, h.Status = h.Status[0], h.Status[1:]
+	}
+
+	return "", status, h.expectedErr
 }
 
 func (h *MockExecHandler) SimpleRunCommand(ctx context.Context, command string, args ...string) error {

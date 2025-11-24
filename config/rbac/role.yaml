@@ -36,6 +36,7 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
+  - jails
   - poudrieres
   verbs:
   - create
@@ -48,12 +49,14 @@ rules:
 - apiGroups:
   - freebsd.nodemanager
   resources:
+  - jails/finalizers
   - poudrieres/finalizers
   verbs:
   - update
 - apiGroups:
   - freebsd.nodemanager
   resources:
+  - jails/status
   - poudrieres/status
   verbs:
   - get

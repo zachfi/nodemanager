@@ -38,8 +38,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/go-logr/logr"
+
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	controller "github.com/zachfi/nodemanager/internal/controller/common"
+	"github.com/zachfi/nodemanager/internal/controller/freebsd"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -184,13 +186,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	system, err := system.New(ctx, logger)
+	sys, id, err := system.New(ctx, logger)
 	if err != nil {
 		setupLog.Error(err, "unable to create system handler", "err", err)
 		os.Exit(1)
 	}
 
-	hostname, err := system.Node().Hostname()
+	hostname, err := sys.Node().Hostname()
 	if err != nil {
 		setupLog.Error(err, "failed to get hostname")
 		os.Exit(1)
@@ -198,35 +200,38 @@ func main() {
 
 	locker := locker.NewLeaseLocker(ctx, logger, cfg.ControllerConfig.Locker, clientset, cfg.ControllerConfig.Namespace, hostname)
 
-	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, system, locker)
-
+	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker)
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)
 	}
 
-	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, system, locker)
+	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
 		os.Exit(1)
 	}
 
-	// TODO: Switch on the system implementation
-	// switch system.Node().(type) {
-	// case *freebsd.FreeBSD:
-	// 	poudriereReconciler := &freebsdcontroller.PoudriereReconciler{
-	// 		Client: mgr.GetClient(),
-	// 		Scheme: mgr.GetScheme(),
-	// 	}
-	// 	poudriereReconciler.WithTracer(otel.Tracer("ConfigSet"))
-	// 	poudriereReconciler.WithLogger(logger.With("reconciler", "Poudriere"))
-	//
-	// 	if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
-	// 		setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
-	// 		os.Exit(1)
-	// 	}
-	// }
+	switch id {
+	case system.FreeBSD:
+		poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys)
+		if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
+			os.Exit(1)
+		}
+
+		jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys)
+		if jailErr != nil {
+			setupLog.Error(jailErr, "unable to create controller", "controller", "Jail")
+			os.Exit(1)
+		}
+
+		if err = jailReconciler.SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "Jail")
+			os.Exit(1)
+		}
+	}
 
 	//+kubebuilder:scaffold:builder
 
