@@ -28,11 +28,11 @@ import (
 	. "github.com/onsi/gomega"
 	"go.opentelemetry.io/otel/trace/noop"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/common"
@@ -49,7 +49,202 @@ var lockerConfig = locker.Config{
 	LeaseDuration: 20 * time.Second,
 }
 
+var _ = Describe("isDrainablePod", func() {
+	DescribeTable("pod filtering",
+		func(pod corev1.Pod, expected bool) {
+			Expect(isDrainablePod(pod)).To(Equal(expected))
+		},
+		Entry("regular pod is drainable",
+			corev1.Pod{},
+			true,
+		),
+		Entry("DaemonSet-owned pod is not drainable",
+			corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{Kind: "DaemonSet", Name: "my-ds"},
+					},
+				},
+			},
+			false,
+		),
+		Entry("mirror pod is not drainable",
+			corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{"kubernetes.io/config.mirror": "abc123"},
+				},
+			},
+			false,
+		),
+		Entry("ReplicaSet-owned pod is drainable",
+			corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					OwnerReferences: []metav1.OwnerReference{
+						{Kind: "ReplicaSet", Name: "my-rs"},
+					},
+				},
+			},
+			true,
+		),
+	)
+})
+
 var _ = Describe("ManagedNode Controller", func() {
+	Context("When the managed node is also a Kubernetes node", func() {
+		const resourceName = "test-node"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			By("creating the ManagedNode")
+			mn := &commonv1.ManagedNode{}
+			err := k8sClient.Get(ctx, typeNamespacedName, mn)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+					},
+					Spec: commonv1.ManagedNodeSpec{
+						Domain: "example.com",
+						Upgrade: commonv1.Upgrade{
+							Group:    "stable",
+							Schedule: "* * * * * * *",
+							Delay:    "100ms",
+						},
+					},
+				})).To(Succeed())
+			}
+
+			By("creating a matching Kubernetes Node")
+			_, err = clientset.CoreV1().Nodes().Create(ctx, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+			}, metav1.CreateOptions{})
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		})
+
+		AfterEach(func() {
+			mn := &commonv1.ManagedNode{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, mn); err == nil {
+				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
+			}
+			_ = clientset.CoreV1().Nodes().Delete(ctx, resourceName, metav1.DeleteOptions{})
+		})
+
+		It("should cordon the Kubernetes node before upgrading", func() {
+			sys := &mockSystemHandler{}
+			controllerReconciler := &ManagedNodeReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    sys,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking ManagedNode has the cordon annotation")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
+			Expect(mn.Annotations).To(HaveKey(common.AnnotationKubernetesNodeCordoned))
+
+			By("checking the Kubernetes node is unschedulable")
+			k8sNode, err := clientset.CoreV1().Nodes().Get(ctx, resourceName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sNode.Spec.Unschedulable).To(BeTrue())
+
+			By("checking upgrade and reboot were called")
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(1))
+			Expect(sys.Node().(*mockNodeHandler).rebootCalls).To(Equal(1))
+		})
+	})
+
+	Context("When the managed node was cordoned before reboot", func() {
+		const resourceName = "test-node"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			By("creating the ManagedNode with cordon annotation and recent upgrade")
+			mn := &commonv1.ManagedNode{}
+			err := k8sClient.Get(ctx, typeNamespacedName, mn)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+						Annotations: map[string]string{
+							common.AnnotationKubernetesNodeCordoned: "true",
+							common.AnnotationLastUpgrade:            time.Now().Format(time.RFC3339),
+						},
+					},
+					Spec: commonv1.ManagedNodeSpec{
+						Domain: "example.com",
+						Upgrade: commonv1.Upgrade{
+							Group:    "stable",
+							Schedule: "* * * * * * *",
+							Delay:    "1h",
+						},
+					},
+				})).To(Succeed())
+			}
+
+			By("creating a cordoned Kubernetes Node")
+			_, err = clientset.CoreV1().Nodes().Create(ctx, &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: resourceName},
+				Spec:       corev1.NodeSpec{Unschedulable: true},
+			}, metav1.CreateOptions{})
+			if err != nil && !errors.IsAlreadyExists(err) {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		})
+
+		AfterEach(func() {
+			mn := &commonv1.ManagedNode{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, mn); err == nil {
+				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
+			}
+			_ = clientset.CoreV1().Nodes().Delete(ctx, resourceName, metav1.DeleteOptions{})
+		})
+
+		It("should uncordon the Kubernetes node and remove the annotation", func() {
+			sys := &mockSystemHandler{}
+			controllerReconciler := &ManagedNodeReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    sys,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking ManagedNode no longer has the cordon annotation")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
+			Expect(mn.Annotations).NotTo(HaveKey(common.AnnotationKubernetesNodeCordoned))
+
+			By("checking the Kubernetes node is schedulable again")
+			k8sNode, err := clientset.CoreV1().Nodes().Get(ctx, resourceName, metav1.GetOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sNode.Spec.Unschedulable).To(BeFalse())
+
+			By("checking upgrade and reboot were not called")
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(0))
+			Expect(sys.Node().(*mockNodeHandler).rebootCalls).To(Equal(0))
+		})
+	})
+
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-node"
 
@@ -99,13 +294,14 @@ var _ = Describe("ManagedNode Controller", func() {
 		It("should successfully reconcile a basic resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &ManagedNodeReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-				tracer: noop.NewTracerProvider().Tracer("test"),
-				logger: logger,
-				system: systemHandler,
-				// locker: NewKeyLocker(ctx, logger, LockerConfig{Backoff: backoffConfig}, k8sClient, common.AnnotationUpgradeLock),
-				locker: locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, typeNamespacedName.Namespace, hostname),
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    systemHandler,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, typeNamespacedName.Namespace, hostname),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

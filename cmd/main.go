@@ -198,7 +198,7 @@ func main() {
 
 	locker := locker.NewLeaseLocker(ctx, logger, cfg.ControllerConfig.Locker, clientset, cfg.ControllerConfig.Namespace, hostname)
 
-	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, system, locker)
+	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, system, locker, clientset)
 
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")

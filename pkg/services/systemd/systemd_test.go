@@ -3,6 +3,7 @@ package systemd
 import (
 	"context"
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ var (
 func TestSystemd(t *testing.T) {
 	var (
 		m          handler.ExecHandler = &handler.MockExecHandler{}
-		logHandler                     = slog.NewTextHandler(t.Output(), nil)
+		logHandler                     = slog.NewTextHandler(os.Stdout, nil)
 		logger                         = slog.New(logHandler)
 	)
 

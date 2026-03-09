@@ -12,7 +12,7 @@ import (
 
 func TestFiles(t *testing.T) {
 	var (
-		logHandler = slog.NewTextHandler(t.Output(), nil)
+		logHandler = slog.NewTextHandler(os.Stdout, nil)
 		logger     = slog.New(logHandler)
 	)
 

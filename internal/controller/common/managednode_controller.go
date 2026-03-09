@@ -27,8 +27,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	corev1 "k8s.io/api/core/v1"
+	policyv1beta1 "k8s.io/api/policy/v1beta1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -47,29 +52,34 @@ import (
 // ManagedNodeReconciler reconciles a ManagedNode object
 type ManagedNodeReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	tracer trace.Tracer
-	logger *slog.Logger
-	system handler.System
-	locker locker.Locker
-	cfg    ManagedNodeConfig
+	Scheme    *runtime.Scheme
+	tracer    trace.Tracer
+	logger    *slog.Logger
+	system    handler.System
+	locker    locker.Locker
+	cfg       ManagedNodeConfig
+	clientset kubernetes.Interface
 }
 
-func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker) *ManagedNodeReconciler {
+func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface) *ManagedNodeReconciler {
 	return &ManagedNodeReconciler{
-		Client: client,
-		Scheme: scheme,
-		tracer: otel.Tracer("controller.common.managednode"),
-		logger: logger.With("controller", "managednode"),
-		locker: locker,
-		system: system,
-		cfg:    cfg,
+		Client:    client,
+		Scheme:    scheme,
+		tracer:    otel.Tracer("controller.common.managednode"),
+		logger:    logger.With("controller", "managednode"),
+		locker:    locker,
+		system:    system,
+		cfg:       cfg,
+		clientset: clientset,
 	}
 }
 
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes/finalizers,verbs=update
+//+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;patch
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+//+kubebuilder:rbac:groups="policy",resources=pods/eviction,verbs=create
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to keep the k8s resource in sync with the current state of the node.
 func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -100,6 +110,10 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if node == nil {
 		r.logger.Info("node not found, skipping reconciliation", "req", req.NamespacedName)
 		return ctrl.Result{}, nil
+	}
+
+	if err = r.maybeUncordon(ctx, node); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	err = r.updateNodeLabels(ctx, node)
@@ -282,8 +296,19 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 	// Proceed with the upgrade
 
-	// TODO: Consider a kubernetes drain if we know we are running in a
-	// kubernetes cluster.  How do we know?
+	// Cordon and drain if this host is a Kubernetes node
+	k8sNode, err := r.getKubernetesNode(ctx, node.Name)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if k8sNode != nil {
+		if err = r.cordonNode(ctx, node, k8sNode); err != nil {
+			return time.Time{}, err
+		}
+		if err = r.drainNode(ctx, node.Name); err != nil {
+			r.logger.Warn("drain did not complete cleanly, proceeding with upgrade", "err", err)
+		}
+	}
 
 	if node.Spec.Upgrade.Group != "" {
 		err = r.locker.Lock(ctx, req)
@@ -346,4 +371,144 @@ func (r *ManagedNodeReconciler) nextUpgradeTime(ctx context.Context, schedule st
 	}
 
 	return cron.Next(time.Now().Add(-r.cfg.ForgivenessPeriod)), nil
+}
+
+// getKubernetesNode returns the k8s Node with the given hostname, or nil if not found.
+func (r *ManagedNodeReconciler) getKubernetesNode(ctx context.Context, hostname string) (*corev1.Node, error) {
+	node, err := r.clientset.CoreV1().Nodes().Get(ctx, hostname, metav1.GetOptions{})
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			r.logger.Info("not a kubernetes node, skipping drain", "hostname", hostname)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get kubernetes node: %w", err)
+	}
+	return node, nil
+}
+
+// cordonNode marks the Kubernetes node unschedulable and records the cordon on the ManagedNode.
+func (r *ManagedNodeReconciler) cordonNode(ctx context.Context, managedNode *commonv1.ManagedNode, k8sNode *corev1.Node) error {
+	patch := []byte(`{"spec":{"unschedulable":true}}`)
+	if _, err := r.clientset.CoreV1().Nodes().Patch(ctx, k8sNode.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("failed to cordon kubernetes node: %w", err)
+	}
+	r.logger.Info("cordoned kubernetes node", "node", k8sNode.Name)
+
+	if managedNode.Annotations == nil {
+		managedNode.Annotations = make(map[string]string)
+	}
+	managedNode.Annotations[common.AnnotationKubernetesNodeCordoned] = "true"
+
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		return r.Update(ctx, managedNode)
+	}); err != nil {
+		return fmt.Errorf("failed to set cordon annotation on ManagedNode: %w", err)
+	}
+	return nil
+}
+
+// drainNode evicts all non-DaemonSet, non-mirror pods and waits for them to terminate.
+func (r *ManagedNodeReconciler) drainNode(ctx context.Context, hostname string) error {
+	podList, err := r.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("spec.nodeName=%s", hostname),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list pods on node: %w", err)
+	}
+
+	for _, pod := range podList.Items {
+		if !isDrainablePod(pod) {
+			continue
+		}
+		eviction := &policyv1beta1.Eviction{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      pod.Name,
+				Namespace: pod.Namespace,
+			},
+		}
+		if err := r.clientset.CoreV1().Pods(pod.Namespace).Evict(ctx, eviction); err != nil {
+			if !k8serrors.IsNotFound(err) {
+				r.logger.Warn("failed to evict pod", "pod", pod.Name, "namespace", pod.Namespace, "err", err)
+			}
+		}
+	}
+
+	deadline := time.Now().Add(r.cfg.DrainTimeout)
+	for {
+		current, err := r.clientset.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+			FieldSelector: fmt.Sprintf("spec.nodeName=%s", hostname),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list pods during drain: %w", err)
+		}
+
+		var remaining int
+		for _, pod := range current.Items {
+			if isDrainablePod(pod) {
+				remaining++
+			}
+		}
+		if remaining == 0 {
+			r.logger.Info("all pods drained from node", "hostname", hostname)
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		r.logger.Info("waiting for pods to drain", "hostname", hostname, "remaining", remaining)
+		time.Sleep(5 * time.Second)
+	}
+
+	return fmt.Errorf("drain timed out after %s", r.cfg.DrainTimeout)
+}
+
+// uncordonNode marks the Kubernetes node schedulable and removes the cordon annotation from the ManagedNode.
+func (r *ManagedNodeReconciler) uncordonNode(ctx context.Context, managedNode *commonv1.ManagedNode) error {
+	k8sNode, err := r.getKubernetesNode(ctx, managedNode.Name)
+	if err != nil {
+		return err
+	}
+
+	if k8sNode != nil {
+		patch := []byte(`{"spec":{"unschedulable":false}}`)
+		if _, err := r.clientset.CoreV1().Nodes().Patch(ctx, k8sNode.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+			return fmt.Errorf("failed to uncordon kubernetes node: %w", err)
+		}
+		r.logger.Info("uncordoned kubernetes node", "node", k8sNode.Name)
+	}
+
+	delete(managedNode.Annotations, common.AnnotationKubernetesNodeCordoned)
+
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		return r.Update(ctx, managedNode)
+	}); err != nil {
+		return fmt.Errorf("failed to remove cordon annotation from ManagedNode: %w", err)
+	}
+	return nil
+}
+
+// maybeUncordon uncordons the Kubernetes node if this controller previously cordoned it.
+func (r *ManagedNodeReconciler) maybeUncordon(ctx context.Context, managedNode *commonv1.ManagedNode) error {
+	if managedNode.Annotations == nil {
+		return nil
+	}
+	if _, ok := managedNode.Annotations[common.AnnotationKubernetesNodeCordoned]; !ok {
+		return nil
+	}
+	return r.uncordonNode(ctx, managedNode)
+}
+
+// isDrainablePod returns true if the pod should be evicted during a node drain.
+func isDrainablePod(pod corev1.Pod) bool {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind == "DaemonSet" {
+			return false
+		}
+	}
+	if _, ok := pod.Annotations["kubernetes.io/config.mirror"]; ok {
+		return false
+	}
+	return true
 }

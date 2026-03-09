@@ -36,10 +36,12 @@ func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.
 
 type ManagedNodeConfig struct {
 	ForgivenessPeriod time.Duration
+	DrainTimeout      time.Duration
 }
 
 func (c *ManagedNodeConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	f.DurationVar(&c.ForgivenessPeriod, prefix+".forgiveness-period", 1*time.Minute, "The duration to wait after a scheduled upgrade time before considering the upgrade missed and allowing a new upgrade to be scheduled.")
+	f.DurationVar(&c.DrainTimeout, prefix+".drain-timeout", 5*time.Minute, "The maximum duration to wait for pods to drain from a kubernetes node before proceeding with the upgrade.")
 }
 
 type ConfigSetConfig struct{}
