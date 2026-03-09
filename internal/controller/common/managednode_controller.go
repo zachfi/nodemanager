@@ -243,12 +243,17 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return time.Time{}, nil
 	}
 
-	next, err = r.nextUpgradeTime(ctx, node.Spec.Upgrade.Schedule)
+	delay, err = time.ParseDuration(node.Spec.Upgrade.Delay)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
+	}
+
+	next, err = r.nextUpgradeTime(node.Spec.Upgrade.Schedule)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	last, err = r.lastUpgradeTime(ctx, node)
+	last, err = r.lastUpgradeTime(node)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -264,21 +269,16 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 		// If we have the lock, assume we have just upgraded.
 		if r.locker.Locked(ctx, req) {
-			r.locker.Unlock(ctx, req)
+			if err := r.locker.Unlock(ctx, req); err != nil {
+				r.logger.Warn("failed to release upgrade lock", "lease", req, "err", err)
+			}
 			return next, nil
 		}
 	}
 
 	// Skip an upgrade if an upgrade has already happened within the delay window.
-	if !last.IsZero() {
-		delay, err = time.ParseDuration(node.Spec.Upgrade.Delay)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
-		}
-
-		if time.Since(last) < delay {
-			return next, nil
-		}
+	if !last.IsZero() && time.Since(last) < delay {
+		return next, nil
 	}
 
 	r.logger.Info("next upgrade time", "schedule", node.Spec.Upgrade.Schedule, "until", time.Until(next))
@@ -287,8 +287,8 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	if time.Since(next) < r.cfg.ForgivenessPeriod {
 		// If the next upgrade time is less than a minute in the past, we execute immediately.
 	} else if time.Until(next) < r.cfg.ForgivenessPeriod {
-		// If the upgrade time is less than a minute in the future, we wait and then continue to execute.
-		time.Sleep(time.Until(next))
+		// If the upgrade time is less than a minute in the future, requeue and let controller-runtime wake us.
+		return next, nil
 	} else {
 		// If we are outside of the minute range in either direction, return the time which we should check again.
 		return next, nil
@@ -349,7 +349,7 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	return time.Time{}, err
 }
 
-func (r *ManagedNodeReconciler) lastUpgradeTime(ctx context.Context, node *commonv1.ManagedNode) (time.Time, error) {
+func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (time.Time, error) {
 	if last, ok := node.Annotations[common.AnnotationLastUpgrade]; ok {
 		r.logger.Info("last upgrade time found", "lastUpgrade", last)
 
@@ -364,7 +364,7 @@ func (r *ManagedNodeReconciler) lastUpgradeTime(ctx context.Context, node *commo
 	return time.Time{}, nil
 }
 
-func (r *ManagedNodeReconciler) nextUpgradeTime(ctx context.Context, schedule string) (time.Time, error) {
+func (r *ManagedNodeReconciler) nextUpgradeTime(schedule string) (time.Time, error) {
 	cron, err := cronexpr.Parse(schedule)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to parse schedule as cron expression: %w", err)
@@ -397,7 +397,7 @@ func (r *ManagedNodeReconciler) cordonNode(ctx context.Context, managedNode *com
 	if managedNode.Annotations == nil {
 		managedNode.Annotations = make(map[string]string)
 	}
-	managedNode.Annotations[common.AnnotationKubernetesNodeCordoned] = "true"
+	managedNode.Annotations[common.AnnotationKubernetesNodeCordoned] = time.Now().Format(time.RFC3339)
 
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		return r.Update(ctx, managedNode)
@@ -427,8 +427,15 @@ func (r *ManagedNodeReconciler) drainNode(ctx context.Context, hostname string) 
 			},
 		}
 		if err := r.clientset.CoreV1().Pods(pod.Namespace).Evict(ctx, eviction); err != nil {
-			if !k8serrors.IsNotFound(err) {
-				r.logger.Warn("failed to evict pod", "pod", pod.Name, "namespace", pod.Namespace, "err", err)
+			switch {
+			case k8serrors.IsNotFound(err):
+				// already gone
+			case k8serrors.IsTooManyRequests(err):
+				r.logger.Info("eviction blocked by PodDisruptionBudget, will retry",
+					"pod", pod.Name, "namespace", pod.Namespace)
+			default:
+				r.logger.Warn("failed to evict pod", "pod", pod.Name,
+					"namespace", pod.Namespace, "err", err)
 			}
 		}
 	}
@@ -502,6 +509,12 @@ func (r *ManagedNodeReconciler) maybeUncordon(ctx context.Context, managedNode *
 
 // isDrainablePod returns true if the pod should be evicted during a node drain.
 func isDrainablePod(pod corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return false
+	}
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		return false
+	}
 	for _, ref := range pod.OwnerReferences {
 		if ref.Kind == "DaemonSet" {
 			return false

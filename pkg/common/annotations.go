@@ -1,4 +1,4 @@
 package common
 
-var AnnotationLastUpgrade = "upgrade.nodemanager/last"
-var AnnotationKubernetesNodeCordoned = "upgrade.nodemanager/k8s-cordoned"
+const AnnotationLastUpgrade = "upgrade.nodemanager/last"
+const AnnotationKubernetesNodeCordoned = "upgrade.nodemanager/k8s-cordoned"

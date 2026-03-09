@@ -86,6 +86,26 @@ var _ = Describe("isDrainablePod", func() {
 			},
 			true,
 		),
+		Entry("already-terminating pod is not drainable",
+			corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					DeletionTimestamp: &metav1.Time{Time: time.Now()},
+				},
+			},
+			false,
+		),
+		Entry("completed pod (Succeeded) is not drainable",
+			corev1.Pod{
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			false,
+		),
+		Entry("failed pod is not drainable",
+			corev1.Pod{
+				Status: corev1.PodStatus{Phase: corev1.PodFailed},
+			},
+			false,
+		),
 	)
 })
 
