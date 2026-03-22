@@ -296,6 +296,13 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 	// Proceed with the upgrade
 
+	if node.Spec.Upgrade.Group != "" {
+		err = r.locker.Lock(ctx, req)
+		if err != nil {
+			return time.Time{}, err
+		}
+	}
+
 	// Cordon and drain if this host is a Kubernetes node
 	k8sNode, err := r.getKubernetesNode(ctx, node.Name)
 	if err != nil {
@@ -307,13 +314,6 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		}
 		if err = r.drainNode(ctx, node.Name); err != nil {
 			r.logger.Warn("drain did not complete cleanly, proceeding with upgrade", "err", err)
-		}
-	}
-
-	if node.Spec.Upgrade.Group != "" {
-		err = r.locker.Lock(ctx, req)
-		if err != nil {
-			return time.Time{}, err
 		}
 	}
 
