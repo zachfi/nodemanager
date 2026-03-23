@@ -56,6 +56,21 @@ spec:
           status:
             description: ManagedNodeStatus defines the observed state of ManagedNode
             properties:
+              interfaces:
+                additionalProperties:
+                  description: NetworkInterface holds the addresses observed on a
+                    single network interface.
+                  properties:
+                    ipv4:
+                      items:
+                        type: string
+                      type: array
+                    ipv6:
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: object
               release:
                 type: string
             type: object

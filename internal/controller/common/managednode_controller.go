@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/gorhill/cronexpr"
@@ -207,6 +208,7 @@ func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *comm
 func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *commonv1.ManagedNode) error {
 	info := r.system.Node().Info(ctx)
 	node.Status.Release = info.OS.Release
+	node.Status.Interfaces = collectNetworkInterfaces()
 
 	r.logger.Info("updating node status", "node", node.Name, "release", node.Status.Release)
 
@@ -219,6 +221,55 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 	}
 
 	return nil
+}
+
+// collectNetworkInterfaces enumerates non-loopback, up interfaces and returns
+// their unicast addresses grouped by interface name.
+func collectNetworkInterfaces() map[string]commonv1.NetworkInterface {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+
+	result := make(map[string]commonv1.NetworkInterface)
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		var ni commonv1.NetworkInterface
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil {
+				continue
+			}
+			if ip.To4() != nil {
+				ni.IPv4 = append(ni.IPv4, ip.String())
+			} else if ip.IsGlobalUnicast() {
+				ni.IPv6 = append(ni.IPv6, ip.String())
+			}
+		}
+
+		if len(ni.IPv4) > 0 || len(ni.IPv6) > 0 {
+			result[iface.Name] = ni
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv1.ManagedNode) (time.Time, error) {

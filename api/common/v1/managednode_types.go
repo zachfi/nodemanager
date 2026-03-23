@@ -34,9 +34,16 @@ type Upgrade struct {
 	Delay    string `json:"delay,omitempty"`
 }
 
+// NetworkInterface holds the addresses observed on a single network interface.
+type NetworkInterface struct {
+	IPv4 []string `json:"ipv4,omitempty"`
+	IPv6 []string `json:"ipv6,omitempty"`
+}
+
 // ManagedNodeStatus defines the observed state of ManagedNode
 type ManagedNodeStatus struct {
-	Release string `json:"release,omitempty"`
+	Release    string                      `json:"release,omitempty"`
+	Interfaces map[string]NetworkInterface `json:"interfaces,omitempty"`
 }
 
 //+kubebuilder:object:root=true
