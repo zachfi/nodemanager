@@ -32,8 +32,10 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -111,27 +113,23 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
 
+	var changedFiles []string
 	err = r.handlePackageSet(ctx, configSet.Spec.Packages)
-	if err != nil {
-		return ctrl.Result{}, err
+	if err == nil {
+		changedFiles, err = r.handleFileSet(ctx, req.Namespace, configSet.Spec.Files, node)
+	}
+	if err == nil {
+		err = r.handleServiceSet(ctx, req.Namespace, configSet.Spec.Services, changedFiles)
+	}
+	if err == nil {
+		err = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
 	}
 
-	changedFiles, err := r.handleFileSet(ctx, req.Namespace, configSet.Spec.Files, node)
-	if err != nil {
-		return ctrl.Result{}, err
+	if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, err); statusErr != nil {
+		r.logger.Error("failed to update configset status on node", "err", statusErr)
 	}
 
-	err = r.handleServiceSet(ctx, req.Namespace, configSet.Spec.Services, changedFiles)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	err = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, err
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -139,6 +137,39 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&commonv1.ConfigSet{}).
 		Complete(r)
+}
+
+// updateConfigSetStatus records the result of a ConfigSet reconciliation in the ManagedNode status.
+func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeName, nodeNamespace, configSetName, resourceVersion string, applyErr error) error {
+	entry := commonv1.ConfigSetApplyStatus{
+		Name:            configSetName,
+		ResourceVersion: resourceVersion,
+		LastApplied:     metav1.Now(),
+	}
+	if applyErr != nil {
+		entry.Error = applyErr.Error()
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var node commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: nodeName, Namespace: nodeNamespace}, &node); err != nil {
+			return err
+		}
+
+		found := false
+		for i, cs := range node.Status.ConfigSets {
+			if cs.Name == configSetName {
+				node.Status.ConfigSets[i] = entry
+				found = true
+				break
+			}
+		}
+		if !found {
+			node.Status.ConfigSets = append(node.Status.ConfigSets, entry)
+		}
+
+		return r.Status().Update(ctx, &node)
+	})
 }
 
 func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, packageSet []commonv1.Package) error {

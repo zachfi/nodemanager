@@ -40,10 +40,19 @@ type NetworkInterface struct {
 	IPv6 []string `json:"ipv6,omitempty"`
 }
 
+// ConfigSetApplyStatus records the last reconciliation outcome for a ConfigSet on this node.
+type ConfigSetApplyStatus struct {
+	Name            string      `json:"name"`
+	ResourceVersion string      `json:"resourceVersion,omitempty"`
+	LastApplied     metav1.Time `json:"lastApplied,omitempty"`
+	Error           string      `json:"error,omitempty"`
+}
+
 // ManagedNodeStatus defines the observed state of ManagedNode
 type ManagedNodeStatus struct {
 	Release    string                      `json:"release,omitempty"`
 	Interfaces map[string]NetworkInterface `json:"interfaces,omitempty"`
+	ConfigSets []ConfigSetApplyStatus      `json:"configsets,omitempty"`
 }
 
 //+kubebuilder:object:root=true
