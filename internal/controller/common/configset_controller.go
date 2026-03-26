@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -113,16 +114,29 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
 
+	nodeName := node.Name
+	applyStart := time.Now()
+
 	var changedFiles []string
-	err = r.handlePackageSet(ctx, configSet.Spec.Packages)
+	err = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
 	if err == nil {
-		changedFiles, err = r.handleFileSet(ctx, req.Namespace, configSet.Spec.Files, node)
+		changedFiles, err = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
 	}
 	if err == nil {
-		err = r.handleServiceSet(ctx, req.Namespace, configSet.Spec.Services, changedFiles)
+		err = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
 	}
 	if err == nil {
 		err = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
+	}
+
+	applyResult := "success"
+	if err != nil {
+		applyResult = "error"
+	}
+	configSetApplyTotal.WithLabelValues(nodeName, configSet.Name, applyResult).Inc()
+	configSetApplyDuration.WithLabelValues(nodeName, configSet.Name).Observe(time.Since(applyStart).Seconds())
+	if err == nil {
+		lastConfigSetApplyTimestamp.WithLabelValues(nodeName, configSet.Name).Set(float64(time.Now().Unix()))
 	}
 
 	if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, err); statusErr != nil {
@@ -172,7 +186,7 @@ func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeNam
 	})
 }
 
-func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, packageSet []commonv1.Package) error {
+func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName string, packageSet []commonv1.Package) error {
 	ctx, span := r.tracer.Start(ctx, "handlePackageSet")
 	defer span.End()
 
@@ -192,14 +206,24 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, packageSet [
 		case packages.Installed:
 			if !currentlyInstalled(pkgs, pkg.Name) {
 				err := handler.Install(ctx, pkg.Name)
+				result := "success"
+				if err != nil {
+					result = "error"
+				}
+				packageOperationsTotal.WithLabelValues(nodeName, "install", result).Inc()
 				if err != nil {
 					return err
 				}
 			}
 		case packages.Absent:
 			if currentlyInstalled(pkgs, pkg.Name) {
-				err := handler.Remove(ctx, pkg.Name)
 				r.logger.Info("removing package", "name", pkg.Name)
+				err := handler.Remove(ctx, pkg.Name)
+				result := "success"
+				if err != nil {
+					result = "error"
+				}
+				packageOperationsTotal.WithLabelValues(nodeName, "remove", result).Inc()
 				if err != nil {
 					return err
 				}
@@ -224,7 +248,7 @@ func (r *ConfigSetReconciler) WithSystem(system handler.System) {
 	r.system = system
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace string, serviceSet []commonv1.Service, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName string, namespace string, serviceSet []commonv1.Service, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
 
@@ -261,11 +285,21 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace st
 
 		if svc.Enable {
 			err := handler.Enable(svcCtx, svc.Name)
+			result := "success"
+			if err != nil {
+				result = "error"
+			}
+			serviceOperationsTotal.WithLabelValues(nodeName, "enable", result).Inc()
 			if err != nil {
 				return fmt.Errorf("failed to enable service: %w", err)
 			}
 		} else {
 			err := handler.Disable(svcCtx, svc.Name)
+			result := "success"
+			if err != nil {
+				result = "error"
+			}
+			serviceOperationsTotal.WithLabelValues(nodeName, "disable", result).Inc()
 			if err != nil {
 				return fmt.Errorf("failed to disable service: %w", err)
 			}
@@ -285,6 +319,11 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace st
 		case services.Running:
 			if status != services.Running {
 				err := handler.Start(svcCtx, svc.Name)
+				result := "success"
+				if err != nil {
+					result = "error"
+				}
+				serviceOperationsTotal.WithLabelValues(nodeName, "start", result).Inc()
 				if err != nil {
 					return fmt.Errorf("failed to start service: %w", err)
 				}
@@ -292,6 +331,11 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace st
 		case services.Stopped:
 			if status != services.Stopped {
 				err := handler.Stop(svcCtx, svc.Name)
+				result := "success"
+				if err != nil {
+					result = "error"
+				}
+				serviceOperationsTotal.WithLabelValues(nodeName, "stop", result).Inc()
 				if err != nil {
 					return fmt.Errorf("failed to stop service: %w", err)
 				}
@@ -325,6 +369,11 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, namespace st
 
 		r.logger.Info("restarting service", "name", restart)
 		err = handler.Restart(restartSvc.Context, restart)
+		result := "success"
+		if err != nil {
+			result = "error"
+		}
+		serviceOperationsTotal.WithLabelValues(nodeName, "restart", result).Inc()
 		if err != nil {
 			return fmt.Errorf("failed to restart service %q: %w", restart, err)
 		}
@@ -350,7 +399,7 @@ func serviceContext(ctx context.Context, user string) context.Context {
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, error) {
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string, configSetName string, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, error) {
 	ctx, span := r.tracer.Start(ctx, "handleFileSet")
 	defer span.End()
 
@@ -455,6 +504,8 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, namespace strin
 			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
 		}
 	}
+
+	fileChangesTotal.WithLabelValues(nodeName, configSetName, "success").Add(float64(len(changedFiles)))
 
 	return changedFiles, nil
 }

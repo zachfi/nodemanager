@@ -354,13 +354,19 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		}
 	}
 
+	upgradeStart := time.Now()
+
 	// Cordon and drain if this host is a Kubernetes node
 	k8sNode, err := r.getKubernetesNode(ctx, node.Name)
 	if err != nil {
+		upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
+		upgradeTotal.WithLabelValues(node.Name, "error").Inc()
 		return time.Time{}, err
 	}
 	if k8sNode != nil {
 		if err = r.cordonNode(ctx, node, k8sNode); err != nil {
+			upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
+			upgradeTotal.WithLabelValues(node.Name, "error").Inc()
 			return time.Time{}, err
 		}
 		if err = r.drainNode(ctx, node.Name); err != nil {
@@ -370,13 +376,22 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 	err = r.system.Package().UpgradeAll(ctx)
 	if err != nil {
+		upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
+		upgradeTotal.WithLabelValues(node.Name, "error").Inc()
+		packageOperationsTotal.WithLabelValues(node.Name, "upgrade", "error").Inc()
 		return next.Add(delay), err
 	}
+	packageOperationsTotal.WithLabelValues(node.Name, "upgrade", "success").Inc()
 
 	err = r.system.Node().Upgrade(ctx)
 	if err != nil {
+		upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
+		upgradeTotal.WithLabelValues(node.Name, "error").Inc()
 		return next.Add(delay), err
 	}
+
+	upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
+	upgradeTotal.WithLabelValues(node.Name, "success").Inc()
 
 	// Set the upgrade time
 
@@ -384,7 +399,9 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		node.Annotations = make(map[string]string)
 	}
 
-	node.Annotations[common.AnnotationLastUpgrade] = time.Now().Format(time.RFC3339)
+	now := time.Now()
+	node.Annotations[common.AnnotationLastUpgrade] = now.Format(time.RFC3339)
+	lastUpgradeTimestamp.WithLabelValues(node.Name).Set(float64(now.Unix()))
 
 	f := func() error {
 		return r.Update(ctx, node)
