@@ -180,7 +180,7 @@ func main() {
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		setupLog.Error(err, "failed to create clinetset", "err", err)
+		setupLog.Error(err, "failed to create clientset", "err", err)
 		os.Exit(1)
 	}
 

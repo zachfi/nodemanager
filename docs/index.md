@@ -1,169 +1,52 @@
 # nodemanager
 
-## Description
+nodemanager is a controller that uses Kubernetes CRDs as a unified configuration
+source to manage OS packages, files, and services on any node — not just
+Kubernetes nodes. The controller can run in-cluster or off-cluster (directly on
+a bare-metal or VM host), treating Kubernetes as the configuration plane rather
+than a container orchestration target.
 
-This controller can run either on cluster nodes, or on off-cluster nodes and
-features a small package/file/service resource footprint to allow a collections
-of `ConfigSet` resources to manage portions of the node configuration, based on
-matching labels in the `ConfigSet` resources to the `ManagedNode` resources for
-the instance of the controller. This allows a very flexible configuration
-management approach using Kubernetes to store configuration data to be
-referenced from `Secret` or `ConfigMap` and templated into files on disk of the
-nodes. Services can "subscribe" to changes on files, so that they are restarted
-when details changed.
+## How it works
 
-In a small lab environment, this has been very productive in capturing all of
-the various configuration details of the Kubernetes nodes, as well as
-supporting nodes that are not running in the cluster, such as FreeBSD storage
-nodes. This includes configuration details like authentication, package
-installation, ssh configuration, NTP configuration, etc.
+Each running controller creates and owns a `ManagedNode` object for the local
+hostname. `ConfigSet` objects declare desired state (packages, files, services,
+executions) and are matched to nodes via label selectors. When a `ConfigSet`'s
+labels match the local `ManagedNode`, the controller reconciles its contents
+onto the node.
 
-Currently targeted to for support in this project are Archlinux and FreeBSD,
-but the interfaces exist in such a way to allow expanded operating system
-support quite easily. Contributions welcome.
+Files can carry template content rendered via [gomplate](https://docs.gomplate.ca/),
+with data sourced from Kubernetes Secrets and ConfigMaps. Services and
+executions can subscribe to file changes and will restart or re-run when a
+subscribed file is modified.
 
-Additionally, currently only `amd64` architectures are built, with the
-expectation of `arm` packages at some point in the future.
+Scheduled upgrades are supported via a cron expression on the `ManagedNode`,
+with optional distributed locking so only one node in a group upgrades at a
+time.
 
-This project is built using `kubebuilder`, continue reading to get started.
+## Supported platforms
 
-### Example
+| OS | Packages | Services |
+|---|---|---|
+| Arch Linux | pacman | systemd |
+| Alpine Linux | apk | systemd |
+| FreeBSD | pkgng | rc.d |
 
-Consider the following `ConfigSet` to manage the clock on some Linux machines.
+Build targets: `linux/amd64`, `linux/arm64`, `linux/arm`, `freebsd/amd64`, `freebsd/arm64`.
 
-```yaml
-apiVersion: common.nodemanager/v1
-kind: ConfigSet
-metadata:
-  labels:
-    kubernetes.io/os: arch
-  name: clock-linux
-  namespace: nodemanager
-spec:
-  packages:
-    - ensure: installed
-      name: chrony
-  services:
-    - enable: true
-      ensure: running
-      name: chronyd
-    - enable: false
-      ensure: stopped
-      name: systemd-timesyncd
-```
+## Prerequisites
 
-On all nodes matching the label selector, the `chrony` package is installed and
-we manage the service, ensuring to stop the conflicting `systemd-timesyncd`
-service.
+- Go v1.24+
+- kubectl v1.11.3+
+- Access to a Kubernetes cluster
 
-## Getting Started
-
-### Prerequisites
-
-- go version v1.21.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
-
-### To Deploy on the cluster
-
-**Build and push your image to the location specified by `IMG`:**
+## Quick start
 
 ```sh
-make docker-build docker-push IMG=<some-registry>/nodemanager:tag
-```
-
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
-
-**Install the CRDs into the cluster:**
-
-```sh
+# Install CRDs
 make install
+
+# Run the controller locally against the current kubeconfig context
+make run
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
-```sh
-make deploy IMG=<some-registry>/nodemanager:tag
-```
-
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-> privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
-```
-
-> **NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-
-**Delete the instances (CRs) from the cluster:**
-
-```sh
-kubectl delete -k config/samples/
-```
-
-**Delete the APIs(CRDs) from the cluster:**
-
-```sh
-make uninstall
-```
-
-**UnDeploy the controller from the cluster:**
-
-```sh
-make undeploy
-```
-
-## Project Distribution
-
-Following are the steps to build the installer and distribute this project to users.
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/nodemanager:tag
-```
-
-NOTE: The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without
-its dependencies.
-
-2. Using the installer
-
-Users can just run kubectl apply -f <URL for YAML BUNDLE> to install the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/nodemanager/<tag or branch>/dist/install.yaml
-```
-
-## Contributing
-
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2024.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+See the [API reference](api/configset.md) for `ConfigSet` and `ManagedNode` field details.
