@@ -1,0 +1,26 @@
+site_name: nodemanager
+site_url: https://zachfi.github.io/nodemanager
+repo_url: https://github.com/zachfi/nodemanager
+repo_name: zachfi/nodemanager
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: indigo
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Overview: index.md
+  - API Reference:
+    - ManagedNode: api/managednode.md
+    - ConfigSet: api/configset.md
+  - Monitoring:
+    - Metrics: monitoring/metrics.md
+    - Runbooks:
+      - NodeManagerReconcileErrors: runbooks/NodeManagerReconcileErrors.md
+      - NodeManagerConfigSetApplyError: runbooks/NodeManagerConfigSetApplyError.md
+      - NodeManagerUpgradeFailed: runbooks/NodeManagerUpgradeFailed.md
