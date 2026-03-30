@@ -18,6 +18,7 @@ trigger:
   - refs/heads/main
   - refs/heads/dependabot/**
   - refs/tags/v*
+  - refs/pull/**
 ---
 depends_on: []
 kind: pipeline
@@ -52,6 +53,6 @@ trigger:
   - refs/tags/v*
 ---
 kind: signature
-hmac: a4e92a688e3663b2ca2a0366567b0f041df4ea8d8e7967d886f24c28dc17992f
+hmac: ec82ac5a693ba90a3d861356bffe2568429f4c70c6882f031b89b5bac92a6ea3
 
 ...
