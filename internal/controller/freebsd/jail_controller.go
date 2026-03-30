@@ -127,8 +127,38 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	// Start the jail if it is not already running.
+	running, err := r.manager.IsRunning(ctx, j.Name)
+	if err != nil {
+		r.logger.Error("failed to check jail state", "jail", j.Name, "err", err)
+		r.setCondition(j, "Degraded", metav1.ConditionTrue, "StatusCheckFailed", err.Error())
+		_ = r.Status().Update(ctx, j)
+		return ctrl.Result{}, err
+	}
+	if !running {
+		if err := r.manager.StartJail(ctx, j.Name); err != nil {
+			r.logger.Error("failed to start jail", "jail", j.Name, "err", err)
+			r.setCondition(j, "Degraded", metav1.ConditionTrue, "StartFailed", err.Error())
+			r.setCondition(j, "Progressing", metav1.ConditionFalse, "StartFailed", "jail failed to start")
+			_ = r.Status().Update(ctx, j)
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Re-query running state after start attempt.
+	running, err = r.manager.IsRunning(ctx, j.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	r.setCondition(j, "Progressing", metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
-	r.setCondition(j, "Available", metav1.ConditionTrue, "Provisioned", "jail is provisioned")
+	if running {
+		r.setCondition(j, "Available", metav1.ConditionTrue, "Running", "jail is running")
+		r.setCondition(j, "Degraded", metav1.ConditionFalse, "Running", "")
+	} else {
+		r.setCondition(j, "Available", metav1.ConditionFalse, "NotRunning", "jail is not running after start")
+		r.setCondition(j, "Degraded", metav1.ConditionTrue, "NotRunning", "jail is not running after start attempt")
+	}
 	if err := r.Status().Update(ctx, j); err != nil {
 		return ctrl.Result{}, err
 	}

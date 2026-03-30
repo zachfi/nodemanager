@@ -18,7 +18,8 @@ const (
 	ReleaseRootDir = "releases"
 )
 
-// Manager provisions and removes FreeBSD jails backed by ZFS datasets.
+// Manager provisions, removes, and controls the lifecycle of FreeBSD jails
+// backed by ZFS datasets.
 //
 // Dataset layout (relative to the configured base dataset, e.g. zroot/nodemanager):
 //
@@ -35,8 +36,18 @@ type Manager interface {
 	// EnsureJail idempotently provisions the jail: release, ZFS datasets,
 	// jail root population, jail.conf, and fstab.
 	EnsureJail(ctx context.Context, j freebsdv1.Jail) error
-	// DeleteJail tears down the jail's ZFS datasets and config files.
+	// DeleteJail stops the jail (if running) then tears down its ZFS datasets
+	// and config files.
 	DeleteJail(ctx context.Context, j freebsdv1.Jail) error
+	// StartJail starts a provisioned jail via `service jail start <name>`.
+	StartJail(ctx context.Context, name string) error
+	// StopJail stops a running jail via `service jail stop <name>`.
+	StopJail(ctx context.Context, name string) error
+	// RestartJail restarts a running jail via `service jail restart <name>`.
+	RestartJail(ctx context.Context, name string) error
+	// IsRunning reports whether the named jail is currently active according
+	// to jls(8).
+	IsRunning(ctx context.Context, name string) (bool, error)
 }
 
 var _ Manager = (*manager)(nil)
@@ -147,11 +158,15 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 	return nil
 }
 
-// DeleteJail destroys the jail's ZFS datasets and removes its config files.
-// The release dataset and its snapshot are left in place for reuse by other
-// jails on the same release.
+// DeleteJail stops the jail (if running), then destroys its ZFS datasets and
+// removes its config files. The release dataset and its snapshot are left in
+// place for reuse by other jails on the same release.
 func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
-	// Remove config files first so the jail cannot be started accidentally
+	// Stop the jail gracefully before tearing down its filesystem. Ignore
+	// errors here — the jail may already be stopped.
+	_ = m.StopJail(ctx, j.Name)
+
+	// Remove config files so the jail cannot be started accidentally
 	// during teardown.
 	if err := removeJailConf(m.confDir, j.Name); err != nil {
 		return err
@@ -183,6 +198,22 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	}
 
 	return nil
+}
+
+func (m *manager) StartJail(ctx context.Context, name string) error {
+	return m.exec.SimpleRunCommand(ctx, "service", "jail", "start", name)
+}
+
+func (m *manager) StopJail(ctx context.Context, name string) error {
+	return m.exec.SimpleRunCommand(ctx, "service", "jail", "stop", name)
+}
+
+func (m *manager) RestartJail(ctx context.Context, name string) error {
+	return m.exec.SimpleRunCommand(ctx, "service", "jail", "restart", name)
+}
+
+func (m *manager) IsRunning(ctx context.Context, name string) (bool, error) {
+	return isJailRunning(ctx, m.exec, name)
 }
 
 // copyHostFiles copies /etc/resolv.conf and /etc/localtime into the jail root

@@ -17,7 +17,7 @@ import (
 // mockReleaseManager satisfies ReleaseManager without touching the network or
 // filesystem.
 type mockReleaseManager struct {
-	ensured []string
+	ensured  []string
 	basePath string
 }
 
@@ -174,6 +174,85 @@ func TestDeleteJail(t *testing.T) {
 	require.Equal(t, []string{"destroy", "-r", "zroot/nodemanager/jails/gone"}, calls[1])
 	// Snapshot cleanup on the release.
 	require.Equal(t, []string{"destroy", "zroot/nodemanager/releases/14.2-RELEASE@gone"}, calls[2])
+}
+
+func TestStartStopRestartJail(t *testing.T) {
+	cases := []struct {
+		name    string
+		op      func(context.Context, Manager, string) error
+		wantCmd []string
+	}{
+		{
+			name:    "start",
+			op:      func(ctx context.Context, m Manager, n string) error { return m.StartJail(ctx, n) },
+			wantCmd: []string{"jail", "start", "classic"},
+		},
+		{
+			name:    "stop",
+			op:      func(ctx context.Context, m Manager, n string) error { return m.StopJail(ctx, n) },
+			wantCmd: []string{"jail", "stop", "classic"},
+		},
+		{
+			name:    "restart",
+			op:      func(ctx context.Context, m Manager, n string) error { return m.RestartJail(ctx, n) },
+			wantCmd: []string{"jail", "restart", "classic"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, exec, _ := newTestManager(t, []int{0})
+			require.NoError(t, tc.op(context.Background(), m, "classic"))
+			// service is invoked via SimpleRunCommand → RunCommand
+			require.Equal(t, tc.wantCmd, exec.Recorder["service"][0])
+		})
+	}
+}
+
+func TestIsRunning(t *testing.T) {
+	running := `{"__version":"2","jail-information":{"jail":[{"jid":1,"hostname":"classic","path":"/jails/classic/root","name":"classic","state":"ACTIVE","cpusetid":1,"ipv4_addrs":[],"ipv6_addrs":[]}]}}`
+
+	t.Run("running", func(t *testing.T) {
+		m, _, _ := newTestManager(t, []int{0})
+		m.exec.(*handler.MockExecHandler).Output = []string{running}
+
+		ok, err := m.IsRunning(context.Background(), "classic")
+		require.NoError(t, err)
+		require.True(t, ok)
+	})
+
+	t.Run("not running", func(t *testing.T) {
+		m, _, _ := newTestManager(t, []int{0})
+		m.exec.(*handler.MockExecHandler).Output = []string{`{"__version":"2","jail-information":{"jail":[]}}`}
+
+		ok, err := m.IsRunning(context.Background(), "classic")
+		require.NoError(t, err)
+		require.False(t, ok)
+	})
+}
+
+func TestDeleteJailStopsFirst(t *testing.T) {
+	// stop (status 0) + Exists(jailDataset) (0) + DestroyRecursive (0) + DestroySnapshot (0)
+	statuses := []int{0, 0, 0, 0}
+	m, exec, _ := newTestManager(t, statuses)
+
+	j := testJail("gone", "14.2-RELEASE")
+	// Pre-create conf/fstab so removal succeeds.
+	confPath := filepath.Join(m.confDir, "gone.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
+	fstabPath := filepath.Join(m.basePath, JailRootDir, "gone", "fstab")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
+	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
+
+	// Provide empty jls output for the IsRunning call inside StopJail? No —
+	// StopJail does not check IsRunning first; it just runs the command.
+	// Supply a jls output for the call if needed. But StopJail just calls
+	// `service jail stop`; no jls call is made during stop.
+	require.NoError(t, m.DeleteJail(context.Background(), j))
+
+	// First call to the "service" binary must be the stop command.
+	// The mock records args only (not the binary name itself).
+	require.Equal(t, []string{"jail", "stop", "gone"}, exec.Recorder["service"][0])
 }
 
 // helpers

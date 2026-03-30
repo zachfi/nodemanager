@@ -18,9 +18,8 @@ var (
 
 func TestSystemd(t *testing.T) {
 	var (
-		m          handler.ExecHandler = &handler.MockExecHandler{}
-		logHandler                     = slog.NewTextHandler(os.Stdout, nil)
-		logger                         = slog.New(logHandler)
+		logHandler = slog.NewTextHandler(os.Stdout, nil)
+		logger     = slog.New(logHandler)
 	)
 
 	cases := []struct {
@@ -59,42 +58,49 @@ func TestSystemd(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		h := New(logger, m)
+		// Create a fresh mock per case so the recorder index is predictable.
+		// Status queue must cover every RunCommand call: Enable, Disable,
+		// Start, Stop, Restart (all succeed → 0), then Status×2 (0=Running,
+		// 1=Stopped).
+		mock := &handler.MockExecHandler{Status: []int{0, 0, 0, 0, 0, 0, 1}}
+		h := New(logger, mock)
 		hh := h.(*Systemd).WithContext(tc.ctx)
 
 		require.Equal(t, tc.expectedUser, hh.(*Systemd).user)
 
-		err := hh.Enable(tc.ctx, tc.svc)
-		require.NoError(t, err)
-		require.Equal(t, tc.enableArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		calls := mock.Recorder[systemctl]
 
-		err = hh.Disable(tc.ctx, tc.svc)
-		require.NoError(t, err)
-		require.Equal(t, tc.disableArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		require.NoError(t, hh.Enable(tc.ctx, tc.svc))
+		require.Equal(t, tc.enableArgs, mock.Recorder[systemctl][len(calls)])
+		calls = mock.Recorder[systemctl]
 
-		err = hh.Start(tc.ctx, tc.svc)
-		require.NoError(t, err)
-		require.Equal(t, tc.startArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		require.NoError(t, hh.Disable(tc.ctx, tc.svc))
+		require.Equal(t, tc.disableArgs, mock.Recorder[systemctl][len(calls)])
+		calls = mock.Recorder[systemctl]
 
-		err = hh.Stop(tc.ctx, tc.svc)
-		require.NoError(t, err)
-		require.Equal(t, tc.stopArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		require.NoError(t, hh.Start(tc.ctx, tc.svc))
+		require.Equal(t, tc.startArgs, mock.Recorder[systemctl][len(calls)])
+		calls = mock.Recorder[systemctl]
 
-		err = hh.Restart(tc.ctx, tc.svc)
-		require.NoError(t, err)
-		require.Equal(t, tc.restartArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		require.NoError(t, hh.Stop(tc.ctx, tc.svc))
+		require.Equal(t, tc.stopArgs, mock.Recorder[systemctl][len(calls)])
+		calls = mock.Recorder[systemctl]
 
-		m.(*handler.MockExecHandler).Status = 0
+		require.NoError(t, hh.Restart(tc.ctx, tc.svc))
+		require.Equal(t, tc.restartArgs, mock.Recorder[systemctl][len(calls)])
+		calls = mock.Recorder[systemctl]
+
+		// Status consumes from the Status queue: first call → 0 (Running).
 		status, err := hh.Status(tc.ctx, tc.svc)
 		require.NoError(t, err)
-		require.Equal(t, tc.statusArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		require.Equal(t, tc.statusArgs, mock.Recorder[systemctl][len(calls)])
 		require.Equal(t, services.Running, status)
+		calls = mock.Recorder[systemctl]
 
-		m.(*handler.MockExecHandler).Status = 1
+		// Second call → 1 (Stopped).
 		status, err = hh.Status(tc.ctx, tc.svc)
 		require.NoError(t, err)
-		require.Equal(t, tc.statusArgs, m.(*handler.MockExecHandler).Recorder[systemctl])
+		require.Equal(t, tc.statusArgs, mock.Recorder[systemctl][len(calls)])
 		require.Equal(t, services.Stopped, status)
-
 	}
 }
