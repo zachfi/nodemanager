@@ -20,6 +20,7 @@ import (
 	"context"
 	"log/slog"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -27,7 +28,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/zachfi/nodemanager/pkg/common/labels"
-	"github.com/zachfi/nodemanager/pkg/execs"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/poudriere"
 	"github.com/zachfi/nodemanager/pkg/util"
@@ -42,6 +42,18 @@ type PoudriereReconciler struct {
 	tracer trace.Tracer
 	logger *slog.Logger
 	system handler.System
+	cfg    PoudriereConfig
+}
+
+func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg PoudriereConfig, system handler.System) *PoudriereReconciler {
+	return &PoudriereReconciler{
+		Client: client,
+		Scheme: scheme,
+		tracer: otel.Tracer("controller.freebsd.poudriere"),
+		logger: logger.With("controller", "poudriere"),
+		system: system,
+		cfg:    cfg,
+	}
 }
 
 //+kubebuilder:rbac:groups=freebsd.nodemanager,resources=poudrieres,verbs=get;list;watch;create;update;patch;delete
@@ -73,7 +85,7 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	exec := &execs.ExecHandlerCommon{}
+	exec := r.system.Exec()
 
 	p, err := poudriere.NewPorts(r.logger, exec)
 	if err != nil {
@@ -114,14 +126,6 @@ func (r *PoudriereReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
 		// For().
 		Complete(r)
-}
-
-func (r *PoudriereReconciler) WithTracer(tracer trace.Tracer) {
-	r.tracer = tracer
-}
-
-func (r *PoudriereReconciler) WithLogger(logger *slog.Logger) {
-	r.logger = logger
 }
 
 func (r *PoudriereReconciler) ensureAllTrees(ctx context.Context, p *poudriere.PoudrierePorts) error {

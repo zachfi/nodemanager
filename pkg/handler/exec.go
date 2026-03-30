@@ -10,19 +10,32 @@ type ExecHandler interface {
 var _ ExecHandler = (*MockExecHandler)(nil)
 
 type MockExecHandler struct {
-	Recorder    map[string][]string
+	Recorder    map[string][][]string
 	expectedErr error
-	Status      int
+	Status      []int
+	// Output holds per-call stdout values consumed in order, like Status.
+	// When exhausted, RunCommand returns "".
+	Output []string
 }
 
 func (h *MockExecHandler) RunCommand(ctx context.Context, command string, args ...string) (string, int, error) {
 	if h.Recorder == nil {
-		h.Recorder = make(map[string][]string)
+		h.Recorder = make(map[string][][]string)
 	}
 
-	h.Recorder[command] = args
+	h.Recorder[command] = append(h.Recorder[command], args)
 
-	return "", h.Status, h.expectedErr
+	status := 0
+	if len(h.Status) > 0 {
+		status, h.Status = h.Status[0], h.Status[1:]
+	}
+
+	output := ""
+	if len(h.Output) > 0 {
+		output, h.Output = h.Output[0], h.Output[1:]
+	}
+
+	return output, status, h.expectedErr
 }
 
 func (h *MockExecHandler) SimpleRunCommand(ctx context.Context, command string, args ...string) error {

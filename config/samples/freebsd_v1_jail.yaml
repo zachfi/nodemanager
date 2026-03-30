@@ -1,0 +1,10 @@
+apiVersion: freebsd.nodemanager/v1
+kind: Jail
+metadata:
+  labels:
+    app.kubernetes.io/name: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: jail-sample
+spec:
+  nodeName: myhost.example.com
+  release: "14.2-RELEASE"
