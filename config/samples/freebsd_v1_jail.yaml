@@ -6,4 +6,5 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: jail-sample
 spec:
-  # TODO(user): Add fields here
+  nodeName: myhost.example.com
+  release: "14.2-RELEASE"
