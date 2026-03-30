@@ -1,19 +1,25 @@
+// Package jail manages FreeBSD jails via ZFS snapshots and clones.
+//
+// # Dataset layout
+//
+//	<dataset>/releases/<version>          — extracted FreeBSD base (shared template)
+//	<dataset>/jails/<name>                — per-jail container dataset
+//	<dataset>/jails/<name>/root           — ZFS clone of releases/<version>@<name>
+//
+// # Jail creation flow
+//
+//  1. Ensure releases/<version> dataset exists (zfs.Manager.Ensure).
+//  2. Download base.txz from the FreeBSD mirror if not already extracted.
+//  3. Snapshot the release: zfs snapshot releases/<version>@<name>.
+//  4. Clone the snapshot: zfs clone releases/<version>@<name> jails/<name>/root.
+//  5. Copy /etc/resolv.conf and /etc/localtime into the jail root.
+//  6. Write per-jail fstab to jails/<name>/fstab (if mounts are declared).
+//  7. Write /etc/jail.conf.d/<name>.conf.
+//
+// # Jail deletion flow
+//
+//  1. Remove /etc/jail.conf.d/<name>.conf.
+//  2. Remove jails/<name>/fstab.
+//  3. zfs destroy -r jails/<name>  (destroys root clone and container dataset).
+//  4. zfs destroy releases/<version>@<name>  (remove the origin snapshot).
 package jail
-
-// zfs create -o mountpoint=/usr/local/jails zroot/jails
-// zfs create zroot/jails/media
-// zfs create zroot/jails/templates
-// zfs create zroot/jails/containers
-
-// fetch https://download.freebsd.org/ftp/releases/amd64/amd64/14.4-RELEASE/base.txz -o /usr/local/jails/media/14.4-RELEASE-base.txz
-// mkdir -p /usr/local/jails/containers/classic
-// tar -xf /usr/local/jails/media/14.4-RELEASE-base.txz -C /usr/local/jails/containers/classic --unlink
-
-// cp /etc/resolv.conf /usr/local/jails/containers/classic/etc/resolv.conf
-// cp /etc/localtime /usr/local/jails/containers/classic/etc/localtime
-
-// freebsd-update -b /usr/local/jails/containers/classic/ fetch install
-
-// Create the jail configuration file
-
-// service jail start classic

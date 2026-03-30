@@ -18,10 +18,13 @@ package freebsd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,33 +36,42 @@ import (
 	"github.com/zachfi/nodemanager/pkg/jail"
 )
 
-// JailReconciler reconciles a Jail object
+const jailFinalizer = "freebsd.nodemanager/finalizer"
+
+// JailReconciler reconciles Jail objects.
 type JailReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	tracer trace.Tracer
-	logger *slog.Logger
-	system handler.System
-	cfg    JailConfig
+	tracer   trace.Tracer
+	logger   *slog.Logger
+	system   handler.System
+	cfg      JailConfig
+	hostname string
 
 	manager jail.Manager
 }
 
 func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System) (*JailReconciler, error) {
+	hostname, err := system.Node().Hostname()
+	if err != nil {
+		return nil, fmt.Errorf("getting local hostname: %w", err)
+	}
+
 	manager, err := jail.NewManager(ctx, cfg.JailDataPath, cfg.ZfsDataset, system.Exec())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating jail manager: %w", err)
 	}
 
 	return &JailReconciler{
-		Client:  client,
-		Scheme:  scheme,
-		tracer:  otel.Tracer("controller.freebsd.jail"),
-		logger:  logger.With("controller", "jail"),
-		system:  system,
-		cfg:     cfg,
-		manager: manager,
+		Client:   client,
+		Scheme:   scheme,
+		tracer:   otel.Tracer("controller.freebsd.jail"),
+		logger:   logger.With("controller", "jail"),
+		system:   system,
+		cfg:      cfg,
+		hostname: hostname,
+		manager:  manager,
 	}, nil
 }
 
@@ -67,64 +79,72 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jails/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jails/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Jail object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.1/pkg/reconcile
 func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
 
 	j := &freebsdv1.Jail{}
 	if err := r.Get(ctx, req.NamespacedName, j); err != nil {
-		r.logger.Error("unable to fetch Jail", "err", err)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// name of our custom finalizer
-	finalizer := "freebsd.nodemanager/finalizer"
+	// Only reconcile jails assigned to this host.
+	if j.Spec.NodeName != r.hostname {
+		return ctrl.Result{}, nil
+	}
 
-	// examine DeletionTimestamp to determine if object is under deletion
 	if j.DeletionTimestamp.IsZero() {
-		// The object is not being deleted, so if it does not have our finalizer,
-		// then let's add the finalizer and update the object. This is equivalent
-		// to registering our finalizer.
-		if !controllerutil.ContainsFinalizer(j, finalizer) {
-			controllerutil.AddFinalizer(j, finalizer)
+		if !controllerutil.ContainsFinalizer(j, jailFinalizer) {
+			controllerutil.AddFinalizer(j, jailFinalizer)
 			if err := r.Update(ctx, j); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
 	} else {
-		// The object is being deleted
-		if controllerutil.ContainsFinalizer(j, finalizer) {
-			if err := r.manager.DeleteJail(ctx, j.Name); err != nil {
+		if controllerutil.ContainsFinalizer(j, jailFinalizer) {
+			if err := r.manager.DeleteJail(ctx, *j); err != nil {
+				r.setCondition(j, "Degraded", metav1.ConditionTrue, "DeleteFailed", err.Error())
+				_ = r.Status().Update(ctx, j)
 				return ctrl.Result{}, err
 			}
-
-			// remove our finalizer from the list and update it.
-			controllerutil.RemoveFinalizer(j, finalizer)
+			controllerutil.RemoveFinalizer(j, jailFinalizer)
 			if err := r.Update(ctx, j); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
-
-		// Stop reconciliation as the item is being deleted
 		return ctrl.Result{}, nil
 	}
 
-	// Your reconcile logic
+	r.setCondition(j, "Progressing", metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
+	if err := r.Status().Update(ctx, j); err != nil {
+		return ctrl.Result{}, err
+	}
 
-	// Call the manager to create/modify the jail, restart if needed.
-	if err := r.manager.CreateJail(ctx, *j); err != nil {
+	if err := r.manager.EnsureJail(ctx, *j); err != nil {
+		r.logger.Error("failed to ensure jail", "jail", j.Name, "err", err)
+		r.setCondition(j, "Degraded", metav1.ConditionTrue, "EnsureFailed", err.Error())
+		r.setCondition(j, "Progressing", metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
+		_ = r.Status().Update(ctx, j)
+		return ctrl.Result{}, err
+	}
+
+	r.setCondition(j, "Progressing", metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
+	r.setCondition(j, "Available", metav1.ConditionTrue, "Provisioned", "jail is provisioned")
+	if err := r.Status().Update(ctx, j); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// setCondition upserts a named condition on the jail's status.
+func (r *JailReconciler) setCondition(j *freebsdv1.Jail, condType string, status metav1.ConditionStatus, reason, msg string) {
+	meta.SetStatusCondition(&j.Status.Conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            msg,
+		ObservedGeneration: j.Generation,
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -20,31 +20,65 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// JailSpec defines the desired state of Jail
+// JailSpec defines the desired state of Jail.
 type JailSpec struct {
-	Inet6     string `json:"inet6,omitempty"`
-	Inet      string `json:"inet,omitempty"`
+	// NodeName restricts reconciliation to the nodemanager instance running on
+	// the named host. If empty the jail is ignored by all nodes.
+	// +required
+	NodeName string `json:"nodeName"`
+
+	// Release is the FreeBSD release version to use (e.g. "14.2-RELEASE").
+	// +required
+	Release string `json:"release"`
+
+	// Hostname is the jail's internal hostname. Defaults to the resource name.
+	// +optional
+	Hostname string `json:"hostname,omitempty"`
+
+	// Interface is the network interface to attach to the jail.
+	// +optional
 	Interface string `json:"interface,omitempty"`
-	Release   string `json:"release,omitempty"`
+
+	// Inet is the IPv4 address assigned to the jail (CIDR or bare IP).
+	// +optional
+	Inet string `json:"inet,omitempty"`
+
+	// Inet6 is the IPv6 address assigned to the jail (CIDR or bare IP).
+	// +optional
+	Inet6 string `json:"inet6,omitempty"`
+
+	// Mounts defines additional filesystem mounts made available inside the jail
+	// via a per-jail fstab file.
+	// +optional
+	Mounts []JailMount `json:"mounts,omitempty"`
+}
+
+// JailMount describes a single filesystem mount inside the jail.
+type JailMount struct {
+	// HostPath is the absolute path on the host to expose inside the jail.
+	HostPath string `json:"hostPath"`
+
+	// JailPath is the absolute path inside the jail root where HostPath is mounted.
+	JailPath string `json:"jailPath"`
+
+	// Type is the filesystem type. Defaults to "nullfs".
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// ReadOnly mounts the filesystem read-only.
+	// +optional
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // JailStatus defines the observed state of Jail.
 type JailStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the Jail resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
+	// Standard condition types:
+	//   - "Available":   jail is running and healthy.
+	//   - "Progressing": jail is being provisioned or updated.
+	//   - "Degraded":    jail failed to reach or maintain desired state.
 	//
-	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -54,26 +88,23 @@ type JailStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// Jail is the Schema for the jails API
+// Jail is the Schema for the jails API.
 type Jail struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// metadata is a standard object metadata
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitempty,omitzero"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// spec defines the desired state of Jail
 	// +required
 	Spec JailSpec `json:"spec"`
 
-	// status defines the observed state of Jail
 	// +optional
-	Status JailStatus `json:"status,omitempty,omitzero"`
+	Status JailStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// JailList contains a list of Jail
+// JailList contains a list of Jail.
 type JailList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
