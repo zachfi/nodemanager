@@ -83,6 +83,7 @@ func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logg
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 //+kubebuilder:rbac:groups="policy",resources=pods/eviction,verbs=create
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to keep the k8s resource in sync with the current state of the node.
 func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -212,7 +213,23 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 	node.Status.Release = info.OS.Release
 	node.Status.Interfaces = collectNetworkInterfaces()
 	node.Status.SSHHostKeys = collectSSHHostKeys(ctx, r.system.Exec(), node.Name)
-	node.Status.WireGuard = collectWireGuardInterfaces(ctx, r.system.Exec())
+
+	liveWG := collectWireGuardInterfaces(ctx, r.system.Exec())
+
+	if node.Spec.WireGuard.Enabled {
+		iface := node.Spec.WireGuard.Interface
+		if iface == "" {
+			iface = "wg0"
+		}
+		pubKey, err := r.ensureWireGuardKeySecret(ctx, node.Namespace, node.Name, iface)
+		if err != nil {
+			r.logger.Warn("failed to ensure WireGuard key secret", "err", err)
+		} else {
+			liveWG = mergeBootstrappedWireGuardKey(liveWG, iface, pubKey)
+		}
+	}
+
+	node.Status.WireGuard = liveWG
 
 	r.logger.Info("updating node status", "node", node.Name, "release", node.Status.Release)
 
@@ -225,6 +242,47 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 	}
 
 	return nil
+}
+
+// ensureWireGuardKeySecret returns the public key for the given WireGuard
+// interface on this node.  If the backing Secret does not yet exist it is
+// created with a freshly generated Curve25519 keypair.  Returns ("", nil)
+// only when key generation itself fails (caller logs and continues).
+func (r *ManagedNodeReconciler) ensureWireGuardKeySecret(ctx context.Context, namespace, nodeName, iface string) (string, error) {
+	secretName := "wg-" + iface + "-" + nodeName
+
+	var secret corev1.Secret
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, &secret)
+	if err == nil {
+		return string(secret.Data["public-key"]), nil
+	}
+	if !k8serrors.IsNotFound(err) {
+		return "", fmt.Errorf("failed to get WireGuard key secret %s: %w", secretName, err)
+	}
+
+	// Secret doesn't exist — generate a new keypair.
+	privKey, pubKey, err := generateWireGuardKeyPair()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate WireGuard keypair: %w", err)
+	}
+
+	newSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			"private-key": []byte(privKey),
+			"public-key":  []byte(pubKey),
+		},
+	}
+
+	r.logger.Info("creating WireGuard key secret", "secret", secretName)
+	if err := r.Create(ctx, newSecret); err != nil {
+		return "", fmt.Errorf("failed to create WireGuard key secret %s: %w", secretName, err)
+	}
+
+	return pubKey, nil
 }
 
 // collectNetworkInterfaces enumerates non-loopback, up interfaces and returns

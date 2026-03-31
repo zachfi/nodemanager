@@ -20,10 +20,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// WireGuardSpec controls optional WireGuard key bootstrapping for this node.
+// When Enabled is true, the controller generates a Curve25519 keypair on first
+// reconcile and stores it in a Secret named wg-<Interface>-<nodeName>.  The
+// public key is published to status.wireGuard so other nodes can build peer
+// configs from template data before the interface is configured.
+type WireGuardSpec struct {
+	// Enabled turns on key bootstrapping for this node.
+	Enabled bool `json:"enabled,omitempty"`
+	// Interface is the WireGuard interface name to bootstrap.  Defaults to wg0.
+	Interface string `json:"interface,omitempty"`
+}
+
 // ManagedNodeSpec defines the desired state of ManagedNode
 type ManagedNodeSpec struct {
-	Domain  string  `json:"domain,omitempty"`
-	Upgrade Upgrade `json:"upgrade,omitempty"`
+	Domain    string        `json:"domain,omitempty"`
+	Upgrade   Upgrade       `json:"upgrade,omitempty"`
+	WireGuard WireGuardSpec `json:"wireGuard,omitempty"`
 }
 
 type Upgrade struct {
