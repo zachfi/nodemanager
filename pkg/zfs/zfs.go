@@ -3,6 +3,7 @@ package zfs
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/zachfi/nodemanager/pkg/handler"
 )
@@ -15,6 +16,9 @@ type Manager interface {
 	Ensure(ctx context.Context, dataset string, opts ...string) error
 	// Exists reports whether the dataset exists.
 	Exists(ctx context.Context, dataset string) (bool, error)
+	// GetProperty returns the value of a single ZFS property for the dataset.
+	// Returns "-" when the property has no value (e.g. origin on a non-clone).
+	GetProperty(ctx context.Context, dataset, property string) (string, error)
 	// Snapshot creates a snapshot of the dataset named <dataset>@<name>.
 	Snapshot(ctx context.Context, dataset, name string) error
 	// Clone creates a new dataset cloned from the given snapshot.
@@ -33,6 +37,14 @@ type zfsManager struct {
 
 func NewZfsManager(exec handler.ExecHandler) Manager {
 	return &zfsManager{exec}
+}
+
+func (z *zfsManager) GetProperty(ctx context.Context, dataset, property string) (string, error) {
+	out, _, err := z.exec.RunCommand(ctx, zfsCmd, "get", "-H", "-o", "value", property, dataset)
+	if err != nil {
+		return "", fmt.Errorf("zfs get %s %s: %w", property, dataset, err)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func (z *zfsManager) Exists(ctx context.Context, dataset string) (bool, error) {

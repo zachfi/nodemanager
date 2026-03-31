@@ -20,13 +20,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"time"
 
+	"github.com/gorhill/cronexpr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -169,11 +172,105 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		r.setCondition(j, "Available", metav1.ConditionFalse, "NotRunning", "jail is not running after start")
 		r.setCondition(j, "Degraded", metav1.ConditionTrue, "NotRunning", "jail is not running after start attempt")
 	}
+
+	// Populate status.release from the jail root filesystem.
+	jailRoot := filepath.Join(r.cfg.JailDataPath, jail.JailRootDir, j.Name, "root")
+	if rel, err := r.manager.InstalledRelease(jailRoot); err != nil {
+		r.logger.Warn("could not read installed release", "jail", j.Name, "err", err)
+	} else {
+		j.Status.Release = rel
+	}
+
 	if err := r.Status().Update(ctx, j); err != nil {
 		return ctrl.Result{}, err
 	}
 
+	// Run freebsd-update if a schedule is configured and it is due.
+	next, err := r.handleUpdate(ctx, j, jailRoot)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !next.IsZero() {
+		return ctrl.Result{RequeueAfter: time.Until(next)}, nil
+	}
+
 	return ctrl.Result{}, nil
+}
+
+// handleUpdate checks whether a freebsd-update run is due for the jail.
+// It mirrors the schedule+delay logic used by ManagedNode.handleUpgrade.
+func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, jailRoot string) (time.Time, error) {
+	if j.Spec.Update.Schedule == "" || j.Spec.Update.Delay == "" {
+		return time.Time{}, nil
+	}
+
+	delay, err := time.ParseDuration(j.Spec.Update.Delay)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing jail update delay: %w", err)
+	}
+
+	cron, err := cronexpr.Parse(j.Spec.Update.Schedule)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing jail update schedule: %w", err)
+	}
+
+	const forgiveness = time.Minute
+	next := cron.Next(time.Now().Add(-forgiveness))
+
+	// Check last update time from annotation.
+	if last, ok := j.Annotations[jail.AnnotationLastUpdate]; ok {
+		t, err := time.Parse(time.RFC3339, last)
+		if err == nil && time.Since(t) < delay {
+			return next, nil
+		}
+	}
+
+	// Outside forgiveness window — requeue without running.
+	if time.Since(next) < forgiveness {
+		// within the window — fall through to run
+	} else if time.Until(next) < forgiveness {
+		return next, nil
+	} else {
+		return next, nil
+	}
+
+	r.logger.Info("running freebsd-update", "jail", j.Name)
+
+	if err := r.manager.StopJail(ctx, j.Name); err != nil {
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "stop", "error").Inc()
+		return time.Time{}, fmt.Errorf("stopping jail for update: %w", err)
+	}
+	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "stop", "success").Inc()
+
+	updateErr := r.manager.UpdateJail(ctx, jailRoot)
+
+	if startErr := r.manager.StartJail(ctx, j.Name); startErr != nil {
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
+		r.logger.Error("failed to restart jail after update", "jail", j.Name, "err", startErr)
+	} else {
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "success").Inc()
+	}
+
+	if updateErr != nil {
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "update", "error").Inc()
+		return time.Time{}, fmt.Errorf("freebsd-update failed for jail %s: %w", j.Name, updateErr)
+	}
+	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "update", "success").Inc()
+
+	now := metav1.Now()
+	j.Status.LastUpdate = &now
+	if j.Annotations == nil {
+		j.Annotations = make(map[string]string)
+	}
+	j.Annotations[jail.AnnotationLastUpdate] = time.Now().Format(time.RFC3339)
+
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		return r.Update(ctx, j)
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("recording last update time: %w", err)
+	}
+
+	return next, nil
 }
 
 // setCondition upserts a named condition on the jail's status.

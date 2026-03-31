@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -17,6 +18,10 @@ const (
 	// ReleaseRootDir is the subdirectory under basePath that holds release datasets.
 	ReleaseRootDir = "releases"
 )
+
+// AnnotationLastUpdate is the Jail annotation key that records the RFC3339
+// timestamp of the most recent successful freebsd-update run.
+const AnnotationLastUpdate = "update.freebsd.nodemanager/last"
 
 // Manager provisions, removes, and controls the lifecycle of FreeBSD jails
 // backed by ZFS datasets.
@@ -48,6 +53,14 @@ type Manager interface {
 	// IsRunning reports whether the named jail is currently active according
 	// to jls(8).
 	IsRunning(ctx context.Context, name string) (bool, error)
+	// InstalledRelease returns the FreeBSD release string from the jail root
+	// (reads /bin/freebsd-version).  Used to populate status.release and to
+	// detect when spec.release differs from the provisioned base.
+	InstalledRelease(jailRoot string) (string, error)
+	// UpdateJail runs freebsd-update(8) against the jail root to apply
+	// patch-level security updates within the current release.  The jail must
+	// be stopped before calling this.
+	UpdateJail(ctx context.Context, jailRoot string) error
 }
 
 var _ Manager = (*manager)(nil)
@@ -124,6 +137,26 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 	if err != nil {
 		return fmt.Errorf("checking jail root dataset: %w", err)
 	}
+
+	if exists {
+		// Check whether the existing clone was built from spec.release.
+		// Read origin before any destructive operation.
+		origin, err := m.zfs.GetProperty(ctx, jailRootDataset, "origin")
+		if err != nil {
+			return fmt.Errorf("checking jail root origin for %s: %w", j.Name, err)
+		}
+		if origin != "" && origin != "-" && releaseFromOrigin(origin) != j.Spec.Release {
+			// User changed spec.release — reprovision from the new base.
+			_ = m.StopJail(ctx, j.Name)
+			if err := m.zfs.DestroyDatasetRecursive(ctx, jailRootDataset); err != nil {
+				return fmt.Errorf("destroying stale jail root for %s: %w", j.Name, err)
+			}
+			// Best-effort removal of the old release snapshot created for this jail.
+			_ = m.zfs.DestroyDataset(ctx, origin)
+			exists = false
+		}
+	}
+
 	if !exists {
 		releaseDataset := filepath.Join(m.dataset, ReleaseRootDir, j.Spec.Release)
 		snapshot := fmt.Sprintf("%s@%s", releaseDataset, j.Name)
@@ -214,6 +247,49 @@ func (m *manager) RestartJail(ctx context.Context, name string) error {
 
 func (m *manager) IsRunning(ctx context.Context, name string) (bool, error) {
 	return isJailRunning(ctx, m.exec, name)
+}
+
+func (m *manager) InstalledRelease(jailRoot string) (string, error) {
+	return installedRelease(jailRoot)
+}
+
+// UpdateJail runs freebsd-update(8) against the jail root to apply patch-level
+// security updates.  The jail should be stopped before calling this.
+func (m *manager) UpdateJail(ctx context.Context, jailRoot string) error {
+	return m.exec.SimpleRunCommand(ctx, "env", "PAGER=cat",
+		"/usr/sbin/freebsd-update", "-b", jailRoot, "--not-running-from-cron", "fetch", "install")
+}
+
+// releaseFromOrigin extracts the FreeBSD release component from a ZFS clone
+// origin property.  Origin has the form:
+//
+//	<baseDataset>/releases/<version>@<jailName>
+//
+// e.g. "zroot/nodemanager/releases/14.2-RELEASE@web01" → "14.2-RELEASE".
+func releaseFromOrigin(origin string) string {
+	// Drop the @<jailName> snapshot suffix.
+	datasetPart := strings.SplitN(origin, "@", 2)[0]
+	// The last path component is the release version.
+	return filepath.Base(datasetPart)
+}
+
+// installedRelease reads the USERLAND_VERSION from /bin/freebsd-version inside
+// the jail root without executing any code — just string parsing.
+func installedRelease(jailRoot string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(jailRoot, "bin", "freebsd-version"))
+	if err != nil {
+		return "", fmt.Errorf("reading freebsd-version: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "USERLAND_VERSION=") {
+			continue
+		}
+		v := strings.TrimPrefix(line, "USERLAND_VERSION=")
+		v = strings.Trim(v, `"`)
+		return v, nil
+	}
+	return "", fmt.Errorf("USERLAND_VERSION not found in %s/bin/freebsd-version", jailRoot)
 }
 
 // copyHostFiles copies /etc/resolv.conf and /etc/localtime into the jail root

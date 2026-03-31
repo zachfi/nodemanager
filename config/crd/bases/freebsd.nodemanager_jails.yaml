@@ -89,6 +89,18 @@ spec:
               release:
                 description: Release is the FreeBSD release version to use (e.g. "14.2-RELEASE").
                 type: string
+              update:
+                description: Update controls periodic freebsd-update(8) runs for this
+                  jail.
+                properties:
+                  delay:
+                    description: Delay is the minimum time between updates (e.g. "24h").
+                    type: string
+                  schedule:
+                    description: Schedule is a cron expression for when updates should
+                      run.
+                    type: string
+                type: object
             required:
             - nodeName
             - release
@@ -162,6 +174,17 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastUpdate:
+                description: LastUpdate is the time of the last successful freebsd-update
+                  run.
+                format: date-time
+                type: string
+              release:
+                description: |-
+                  Release is the FreeBSD release string reported by the jail root
+                  (from /bin/freebsd-version).  Compare against spec.release to detect
+                  when a reprovision has completed or is pending.
+                type: string
             type: object
         required:
         - spec

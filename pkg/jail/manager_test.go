@@ -105,9 +105,13 @@ func TestEnsureJail_NewJail(t *testing.T) {
 }
 
 func TestEnsureJail_AlreadyExists(t *testing.T) {
-	// Both jailDataset and jailRootDataset already exist → no create/snapshot/clone.
-	statuses := []int{0, 0}
+	// Both jailDataset and jailRootDataset already exist, and origin matches
+	// spec.release → no create/snapshot/clone.
+	statuses := []int{0, 0, 0} // Exists(jail), Exists(root), GetProperty(origin)
 	m, exec, releases := newTestManager(t, statuses)
+	// Output is consumed in call order; pad the two Exists calls with empty
+	// strings, then provide the real origin for GetProperty.
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@existing"}
 
 	j := testJail("existing", "14.2-RELEASE")
 	require.NoError(t, m.EnsureJail(context.Background(), j))
@@ -115,10 +119,37 @@ func TestEnsureJail_AlreadyExists(t *testing.T) {
 	require.Equal(t, []string{"14.2-RELEASE"}, releases.ensured)
 
 	calls := zfsCalls(exec)
-	// Only two Exists checks; no create, snapshot, or clone.
-	require.Len(t, calls, 2)
+	// Two Exists checks + one GetProperty; no create, snapshot, or clone.
+	require.Len(t, calls, 3)
 	require.Equal(t, "list", calls[0][0])
 	require.Equal(t, "list", calls[1][0])
+	require.Equal(t, []string{"get", "-H", "-o", "value", "origin", "zroot/nodemanager/jails/existing/root"}, calls[2])
+}
+
+func TestEnsureJail_ReleaseDrift(t *testing.T) {
+	// Root exists but was cloned from 14.2-RELEASE; spec now wants 16.2-RELEASE.
+	// Expected ZFS calls: Exists(jail)=found, Exists(root)=found, GetProperty=old origin,
+	// stop (noop), DestroyRecursive(root), DestroyDataset(snapshot), Snapshot, Clone.
+	statuses := []int{0, 0, 0, 0, 0, 0, 0, 0}
+	m, exec, releases := newTestManager(t, statuses)
+	// Pad empty outputs for the two Exists calls, then the old origin for GetProperty.
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@web01"}
+
+	j := testJail("web01", "16.2-RELEASE")
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	require.Equal(t, []string{"16.2-RELEASE"}, releases.ensured)
+
+	calls := zfsCalls(exec)
+	// Verify destroy was called on the stale root.
+	ops := make([]string, len(calls))
+	for i, c := range calls {
+		ops[i] = c[0]
+	}
+	require.Contains(t, ops, "destroy")
+	// Verify a new snapshot and clone were created for 16.2-RELEASE.
+	require.Contains(t, ops, "snapshot")
+	require.Contains(t, ops, "clone")
 }
 
 func TestEnsureJail_WithMounts(t *testing.T) {
@@ -144,6 +175,24 @@ func TestEnsureJail_WithMounts(t *testing.T) {
 	confData, err := os.ReadFile(filepath.Join(m.confDir, "web.conf"))
 	require.NoError(t, err)
 	require.True(t, strings.Contains(string(confData), "mount.fstab"))
+}
+
+func TestInstalledRelease(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "bin"), 0o755))
+
+	t.Run("parses USERLAND_VERSION", func(t *testing.T) {
+		script := "#!/bin/sh\nUSERLAND_VERSION=\"14.2-RELEASE\"\nexport USERLAND_VERSION\n"
+		require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "freebsd-version"), []byte(script), 0o755))
+		v, err := installedRelease(root)
+		require.NoError(t, err)
+		require.Equal(t, "14.2-RELEASE", v)
+	})
+
+	t.Run("error when file missing", func(t *testing.T) {
+		_, err := installedRelease(t.TempDir())
+		require.Error(t, err)
+	})
 }
 
 func TestDeleteJail(t *testing.T) {

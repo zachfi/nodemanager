@@ -20,6 +20,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// JailUpdate controls periodic in-place security updates via freebsd-update(8).
+// This applies patch-level updates within the declared release.  To move to a
+// new release, change spec.release — the controller will reprovision the jail
+// root from the new base.
+type JailUpdate struct {
+	// Schedule is a cron expression for when updates should run.
+	Schedule string `json:"schedule,omitempty"`
+	// Delay is the minimum time between updates (e.g. "24h").
+	Delay string `json:"delay,omitempty"`
+}
+
 // JailSpec defines the desired state of Jail.
 type JailSpec struct {
 	// NodeName restricts reconciliation to the nodemanager instance running on
@@ -51,6 +62,10 @@ type JailSpec struct {
 	// via a per-jail fstab file.
 	// +optional
 	Mounts []JailMount `json:"mounts,omitempty"`
+
+	// Update controls periodic freebsd-update(8) runs for this jail.
+	// +optional
+	Update JailUpdate `json:"update,omitempty"`
 }
 
 // JailMount describes a single filesystem mount inside the jail.
@@ -83,6 +98,16 @@ type JailStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Release is the FreeBSD release string reported by the jail root
+	// (from /bin/freebsd-version).  Compare against spec.release to detect
+	// when a reprovision has completed or is pending.
+	// +optional
+	Release string `json:"release,omitempty"`
+
+	// LastUpdate is the time of the last successful freebsd-update run.
+	// +optional
+	LastUpdate *metav1.Time `json:"lastUpdate,omitempty"`
 }
 
 // +kubebuilder:object:root=true
