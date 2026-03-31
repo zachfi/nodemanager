@@ -115,6 +115,29 @@ spec:
                   - fingerprintType
                   type: object
                 type: array
+              wireGuard:
+                items:
+                  description: |-
+                    WireGuardInterface holds the identity information for a WireGuard interface
+                    on this node. Combined with the node's IP addresses from Interfaces, this
+                    gives peers everything needed to establish a tunnel.
+                  properties:
+                    listenPort:
+                      description: ListenPort is the UDP port the interface is listening
+                        on, if set.
+                      type: integer
+                    name:
+                      description: Name is the network interface name, e.g. wg0.
+                      type: string
+                    publicKey:
+                      description: PublicKey is the base64-encoded Curve25519 public
+                        key.
+                      type: string
+                  required:
+                  - name
+                  - publicKey
+                  type: object
+                type: array
             type: object
         type: object
     served: true

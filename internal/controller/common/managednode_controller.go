@@ -212,6 +212,7 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 	node.Status.Release = info.OS.Release
 	node.Status.Interfaces = collectNetworkInterfaces()
 	node.Status.SSHHostKeys = collectSSHHostKeys(ctx, r.system.Exec(), node.Name)
+	node.Status.WireGuard = collectWireGuardInterfaces(ctx, r.system.Exec())
 
 	r.logger.Info("updating node status", "node", node.Name, "release", node.Status.Release)
 

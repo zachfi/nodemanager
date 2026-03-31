@@ -48,6 +48,18 @@ type ConfigSetApplyStatus struct {
 	Error           string      `json:"error,omitempty"`
 }
 
+// WireGuardInterface holds the identity information for a WireGuard interface
+// on this node. Combined with the node's IP addresses from Interfaces, this
+// gives peers everything needed to establish a tunnel.
+type WireGuardInterface struct {
+	// Name is the network interface name, e.g. wg0.
+	Name string `json:"name"`
+	// PublicKey is the base64-encoded Curve25519 public key.
+	PublicKey string `json:"publicKey"`
+	// ListenPort is the UDP port the interface is listening on, if set.
+	ListenPort int `json:"listenPort,omitempty"`
+}
+
 // SSHHostKey holds the SSHFP record fields for one SSH host key, ready for
 // direct insertion into a DNS zone as an SSHFP record (RFC 4255).
 type SSHHostKey struct {
@@ -65,6 +77,7 @@ type ManagedNodeStatus struct {
 	Interfaces  map[string]NetworkInterface `json:"interfaces,omitempty"`
 	ConfigSets  []ConfigSetApplyStatus      `json:"configsets,omitempty"`
 	SSHHostKeys []SSHHostKey                `json:"sshHostKeys,omitempty"`
+	WireGuard   []WireGuardInterface        `json:"wireGuard,omitempty"`
 }
 
 //+kubebuilder:object:root=true
