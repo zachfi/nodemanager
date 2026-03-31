@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -102,10 +103,12 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	} else {
 		if controllerutil.ContainsFinalizer(j, jailFinalizer) {
 			if err := r.manager.DeleteJail(ctx, *j); err != nil {
+				jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "error").Inc()
 				r.setCondition(j, "Degraded", metav1.ConditionTrue, "DeleteFailed", err.Error())
 				_ = r.Status().Update(ctx, j)
 				return ctrl.Result{}, err
 			}
+			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "success").Inc()
 			controllerutil.RemoveFinalizer(j, jailFinalizer)
 			if err := r.Update(ctx, j); err != nil {
 				return ctrl.Result{}, err
@@ -119,13 +122,18 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	provisionStart := time.Now()
 	if err := r.manager.EnsureJail(ctx, *j); err != nil {
+		jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "error").Inc()
 		r.logger.Error("failed to ensure jail", "jail", j.Name, "err", err)
 		r.setCondition(j, "Degraded", metav1.ConditionTrue, "EnsureFailed", err.Error())
 		r.setCondition(j, "Progressing", metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
 		_ = r.Status().Update(ctx, j)
 		return ctrl.Result{}, err
 	}
+	jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
+	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "success").Inc()
 
 	// Start the jail if it is not already running.
 	running, err := r.manager.IsRunning(ctx, j.Name)
@@ -137,12 +145,14 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	if !running {
 		if err := r.manager.StartJail(ctx, j.Name); err != nil {
+			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
 			r.logger.Error("failed to start jail", "jail", j.Name, "err", err)
 			r.setCondition(j, "Degraded", metav1.ConditionTrue, "StartFailed", err.Error())
 			r.setCondition(j, "Progressing", metav1.ConditionFalse, "StartFailed", "jail failed to start")
 			_ = r.Status().Update(ctx, j)
 			return ctrl.Result{}, err
 		}
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "success").Inc()
 	}
 
 	// Re-query running state after start attempt.

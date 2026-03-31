@@ -40,6 +40,13 @@ Custom metrics emitted by nodemanager itself.
 |---|---|---|
 | `nodemanager_service_operations_total` | `node`, `operation`, `result` | Service manager operations. `operation` is `start`, `stop`, `restart`, `enable`, or `disable`. |
 
+### Jails (FreeBSD)
+
+| Metric | Labels | Description |
+|---|---|---|
+| `nodemanager_jail_operations_total` | `node`, `jail`, `operation`, `result` | Jail lifecycle operations. `operation` is `provision`, `start`, or `delete`. |
+| `nodemanager_jail_provision_duration_seconds` | `node`, `jail` | Duration of `EnsureJail` (release download, ZFS clone, conf/fstab write). |
+
 ### Upgrades
 
 | Metric | Labels | Description |

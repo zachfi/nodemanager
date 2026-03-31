@@ -110,6 +110,25 @@
       },
     },
 
+    // ── Jail operation metrics (FreeBSD) ────────────────────────────────────
+
+    {
+      alert: 'NodeManagerJailOperationFailed',
+      expr: |||
+        increase(nodemanager_jail_operations_total{result="error"}[15m]) > 0
+      |||,
+      'for': '5m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'Jail {{ $labels.operation }} failed on node {{ $labels.node }}.',
+        description: |||
+          Jail {{ $labels.operation }} for jail {{ $labels.jail }} failed
+          {{ $value }} time(s) on node {{ $labels.node }} in the last 15 minutes.
+          Check controller logs and jail status conditions for details.
+        |||,
+      },
+    },
+
     // ── Package operation metrics ────────────────────────────────────────────
 
     {
