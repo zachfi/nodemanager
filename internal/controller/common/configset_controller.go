@@ -39,6 +39,8 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/files"
@@ -75,6 +77,8 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets/finalizers,verbs=update
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to handle changes to a ConfigSet object.
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -150,7 +154,51 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&commonv1.ConfigSet{}).
+		Watches(&corev1.Secret{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingSecret)).
+		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
 		Complete(r)
+}
+
+// configSetsReferencingSecret returns reconcile requests for every ConfigSet
+// in the same namespace that references the changed Secret by name.
+func (r *ConfigSetReconciler) configSetsReferencingSecret(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list commonv1.ConfigSetList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, cs := range list.Items {
+		for _, f := range cs.Spec.Files {
+			if slices.Contains(f.SecretRefs, obj.GetName()) {
+				reqs = append(reqs, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: cs.Name, Namespace: cs.Namespace},
+				})
+				break
+			}
+		}
+	}
+	return reqs
+}
+
+// configSetsReferencingConfigMap returns reconcile requests for every ConfigSet
+// in the same namespace that references the changed ConfigMap by name.
+func (r *ConfigSetReconciler) configSetsReferencingConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list commonv1.ConfigSetList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, cs := range list.Items {
+		for _, f := range cs.Spec.Files {
+			if slices.Contains(f.ConfigMapRefs, obj.GetName()) {
+				reqs = append(reqs, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: cs.Name, Namespace: cs.Namespace},
+				})
+				break
+			}
+		}
+	}
+	return reqs
 }
 
 // updateConfigSetStatus records the result of a ConfigSet reconciliation in the ManagedNode status.
