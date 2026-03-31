@@ -378,4 +378,66 @@ var _ = Describe("ManagedNode Controller", func() {
 			Expect(lastUpgrade).To(BeTemporally("~", metav1.Now().Time, 5*time.Second), "Expected LastUpgrade to be close to the current time after reconciliation.")
 		})
 	})
+
+	Context("When the managed node has an upgrade hold annotation", func() {
+		const resourceName = "test-hold-node"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			By("creating the ManagedNode with the upgrade hold annotation")
+			mn := &commonv1.ManagedNode{}
+			err := k8sClient.Get(ctx, typeNamespacedName, mn)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+						Annotations: map[string]string{
+							common.AnnotationUpgradeHold: "true",
+						},
+					},
+					Spec: commonv1.ManagedNodeSpec{
+						Domain: "example.com",
+						Upgrade: commonv1.Upgrade{
+							Schedule: "* * * * * * *",
+							Delay:    "0s",
+						},
+					},
+				})).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			mn := &commonv1.ManagedNode{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, mn); err == nil {
+				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
+			}
+		})
+
+		It("should not call upgrade even when the schedule is due", func() {
+			sys := &mockSystemHandler{}
+			controllerReconciler := &ManagedNodeReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    sys,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking upgrade was not called")
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(0))
+
+			By("checking the hold annotation is still present")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
+			Expect(mn.Annotations).To(HaveKey(common.AnnotationUpgradeHold))
+		})
+	})
 })

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/zfs"
 )
@@ -19,9 +20,9 @@ const (
 	ReleaseRootDir = "releases"
 )
 
-// AnnotationLastUpdate is the Jail annotation key that records the RFC3339
-// timestamp of the most recent successful freebsd-update run.
-const AnnotationLastUpdate = "update.freebsd.nodemanager/last"
+// AnnotationLastUpdate is an alias for common.AnnotationJailLastUpdate kept
+// for backwards compatibility within this package.
+const AnnotationLastUpdate = common.AnnotationJailLastUpdate
 
 // Manager provisions, removes, and controls the lifecycle of FreeBSD jails
 // backed by ZFS datasets.

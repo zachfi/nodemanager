@@ -381,6 +381,13 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	// If the group is present, then we use the locker using the group to ensure
 	// that only one member of the group is upgrading at a time.
 
+	// Honour the upgrade hold annotation — break-glass mechanism to suppress
+	// upgrades without modifying the spec. Remove the annotation to resume.
+	if _, held := node.Annotations[common.AnnotationUpgradeHold]; held {
+		r.logger.Info("upgrade hold annotation set, skipping upgrade", "node", node.Name)
+		return time.Time{}, nil
+	}
+
 	// Check if we are a node that performs upgrades
 	if node.Spec.Upgrade.Schedule == "" {
 		r.logger.Info("managed node has no upgrade schedule")
