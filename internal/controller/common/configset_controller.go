@@ -120,6 +120,30 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	nodeName := node.Name
+
+	var conflicts []string
+	conflicts, err = r.detectConflicts(ctx, &configSet, node)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(conflicts) > 0 {
+		configSetConflictsTotal.WithLabelValues(nodeName, configSet.Name).Add(float64(len(conflicts)))
+		r.logger.Warn("configset has resource conflicts, skipping apply", "configset", configSet.Name, "conflicts", conflicts)
+		if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, nil, conflicts); statusErr != nil {
+			r.logger.Error("failed to update conflict status on node", "err", statusErr)
+		}
+		if statusErr := r.updateConfigSetCondition(ctx, req, conflicts); statusErr != nil {
+			r.logger.Error("failed to update conflict condition on configset", "err", statusErr)
+		}
+		err = nil
+		return ctrl.Result{}, nil
+	}
+
+	// Clear any previously recorded conflict condition now that the conflict is resolved.
+	if statusErr := r.updateConfigSetCondition(ctx, req, nil); statusErr != nil {
+		r.logger.Error("failed to clear conflict condition on configset", "err", statusErr)
+	}
+
 	applyStart := time.Now()
 
 	var changedFiles []string
@@ -144,7 +168,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		lastConfigSetApplyTimestamp.WithLabelValues(nodeName, configSet.Name).Set(float64(time.Now().Unix()))
 	}
 
-	if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, err); statusErr != nil {
+	if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, err, nil); statusErr != nil {
 		r.logger.Error("failed to update configset status on node", "err", statusErr)
 	}
 
@@ -203,11 +227,13 @@ func (r *ConfigSetReconciler) configSetsReferencingConfigMap(ctx context.Context
 }
 
 // updateConfigSetStatus records the result of a ConfigSet reconciliation in the ManagedNode status.
-func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeName, nodeNamespace, configSetName, resourceVersion string, applyErr error) error {
+// conflicts is non-nil when a conflict was detected; applyErr is non-nil when apply itself failed.
+func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeName, nodeNamespace, configSetName, resourceVersion string, applyErr error, conflicts []string) error {
 	entry := commonv1.ConfigSetApplyStatus{
 		Name:            configSetName,
 		ResourceVersion: resourceVersion,
 		LastApplied:     metav1.Now(),
+		Conflicts:       conflicts,
 	}
 	if applyErr != nil {
 		entry.Error = applyErr.Error()
@@ -233,6 +259,100 @@ func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeNam
 
 		return r.Status().Update(ctx, &node)
 	})
+}
+
+// updateConfigSetCondition sets or clears the Conflicted condition on the ConfigSet itself.
+// Pass a non-nil conflicts slice to set the condition; pass nil to clear it.
+func (r *ConfigSetReconciler) updateConfigSetCondition(ctx context.Context, req ctrl.Request, conflicts []string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var cs commonv1.ConfigSet
+		if err := r.Get(ctx, req.NamespacedName, &cs); err != nil {
+			return err
+		}
+
+		var condition metav1.Condition
+		if len(conflicts) > 0 {
+			condition = metav1.Condition{
+				Type:               "Conflicted",
+				Status:             metav1.ConditionTrue,
+				Reason:             "ResourceConflict",
+				Message:            fmt.Sprintf("resource overlap with another ConfigSet: %s", conflicts),
+				LastTransitionTime: metav1.Now(),
+				ObservedGeneration: cs.Generation,
+			}
+		} else {
+			condition = metav1.Condition{
+				Type:               "Conflicted",
+				Status:             metav1.ConditionFalse,
+				Reason:             "NoConflict",
+				Message:            "",
+				LastTransitionTime: metav1.Now(),
+				ObservedGeneration: cs.Generation,
+			}
+		}
+
+		// Update or append the condition.
+		found := false
+		for i, c := range cs.Status.Conditions {
+			if c.Type == condition.Type {
+				// Only update LastTransitionTime if Status actually changed.
+				if c.Status == condition.Status {
+					condition.LastTransitionTime = c.LastTransitionTime
+				}
+				cs.Status.Conditions[i] = condition
+				found = true
+				break
+			}
+		}
+		if !found {
+			cs.Status.Conditions = append(cs.Status.Conditions, condition)
+		}
+
+		return r.Status().Update(ctx, &cs)
+	})
+}
+
+// detectConflicts returns a human-readable description of every file path or
+// service name that is claimed by both cs and another ConfigSet matching this
+// node. A non-empty result means cs must not be applied this reconcile cycle.
+func (r *ConfigSetReconciler) detectConflicts(ctx context.Context, cs *commonv1.ConfigSet, node commonv1.ManagedNode) ([]string, error) {
+	var all commonv1.ConfigSetList
+	if err := r.List(ctx, &all, client.InNamespace(cs.Namespace)); err != nil {
+		return nil, err
+	}
+
+	// Build resource inventory from all OTHER ConfigSets that match this node.
+	claimedFiles := make(map[string]string)    // path → owning configset name
+	claimedServices := make(map[string]string) // name → owning configset name
+
+	for _, other := range all.Items {
+		if other.Name == cs.Name {
+			continue
+		}
+		if nodeLabelMatch(node, other.Labels) != nil {
+			continue // doesn't apply to this node
+		}
+		for _, f := range other.Spec.Files {
+			claimedFiles[f.Path] = other.Name
+		}
+		for _, s := range other.Spec.Services {
+			claimedServices[s.Name] = other.Name
+		}
+	}
+
+	var conflicts []string
+	for _, f := range cs.Spec.Files {
+		if owner, ok := claimedFiles[f.Path]; ok {
+			conflicts = append(conflicts, fmt.Sprintf("file:%s (also in configset %q)", f.Path, owner))
+		}
+	}
+	for _, s := range cs.Spec.Services {
+		if owner, ok := claimedServices[s.Name]; ok {
+			conflicts = append(conflicts, fmt.Sprintf("service:%s (also in configset %q)", s.Name, owner))
+		}
+	}
+
+	return conflicts, nil
 }
 
 func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName string, packageSet []commonv1.Package) error {

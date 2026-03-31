@@ -35,6 +35,173 @@ import (
 )
 
 var _ = Describe("ConfigSet Controller", func() {
+	Context("When two ConfigSets claim the same file", func() {
+		const csA = "conflict-a"
+		const csB = "conflict-b"
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			By("creating two ConfigSets with overlapping file paths")
+			for _, name := range []string{csA, csB} {
+				cs := &commonv1.ConfigSet{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cs)
+				if err != nil && errors.IsNotFound(err) {
+					Expect(k8sClient.Create(ctx, &commonv1.ConfigSet{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      name,
+							Namespace: "default",
+						},
+						Spec: commonv1.ConfigSetSpec{
+							Files: []commonv1.File{
+								{Path: "/etc/conflict-test.conf", Ensure: "file", Content: name},
+							},
+						},
+					})).To(Succeed())
+				}
+			}
+		})
+
+		AfterEach(func() {
+			for _, name := range []string{csA, csB} {
+				cs := &commonv1.ConfigSet{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cs); err == nil {
+					Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+				}
+			}
+		})
+
+		It("should block both ConfigSets and record conflicts in status", func() {
+			lkr := locker.NewLeaseLocker(ctx, logger, locker.Config{}, clientset, "default", hostname)
+
+			for _, name := range []string{csA, csB} {
+				sys := &mockSystemHandler{}
+				reconciler := &ConfigSetReconciler{
+					Client: k8sClient,
+					Scheme: k8sClient.Scheme(),
+					tracer: noop.NewTracerProvider().Tracer("test"),
+					logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+					system: sys,
+					locker: lkr,
+				}
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: name, Namespace: "default"},
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("checking no file writes were attempted for " + name)
+				Expect(sys.File().(*mockFileHandler).fileWriteCalls).To(BeEmpty())
+			}
+
+			By("checking ManagedNode status records conflicts for both ConfigSets")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: hostname, Namespace: "default"}, mn)).To(Succeed())
+			for _, name := range []string{csA, csB} {
+				var found *commonv1.ConfigSetApplyStatus
+				for i := range mn.Status.ConfigSets {
+					if mn.Status.ConfigSets[i].Name == name {
+						found = &mn.Status.ConfigSets[i]
+						break
+					}
+				}
+				Expect(found).NotTo(BeNil(), "expected configset %s in ManagedNode status", name)
+				Expect(found.Conflicts).NotTo(BeEmpty(), "expected conflicts for %s", name)
+			}
+
+			By("checking ConfigSet conditions reflect the conflict")
+			for _, name := range []string{csA, csB} {
+				cs := &commonv1.ConfigSet{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cs)).To(Succeed())
+				var conflicted *metav1.Condition
+				for i := range cs.Status.Conditions {
+					if cs.Status.Conditions[i].Type == "Conflicted" {
+						conflicted = &cs.Status.Conditions[i]
+						break
+					}
+				}
+				Expect(conflicted).NotTo(BeNil(), "expected Conflicted condition on configset %s", name)
+				Expect(conflicted.Status).To(Equal(metav1.ConditionTrue))
+			}
+		})
+	})
+
+	Context("When ConfigSets have overlapping files but different label selectors", func() {
+		const csMatch = "selector-match"
+		const csNoMatch = "selector-nomatch"
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			By("creating a matching ConfigSet and a non-matching ConfigSet with the same file path")
+			cs := &commonv1.ConfigSet{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: csMatch, Namespace: "default"}, cs)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ConfigSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      csMatch,
+						Namespace: "default",
+					},
+					Spec: commonv1.ConfigSetSpec{
+						Files: []commonv1.File{
+							{Path: "/etc/selector-test.conf", Ensure: "absent"},
+						},
+					},
+				})).To(Succeed())
+			}
+			cs2 := &commonv1.ConfigSet{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: csNoMatch, Namespace: "default"}, cs2)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ConfigSet{
+					ObjectMeta: metav1.ObjectMeta{
+						// Label that won't match our test node
+						Name:      csNoMatch,
+						Namespace: "default",
+						Labels:    map[string]string{"kubernetes.io/hostname": "nonexistent-node"},
+					},
+					Spec: commonv1.ConfigSetSpec{
+						Files: []commonv1.File{
+							{Path: "/etc/selector-test.conf", Ensure: "absent"},
+						},
+					},
+				})).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			for _, name := range []string{csMatch, csNoMatch} {
+				cs := &commonv1.ConfigSet{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cs); err == nil {
+					Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+				}
+			}
+		})
+
+		It("should not conflict because the non-matching ConfigSet does not apply to this node", func() {
+			sys := &mockSystemHandler{}
+			lkr := locker.NewLeaseLocker(ctx, logger, locker.Config{}, clientset, "default", hostname)
+			reconciler := &ConfigSetReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+				locker: lkr,
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: csMatch, Namespace: "default"},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking ManagedNode status has no conflicts for the matching ConfigSet")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: hostname, Namespace: "default"}, mn)).To(Succeed())
+			for _, entry := range mn.Status.ConfigSets {
+				if entry.Name == csMatch {
+					Expect(entry.Conflicts).To(BeEmpty())
+					return
+				}
+			}
+		})
+	})
+
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 

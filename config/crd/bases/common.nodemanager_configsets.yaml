@@ -118,6 +118,36 @@ spec:
             type: object
           status:
             description: ConfigSetStatus defines the observed state of ConfigSet
+            properties:
+              conditions:
+                description: Conditions includes a Conflicted condition when a resource
+                  overlap is detected on the node this controller manages.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      type: integer
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
             type: object
         type: object
     served: true

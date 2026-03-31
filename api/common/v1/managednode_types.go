@@ -59,6 +59,10 @@ type ConfigSetApplyStatus struct {
 	ResourceVersion string      `json:"resourceVersion,omitempty"`
 	LastApplied     metav1.Time `json:"lastApplied,omitempty"`
 	Error           string      `json:"error,omitempty"`
+	// Conflicts lists resources claimed by both this ConfigSet and another matching
+	// ConfigSet, e.g. ["file:/etc/nginx/nginx.conf (also in configset \"web-base\")"].
+	// When non-empty, this ConfigSet was not applied on this reconcile.
+	Conflicts []string `json:"conflicts,omitempty"`
 }
 
 // WireGuardInterface holds the identity information for a WireGuard interface

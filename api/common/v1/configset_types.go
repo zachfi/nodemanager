@@ -64,7 +64,11 @@ type Exec struct {
 }
 
 // ConfigSetStatus defines the observed state of ConfigSet
-type ConfigSetStatus struct{}
+type ConfigSetStatus struct {
+	// Conditions includes a Conflicted condition when a resource overlap is detected
+	// on the node this controller manages.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status

@@ -129,6 +129,29 @@
       },
     },
 
+    // ── ConfigSet conflict metrics ───────────────────────────────────────────
+
+    {
+      alert: 'NodeManagerConfigSetConflict',
+      // Fires immediately when two ConfigSets claim the same file or service on
+      // the same node. The conflicting ConfigSet is not applied until resolved.
+      expr: |||
+        increase(nodemanager_configset_conflicts_total[10m]) > 0
+      |||,
+      'for': '0m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'ConfigSet {{ $labels.configset }} has a resource conflict on node {{ $labels.node }}.',
+        description: |||
+          ConfigSet {{ $labels.configset }} on node {{ $labels.node }} shares a file
+          path or service name with another ConfigSet targeting the same node.
+          The conflicting ConfigSet is not being applied. Resolve by removing the
+          duplicate resource from one of the ConfigSets.
+          Check ManagedNode status (.status.configsets[].conflicts) for details.
+        |||,
+      },
+    },
+
     // ── File drift metrics ───────────────────────────────────────────────────
 
     {

@@ -77,6 +77,13 @@ spec:
                   description: ConfigSetApplyStatus records the last reconciliation
                     outcome for a ConfigSet on this node.
                   properties:
+                    conflicts:
+                      description: Conflicts lists resources claimed by both this ConfigSet
+                        and another matching ConfigSet. When non-empty, this ConfigSet
+                        was not applied.
+                      items:
+                        type: string
+                      type: array
                     error:
                       type: string
                     lastApplied:

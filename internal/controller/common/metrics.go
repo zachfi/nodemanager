@@ -62,6 +62,12 @@ var (
 		Name: "nodemanager_last_configset_apply_timestamp_seconds",
 		Help: "Unix timestamp of the last successful ConfigSet apply on a node.",
 	}, []string{"node", "configset"})
+
+	// configSetConflictsTotal counts resource conflicts detected between ConfigSets.
+	configSetConflictsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "nodemanager_configset_conflicts_total",
+		Help: "Total number of resource conflicts detected between ConfigSets on this node.",
+	}, []string{"node", "configset"})
 )
 
 func init() {
@@ -75,5 +81,6 @@ func init() {
 		upgradeDuration,
 		lastUpgradeTimestamp,
 		lastConfigSetApplyTimestamp,
+		configSetConflictsTotal,
 	)
 }
