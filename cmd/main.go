@@ -101,6 +101,9 @@ func main() {
 		case "token":
 			runToken(os.Args[2:])
 			return
+		case "rbac":
+			runRBAC(os.Args[2:])
+			return
 		}
 	}
 

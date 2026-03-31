@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,11 +13,11 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 const (
@@ -27,8 +28,8 @@ const (
 )
 
 // nodeClusterRoleRules defines the minimal permissions a bare-metal nodemanager
-// instance needs. Applied by `bootstrap` and `token`; mirrored in
-// config/rbac/node-role.yaml.
+// instance needs. Mirrored in config/rbac/node-role.yaml and printed by
+// `nodemanager rbac`.
 var nodeClusterRoleRules = []rbacv1.PolicyRule{
 	// ConfigSets: read-only
 	{
@@ -68,69 +69,121 @@ var nodeClusterRoleRules = []rbacv1.PolicyRule{
 	},
 }
 
-// runBootstrap implements `nodemanager bootstrap`.
+// runRBAC implements `nodemanager rbac`.
 //
-// Uses a broad kubeconfig to provision all Kubernetes resources for the node
-// (namespace, ClusterRole, ServiceAccount, ClusterRoleBinding, token-refresh
-// Role) and writes a long-lived node-scoped kubeconfig.
+// Prints the Kubernetes RBAC manifests required for a node to stdout.
+// Pipe the output into your RBAC management pipeline:
 //
-// This command requires admin-level credentials. Once complete, discard the
-// bootstrap kubeconfig — all future runs use the scoped one.
+//	nodemanager rbac --hostname myhost | kubectl apply -f -
 //
-// To generate a short-lived, limited-scope credential instead of handing over
-// admin credentials, use `nodemanager token` first and pass its output here.
-func runBootstrap(args []string) {
-	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
-
-	var (
-		bootstrapKubeconfig = fs.String("bootstrap-kubeconfig", "", "Path to a kubeconfig with rights to create RBAC and ServiceAccounts (required)")
-		outputKubeconfig    = fs.String("kubeconfig", defaultNodeKubeconfigPath(), "Path to write the node-scoped kubeconfig")
-		namespace           = fs.String("namespace", "nodemanager", "Kubernetes namespace for nodemanager objects")
-		hostname            = fs.String("hostname", "", "Node name to use for the ServiceAccount (defaults to os.Hostname)")
-		tokenTTL            = fs.Duration("token-ttl", defaultBootstrapTokenTTL, "Lifetime of the issued ServiceAccount token")
-	)
+// The output is intentionally declarative and idempotent — applying it
+// multiple times for the same hostname is safe.
+//
+// The shared ClusterRole (nodemanager-node) is included in the output so that
+// a fresh cluster can be set up with a single apply. If you manage it
+// separately, the duplicate apply is a no-op.
+func runRBAC(args []string) {
+	fs := flag.NewFlagSet("rbac", flag.ExitOnError)
+	hostname := fs.String("hostname", "", "Node name (required)")
+	namespace := fs.String("namespace", "nodemanager", "Kubernetes namespace for nodemanager objects")
 	_ = fs.Parse(args)
 
-	if *bootstrapKubeconfig == "" {
-		fmt.Fprintln(os.Stderr, "error: --bootstrap-kubeconfig is required")
+	if *hostname == "" {
+		fmt.Fprintln(os.Stderr, "error: --hostname is required")
 		fs.Usage()
 		os.Exit(1)
 	}
 
-	*hostname = resolveHostname(*hostname)
+	saName := "nodemanager-" + *hostname
+	refreshRoleName := saName + "-token-refresh"
 
-	ctx := context.Background()
-	cs := mustClientset(*bootstrapKubeconfig)
-	rawCfg := mustLoadKubeconfig(*bootstrapKubeconfig)
+	objects := []any{
+		// Namespace
+		withTypeMeta(corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: *namespace},
+		}, "v1", "Namespace"),
 
-	if err := ensureNodeResources(ctx, cs, *namespace, *hostname); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		// ServiceAccount for the node
+		withTypeMeta(corev1.ServiceAccount{
+			ObjectMeta: metav1.ObjectMeta{Name: saName, Namespace: *namespace},
+		}, "v1", "ServiceAccount"),
+
+		// Shared ClusterRole — same for all nodes
+		withTypeMeta(rbacv1.ClusterRole{
+			ObjectMeta: metav1.ObjectMeta{Name: bootstrapClusterRoleName},
+			Rules:      nodeClusterRoleRules,
+		}, "rbac.authorization.k8s.io/v1", "ClusterRole"),
+
+		// Per-node ClusterRoleBinding: SA → nodemanager-node
+		withTypeMeta(rbacv1.ClusterRoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: saName},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "ClusterRole",
+				Name:     bootstrapClusterRoleName,
+			},
+			Subjects: []rbacv1.Subject{{
+				Kind:      "ServiceAccount",
+				Name:      saName,
+				Namespace: *namespace,
+			}},
+		}, "rbac.authorization.k8s.io/v1", "ClusterRoleBinding"),
+
+		// Per-node Role: allow the SA to request tokens for itself only.
+		// This is the "allow node $node to create token for $node" rule —
+		// resourceNames restricts the TokenRequest to the node's own SA.
+		withTypeMeta(rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: refreshRoleName, Namespace: *namespace},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups:     []string{""},
+				Resources:     []string{"serviceaccounts/token"},
+				Verbs:         []string{"create"},
+				ResourceNames: []string{saName},
+			}},
+		}, "rbac.authorization.k8s.io/v1", "Role"),
+
+		// Per-node RoleBinding: SA → token-refresh Role
+		withTypeMeta(rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: refreshRoleName, Namespace: *namespace},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: "rbac.authorization.k8s.io",
+				Kind:     "Role",
+				Name:     refreshRoleName,
+			},
+			Subjects: []rbacv1.Subject{{
+				Kind:      "ServiceAccount",
+				Name:      saName,
+				Namespace: *namespace,
+			}},
+		}, "rbac.authorization.k8s.io/v1", "RoleBinding"),
 	}
 
-	token := mustIssueToken(ctx, cs, *namespace, *hostname, *tokenTTL)
-	server, caData := mustServerAndCA(rawCfg)
-
-	writeKubeconfig(*outputKubeconfig, *hostname, *namespace, server, caData, token)
-
-	fmt.Printf("\nkubeconfig written to %s\n", *outputKubeconfig)
-	fmt.Printf("\nNext steps:\n")
-	fmt.Printf("  1. Delete the bootstrap kubeconfig: rm %s\n", *bootstrapKubeconfig)
-	fmt.Printf("  2. Start the service:\n")
-	fmt.Printf("       Linux:   systemctl enable --now nodemanager\n")
-	fmt.Printf("       FreeBSD: sysrc nodemanager_enable=YES && service nodemanager start\n")
+	for _, obj := range objects {
+		j, err := json.Marshal(obj)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: marshalling object: %v\n", err)
+			os.Exit(1)
+		}
+		y, err := sigsyaml.JSONToYAML(j)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: converting to YAML: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("---\n%s", y)
+	}
 }
 
 // runToken implements `nodemanager token`.
 //
-// Creates all Kubernetes resources for the named node (idempotent) then issues
-// a short-lived kubeconfig. Hand this to the new host; it runs
-// `nodemanager bootstrap --bootstrap-kubeconfig <file>` to exchange it for a
-// long-lived credential. The temporary kubeconfig expires automatically.
+// Issues a short-lived kubeconfig for the named node. Run this from a machine
+// with cluster access after applying the RBAC manifests:
 //
-// Re-running `nodemanager token` for the same hostname is safe and can be used
-// to hand out a fresh short-lived credential without disturbing the node's
-// long-lived kubeconfig.
+//	nodemanager rbac --hostname myhost | kubectl apply -f -
+//	nodemanager token --hostname myhost | ssh myhost \
+//	  "cat > /tmp/bootstrap.kubeconfig && \
+//	   nodemanager bootstrap --bootstrap-kubeconfig /tmp/bootstrap.kubeconfig"
+//
+// The node's ServiceAccount must already exist. RBAC is never modified.
 func runToken(args []string) {
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 
@@ -152,11 +205,6 @@ func runToken(args []string) {
 	ctx := context.Background()
 	cs := mustClientset(*adminKubeconfig)
 	rawCfg := mustLoadKubeconfig(*adminKubeconfig)
-
-	if err := ensureNodeResources(ctx, cs, *namespace, *hostname); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
 
 	token := mustIssueToken(ctx, cs, *namespace, *hostname, *ttl)
 	server, caData := mustServerAndCA(rawCfg)
@@ -185,87 +233,49 @@ func runToken(args []string) {
 	}
 }
 
-// ── shared helpers ────────────────────────────────────────────────────────────
+// runBootstrap implements `nodemanager bootstrap`.
+//
+// Uses a short-lived kubeconfig (from `nodemanager token`) or any kubeconfig
+// with TokenRequest rights to write a long-lived node-scoped kubeconfig.
+// RBAC is never modified — the ServiceAccount must already exist.
+func runBootstrap(args []string) {
+	fs := flag.NewFlagSet("bootstrap", flag.ExitOnError)
 
-// ensureNodeResources creates (or updates) all Kubernetes resources needed for
-// a bare-metal nodemanager instance:
-//   - namespace
-//   - nodemanager-node ClusterRole
-//   - nodemanager-<hostname> ServiceAccount
-//   - nodemanager-<hostname> ClusterRoleBinding
-//   - nodemanager-<hostname> token-refresh Role + RoleBinding (namespace-scoped,
-//     allows the SA to request new tokens for itself only)
-func ensureNodeResources(ctx context.Context, cs kubernetes.Interface, namespace, hostname string) error {
-	saName := "nodemanager-" + hostname
+	var (
+		bootstrapKubeconfig = fs.String("bootstrap-kubeconfig", "", "Path to a bootstrap kubeconfig (required)")
+		outputKubeconfig    = fs.String("kubeconfig", defaultNodeKubeconfigPath(), "Path to write the node-scoped kubeconfig")
+		namespace           = fs.String("namespace", "nodemanager", "Kubernetes namespace for nodemanager objects")
+		hostname            = fs.String("hostname", "", "Node name (defaults to os.Hostname)")
+		tokenTTL            = fs.Duration("token-ttl", defaultBootstrapTokenTTL, "Lifetime of the issued ServiceAccount token")
+	)
+	_ = fs.Parse(args)
 
-	if err := ensureNamespace(ctx, cs, namespace); err != nil {
-		return fmt.Errorf("ensuring namespace %q: %w", namespace, err)
+	if *bootstrapKubeconfig == "" {
+		fmt.Fprintln(os.Stderr, "error: --bootstrap-kubeconfig is required")
+		fs.Usage()
+		os.Exit(1)
 	}
-	fmt.Printf("namespace %q ready\n", namespace)
 
-	if err := applyClusterRole(ctx, cs); err != nil {
-		return fmt.Errorf("applying ClusterRole %q: %w", bootstrapClusterRoleName, err)
-	}
-	fmt.Printf("ClusterRole %q ready\n", bootstrapClusterRoleName)
+	*hostname = resolveHostname(*hostname)
 
-	if err := ensureServiceAccount(ctx, cs, namespace, saName); err != nil {
-		return fmt.Errorf("ensuring ServiceAccount %q: %w", saName, err)
-	}
-	fmt.Printf("ServiceAccount %q ready\n", saName)
+	ctx := context.Background()
+	cs := mustClientset(*bootstrapKubeconfig)
+	rawCfg := mustLoadKubeconfig(*bootstrapKubeconfig)
 
-	if err := ensureClusterRoleBinding(ctx, cs, saName, namespace, saName); err != nil {
-		return fmt.Errorf("ensuring ClusterRoleBinding %q: %w", saName, err)
-	}
-	fmt.Printf("ClusterRoleBinding %q ready\n", saName)
+	token := mustIssueToken(ctx, cs, *namespace, *hostname, *tokenTTL)
+	server, caData := mustServerAndCA(rawCfg)
 
-	if err := ensureTokenRefreshRole(ctx, cs, namespace, saName); err != nil {
-		return fmt.Errorf("ensuring token-refresh Role for %q: %w", saName, err)
-	}
-	fmt.Printf("token-refresh Role for %q ready\n", saName)
+	writeKubeconfig(*outputKubeconfig, *hostname, *namespace, server, caData, token)
 
-	return nil
+	fmt.Printf("kubeconfig written to %s\n", *outputKubeconfig)
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("  1. Delete the bootstrap kubeconfig: rm %s\n", *bootstrapKubeconfig)
+	fmt.Printf("  2. Start the service:\n")
+	fmt.Printf("       Linux:   systemctl enable --now nodemanager\n")
+	fmt.Printf("       FreeBSD: sysrc nodemanager_enable=YES && service nodemanager start\n")
 }
 
-// ensureTokenRefreshRole creates a namespace-scoped Role and RoleBinding that
-// allow saName to request new tokens for itself only (via resourceNames). This
-// lets the SA exchange a short-lived bootstrap token for a long-lived one
-// without requiring any admin credentials.
-func ensureTokenRefreshRole(ctx context.Context, cs kubernetes.Interface, namespace, saName string) error {
-	roleName := saName + "-token-refresh"
-
-	role := &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: namespace},
-		Rules: []rbacv1.PolicyRule{{
-			APIGroups:     []string{""},
-			Resources:     []string{"serviceaccounts/token"},
-			Verbs:         []string{"create"},
-			ResourceNames: []string{saName}, // restricted to this SA only
-		}},
-	}
-	_, err := cs.RbacV1().Roles(namespace).Create(ctx, role, metav1.CreateOptions{})
-	if err != nil && !k8serrors.IsAlreadyExists(err) {
-		return err
-	}
-
-	binding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: namespace},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "Role",
-			Name:     roleName,
-		},
-		Subjects: []rbacv1.Subject{{
-			Kind:      "ServiceAccount",
-			Name:      saName,
-			Namespace: namespace,
-		}},
-	}
-	_, err = cs.RbacV1().RoleBindings(namespace).Create(ctx, binding, metav1.CreateOptions{})
-	if err != nil && !k8serrors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
-}
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 func mustIssueToken(ctx context.Context, cs kubernetes.Interface, namespace, hostname string, ttl time.Duration) string {
 	saName := "nodemanager-" + hostname
@@ -279,7 +289,8 @@ func mustIssueToken(ctx context.Context, cs kubernetes.Interface, namespace, hos
 		metav1.CreateOptions{},
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: requesting token for ServiceAccount %q: %v\n", saName, err)
+		fmt.Fprintf(os.Stderr, "error: requesting token for %q: %v\n", saName, err)
+		fmt.Fprintf(os.Stderr, "hint: ensure RBAC is applied first: nodemanager rbac --hostname %s | kubectl apply -f -\n", hostname)
 		os.Exit(1)
 	}
 	fmt.Fprintf(os.Stderr, "token issued (expires %s)\n", tokenReq.Status.ExpirationTimestamp.UTC().Format(time.RFC3339))
@@ -302,7 +313,6 @@ func mustClientset(kubeconfigPath string) kubernetes.Interface {
 
 func mustLoadKubeconfig(path string) *clientcmdapi.Config {
 	if path == "" {
-		// Fall back to default loading rules (KUBECONFIG env / ~/.kube/config).
 		rules := clientcmd.NewDefaultClientConfigLoadingRules()
 		cfg, err := rules.Load()
 		if err != nil {
@@ -352,80 +362,6 @@ func resolveHostname(given string) string {
 	return h
 }
 
-// ── low-level k8s helpers ─────────────────────────────────────────────────────
-
-func ensureNamespace(ctx context.Context, cs kubernetes.Interface, name string) error {
-	_, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-	}, metav1.CreateOptions{})
-	if err != nil && !k8serrors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
-}
-
-func applyClusterRole(ctx context.Context, cs kubernetes.Interface) error {
-	desired := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: bootstrapClusterRoleName},
-		Rules:      nodeClusterRoleRules,
-	}
-	_, err := cs.RbacV1().ClusterRoles().Create(ctx, desired, metav1.CreateOptions{})
-	if err == nil {
-		return nil
-	}
-	if !k8serrors.IsAlreadyExists(err) {
-		return err
-	}
-	existing, err := cs.RbacV1().ClusterRoles().Get(ctx, bootstrapClusterRoleName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	existing.Rules = nodeClusterRoleRules
-	_, err = cs.RbacV1().ClusterRoles().Update(ctx, existing, metav1.UpdateOptions{})
-	return err
-}
-
-func ensureServiceAccount(ctx context.Context, cs kubernetes.Interface, namespace, name string) error {
-	_, err := cs.CoreV1().ServiceAccounts(namespace).Create(ctx, &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-	}, metav1.CreateOptions{})
-	if err != nil && !k8serrors.IsAlreadyExists(err) {
-		return err
-	}
-	return nil
-}
-
-func ensureClusterRoleBinding(ctx context.Context, cs kubernetes.Interface, name, namespace, saName string) error {
-	desired := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: name},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     bootstrapClusterRoleName,
-		},
-		Subjects: []rbacv1.Subject{{
-			Kind:      "ServiceAccount",
-			Name:      saName,
-			Namespace: namespace,
-		}},
-	}
-	_, err := cs.RbacV1().ClusterRoleBindings().Create(ctx, desired, metav1.CreateOptions{})
-	if err == nil {
-		return nil
-	}
-	if !k8serrors.IsAlreadyExists(err) {
-		return err
-	}
-	existing, err := cs.RbacV1().ClusterRoleBindings().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-	existing.RoleRef = desired.RoleRef
-	existing.Subjects = desired.Subjects
-	_, err = cs.RbacV1().ClusterRoleBindings().Update(ctx, existing, metav1.UpdateOptions{})
-	return err
-}
-
 func serverAndCA(cfg *clientcmdapi.Config) (server string, caData []byte, err error) {
 	ctx, ok := cfg.Contexts[cfg.CurrentContext]
 	if !ok {
@@ -468,4 +404,21 @@ func defaultNodeKubeconfigPath() string {
 		return "/usr/local/etc/nodemanager/kubeconfig"
 	}
 	return "/etc/nodemanager/kubeconfig"
+}
+
+// withTypeMeta wraps any struct value with the given apiVersion and kind set,
+// using an anonymous struct so the TypeMeta fields appear at the top level in
+// the marshalled output.
+func withTypeMeta(obj any, apiVersion, kind string) any {
+	type typeMeta struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+	}
+	// Marshal the object to a map, inject TypeMeta, return the merged map.
+	data, _ := json.Marshal(obj)
+	var m map[string]any
+	_ = json.Unmarshal(data, &m)
+	m["apiVersion"] = apiVersion
+	m["kind"] = kind
+	return m
 }

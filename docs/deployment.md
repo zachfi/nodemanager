@@ -6,13 +6,34 @@ in-cluster service account.
 
 ## Bootstrap
 
-Two subcommands handle getting a new node connected to the cluster.
+Three subcommands handle getting a new node connected to the cluster. RBAC
+resources are never applied automatically — they are printed as YAML for you
+to apply through your existing infrastructure management pipeline.
 
-### `nodemanager token` — generate a short-lived bootstrap credential (run from admin machine)
+### Step 1 — `nodemanager rbac` — generate RBAC manifests (apply once per cluster)
 
-Creates all Kubernetes resources for the named node (namespace, ClusterRole,
-ServiceAccount, ClusterRoleBinding) then issues a **short-lived** kubeconfig.
-Hand this to the new host; it expires automatically after the TTL.
+Prints the Kubernetes RBAC objects required for a named node: a Namespace,
+ServiceAccount, ClusterRole, ClusterRoleBinding, and a namespace-scoped Role
+that allows the node to renew its own token (and only its own token).
+
+```sh
+# Review and apply via your pipeline:
+nodemanager rbac --hostname myhost | kubectl apply -f -
+
+# Or capture for jsonnet/gitops:
+nodemanager rbac --hostname myhost > manifests/nodemanager-myhost.yaml
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--hostname` | *(required)* | Target node name. |
+| `--namespace` | `nodemanager` | Namespace for nodemanager objects. |
+
+### Step 2 — `nodemanager token` — generate a short-lived bootstrap credential (run from admin machine)
+
+Issues a **short-lived** kubeconfig for the named node. The RBAC objects from
+step 1 must already exist. Hand this kubeconfig to the new host; it expires
+automatically after the TTL.
 
 ```sh
 # Output to a file, copy to the new host:
@@ -31,11 +52,11 @@ nodemanager token --hostname myhost | ssh myhost \
 | `--ttl` | `1h` | Lifetime of the temporary credential. |
 | `--out` | stdout | Write kubeconfig to this file instead of stdout. |
 
-### `nodemanager bootstrap` — exchange the credential for a long-lived kubeconfig (run on the new host)
+### Step 3 — `nodemanager bootstrap` — exchange the credential for a long-lived kubeconfig (run on the new host)
 
-Uses the bootstrap kubeconfig (short-lived from `token`, or a broad admin
-kubeconfig) to write a permanent node-scoped kubeconfig. Creates any missing
-Kubernetes resources, then requests a long-lived token the node keeps.
+Uses the short-lived kubeconfig from `token` (or any sufficiently-privileged
+kubeconfig) to request a long-lived node-scoped token and write the permanent
+kubeconfig the service uses.
 
 ```sh
 nodemanager bootstrap --bootstrap-kubeconfig /tmp/bootstrap.kubeconfig
@@ -56,7 +77,7 @@ rm /tmp/bootstrap.kubeconfig
 | `--hostname` | `os.Hostname()` | Node name (must match the one used in `token`). |
 | `--token-ttl` | `8760h` | Lifetime of the issued long-lived token. |
 
-Both commands are idempotent — safe to re-run to rotate credentials.
+All three commands are idempotent — safe to re-run to rotate credentials.
 
 ## Binary
 
