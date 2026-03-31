@@ -6,36 +6,57 @@ in-cluster service account.
 
 ## Bootstrap
 
-The `bootstrap` subcommand automates the Kubernetes-side setup for a new node.
-It uses a broad kubeconfig (e.g. copied from another host or a cluster admin) to
-create a node-scoped `ServiceAccount`, `ClusterRoleBinding`, and token, then
-writes a minimal kubeconfig that grants only the permissions the node needs.
+Two subcommands handle getting a new node connected to the cluster.
 
-**On the new host** (after installing the binary):
+### `nodemanager token` — generate a short-lived bootstrap credential (run from admin machine)
+
+Creates all Kubernetes resources for the named node (namespace, ClusterRole,
+ServiceAccount, ClusterRoleBinding) then issues a **short-lived** kubeconfig.
+Hand this to the new host; it expires automatically after the TTL.
 
 ```sh
-# Copy an admin kubeconfig to the host, then:
-nodemanager bootstrap --bootstrap-kubeconfig /tmp/admin.kubeconfig
+# Output to a file, copy to the new host:
+nodemanager token --hostname myhost --out myhost-bootstrap.kubeconfig
 
-# By default the node-scoped kubeconfig is written to:
-#   Linux:   /etc/nodemanager/kubeconfig
-#   FreeBSD: /usr/local/etc/nodemanager/kubeconfig
-
-# Delete the broad credentials once bootstrap completes:
-rm /tmp/admin.kubeconfig
+# Pipe directly over SSH:
+nodemanager token --hostname myhost | ssh myhost \
+  "cat > /tmp/bootstrap.kubeconfig && nodemanager bootstrap --bootstrap-kubeconfig /tmp/bootstrap.kubeconfig"
 ```
-
-**Options:**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--bootstrap-kubeconfig` | *(required)* | Kubeconfig with rights to create RBAC and ServiceAccounts. |
-| `--kubeconfig` | `/etc/nodemanager/kubeconfig` | Where to write the node-scoped kubeconfig. |
+| `--hostname` | *(required)* | Target node name. |
+| `--kubeconfig` | `~/.kube/config` | Admin kubeconfig. |
 | `--namespace` | `nodemanager` | Namespace for nodemanager objects. |
-| `--hostname` | `os.Hostname()` | Node name used to name the ServiceAccount. |
-| `--token-ttl` | `8760h` (1 year) | Lifetime of the issued token. Re-run `bootstrap` to rotate. |
+| `--ttl` | `1h` | Lifetime of the temporary credential. |
+| `--out` | stdout | Write kubeconfig to this file instead of stdout. |
 
-Bootstrap is idempotent — safe to re-run on an existing node to rotate the token.
+### `nodemanager bootstrap` — exchange the credential for a long-lived kubeconfig (run on the new host)
+
+Uses the bootstrap kubeconfig (short-lived from `token`, or a broad admin
+kubeconfig) to write a permanent node-scoped kubeconfig. Creates any missing
+Kubernetes resources, then requests a long-lived token the node keeps.
+
+```sh
+nodemanager bootstrap --bootstrap-kubeconfig /tmp/bootstrap.kubeconfig
+
+# The node-scoped kubeconfig is written to:
+#   Linux:   /etc/nodemanager/kubeconfig
+#   FreeBSD: /usr/local/etc/nodemanager/kubeconfig
+
+# Delete the temporary credential:
+rm /tmp/bootstrap.kubeconfig
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--bootstrap-kubeconfig` | *(required)* | Short-lived or admin kubeconfig. |
+| `--kubeconfig` | `/etc/nodemanager/kubeconfig` | Where to write the permanent kubeconfig. |
+| `--namespace` | `nodemanager` | Namespace for nodemanager objects. |
+| `--hostname` | `os.Hostname()` | Node name (must match the one used in `token`). |
+| `--token-ttl` | `8760h` | Lifetime of the issued long-lived token. |
+
+Both commands are idempotent — safe to re-run to rotate credentials.
 
 ## Binary
 
