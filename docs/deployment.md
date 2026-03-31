@@ -4,6 +4,39 @@ nodemanager is a single statically-linked binary. It runs directly on the host
 it manages, connecting to the Kubernetes API server via a kubeconfig or
 in-cluster service account.
 
+## Bootstrap
+
+The `bootstrap` subcommand automates the Kubernetes-side setup for a new node.
+It uses a broad kubeconfig (e.g. copied from another host or a cluster admin) to
+create a node-scoped `ServiceAccount`, `ClusterRoleBinding`, and token, then
+writes a minimal kubeconfig that grants only the permissions the node needs.
+
+**On the new host** (after installing the binary):
+
+```sh
+# Copy an admin kubeconfig to the host, then:
+nodemanager bootstrap --bootstrap-kubeconfig /tmp/admin.kubeconfig
+
+# By default the node-scoped kubeconfig is written to:
+#   Linux:   /etc/nodemanager/kubeconfig
+#   FreeBSD: /usr/local/etc/nodemanager/kubeconfig
+
+# Delete the broad credentials once bootstrap completes:
+rm /tmp/admin.kubeconfig
+```
+
+**Options:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--bootstrap-kubeconfig` | *(required)* | Kubeconfig with rights to create RBAC and ServiceAccounts. |
+| `--kubeconfig` | `/etc/nodemanager/kubeconfig` | Where to write the node-scoped kubeconfig. |
+| `--namespace` | `nodemanager` | Namespace for nodemanager objects. |
+| `--hostname` | `os.Hostname()` | Node name used to name the ServiceAccount. |
+| `--token-ttl` | `8760h` (1 year) | Lifetime of the issued token. Re-run `bootstrap` to rotate. |
+
+Bootstrap is idempotent — safe to re-run on an existing node to rotate the token.
+
 ## Binary
 
 Download the latest release binary for your platform from the
@@ -70,24 +103,9 @@ service nodemanager start
 
 ## Kubeconfig
 
-nodemanager needs read access to `ConfigSet` objects and full access to
-`ManagedNode` objects in its namespace. A minimal kubeconfig for an
-off-cluster node should reference a `ServiceAccount` token with a bound
-`ClusterRole`:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: nodemanager
-rules:
-  - apiGroups: ["common.nodemanager"]
-    resources: ["configsets"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["common.nodemanager"]
-    resources: ["managednodes", "managednodes/status"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-```
+`nodemanager bootstrap` handles kubeconfig creation automatically. For manual
+setup, the required `ClusterRole` is defined in
+[`config/rbac/node-role.yaml`](https://github.com/zachfi/nodemanager/blob/main/config/rbac/node-role.yaml).
 
 ## Namespace
 

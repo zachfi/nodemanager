@@ -93,6 +93,11 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
+		runBootstrap(os.Args[2:])
+		return
+	}
+
 	cfg, configVerify, err := loadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed parsing config: %v\n", err)

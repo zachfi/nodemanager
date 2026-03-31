@@ -1,0 +1,38 @@
+# ClusterRole for bare-metal nodemanager agents running off-cluster.
+#
+# This role is applied automatically by `nodemanager bootstrap`. Keep it in
+# sync with nodeClusterRoleRules in cmd/bootstrap.go.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nodemanager-node
+rules:
+  # ConfigSets: read-only
+  - apiGroups: ["common.nodemanager"]
+    resources: ["configsets"]
+    verbs: ["get", "list", "watch"]
+
+  # ManagedNodes: write own node + status
+  - apiGroups: ["common.nodemanager"]
+    resources: ["managednodes", "managednodes/status", "managednodes/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+  # Secrets: read SecretRefs in ConfigSets; create WireGuard key secrets
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
+
+  # ConfigMaps: read ConfigMapRefs in ConfigSets
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+
+  # Leases: distributed locking for upgrade groups and jail update groups
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Jails: FreeBSD jail CRDs (no-op on Linux nodes — no controller runs)
+  - apiGroups: ["freebsd.nodemanager"]
+    resources: ["jails", "jails/status", "jails/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
