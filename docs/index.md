@@ -1,27 +1,59 @@
 # nodemanager
 
-nodemanager is a controller that uses Kubernetes CRDs as a unified configuration
-source to manage OS packages, files, and services on any node — not just
-Kubernetes nodes. The controller can run in-cluster or off-cluster (directly on
-a bare-metal or VM host), treating Kubernetes as the configuration plane rather
-than a container orchestration target.
+nodemanager manages OS-level configuration — packages, files, services — using
+Kubernetes CRDs as the configuration source. A small controller binary runs
+directly on each host (bare-metal, VM, or container) and continuously
+reconciles the host against the desired state declared in the cluster.
+
+The key idea: **Kubernetes as the configuration plane, not the container
+orchestration target.** You do not need to run workloads on Kubernetes to
+benefit from it. You only need a cluster to act as the shared configuration
+store, and nodemanager running on each host to apply it.
+
+## Why nodemanager?
+
+Most configuration management tools (Ansible, Salt, Puppet) are push-based
+and require a separate control plane, inventory, and authentication model.
+nodemanager reuses the Kubernetes API you likely already have, gains all of the
+audit, RBAC, and GitOps properties of Kubernetes resources for free, and
+eliminates the need for SSH access to push configuration.
+
+- **Pull-based** — each node connects to the cluster and reconciles its own
+  state. No push, no SSH, no agent callbacks.
+- **Declarative and idempotent** — reconciliation runs continuously; the node
+  always converges to the declared state.
+- **Label-driven** — `ConfigSet` objects are matched to nodes via label
+  selectors, the same mechanism Kubernetes uses everywhere else.
+- **Off-cluster nodes are first-class** — a node does not need to be a
+  Kubernetes worker. Any host that can reach the API server can be managed.
+- **GitOps-ready** — `ConfigSet` and `ManagedNode` objects live in Git and are
+  applied to the cluster like any other resource.
 
 ## How it works
 
-Each running controller creates and owns a `ManagedNode` object for the local
-hostname. `ConfigSet` objects declare desired state (packages, files, services,
-executions) and are matched to nodes via label selectors. When a `ConfigSet`'s
-labels match the local `ManagedNode`, the controller reconciles its contents
-onto the node.
+```
+┌─────────────────────────────┐
+│        Kubernetes           │
+│                             │
+│  ConfigSet (label selector) │◄── desired state (git / kubectl)
+│  ManagedNode  (per host)    │──► observed state (status)
+└──────────┬──────────────────┘
+           │ watch + reconcile
+    ┌──────▼──────┐   ┌─────────────┐   ┌─────────────┐
+    │  myhost     │   │  db01       │   │  web01      │
+    │  nodemanager│   │  nodemanager│   │  nodemanager│
+    └─────────────┘   └─────────────┘   └─────────────┘
+```
 
-Files can carry template content rendered via [gomplate](https://docs.gomplate.ca/),
-with data sourced from Kubernetes Secrets and ConfigMaps. Services and
-executions can subscribe to file changes and will restart or re-run when a
-subscribed file is modified.
+Each running controller:
 
-Scheduled upgrades are supported via a cron expression on the `ManagedNode`,
-with optional distributed locking so only one node in a group upgrades at a
-time.
+1. Creates and owns a `ManagedNode` object for its hostname.
+2. Labels the `ManagedNode` with OS, architecture, and any custom labels.
+3. Watches all `ConfigSet` objects whose labels match the local `ManagedNode`.
+4. Reconciles packages, files, services, and executions declared in matching
+   `ConfigSet`s onto the host.
+5. Publishes observed state (OS release, network interfaces, SSH host keys,
+   WireGuard keys) back to the `ManagedNode` status.
 
 ## Supported platforms
 
@@ -31,22 +63,21 @@ time.
 | Alpine Linux | apk | systemd |
 | FreeBSD | pkgng | rc.d |
 
-Build targets: `linux/amd64`, `linux/arm64`, `linux/arm`, `freebsd/amd64`, `freebsd/arm64`.
-
-## Prerequisites
-
-- Go v1.24+
-- kubectl v1.11.3+
-- Access to a Kubernetes cluster
+Build targets: `linux/amd64`, `linux/arm64`, `linux/arm`, `freebsd/amd64`,
+`freebsd/arm64`.
 
 ## Quick start
 
 ```sh
-# Install CRDs
+# Install CRDs into the cluster
 make install
 
-# Run the controller locally against the current kubeconfig context
+# Run the controller against the current kubeconfig context (development)
 make run
 ```
 
-See the [API reference](api/configset.md) for `ConfigSet` and `ManagedNode` field details.
+For running nodemanager as a long-lived service on a real host, see the
+[deployment guide](deployment.md).
+
+For a practical introduction to declaring configuration, see the
+[getting started guide](getting-started.md).
