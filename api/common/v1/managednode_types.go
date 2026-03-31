@@ -48,11 +48,23 @@ type ConfigSetApplyStatus struct {
 	Error           string      `json:"error,omitempty"`
 }
 
+// SSHHostKey holds the SSHFP record fields for one SSH host key, ready for
+// direct insertion into a DNS zone as an SSHFP record (RFC 4255).
+type SSHHostKey struct {
+	// Algorithm is the SSHFP algorithm number: 1=RSA, 2=DSA, 3=ECDSA, 4=Ed25519.
+	Algorithm int `json:"algorithm"`
+	// FingerprintType is the SSHFP fingerprint type: 1=SHA-1, 2=SHA-256.
+	FingerprintType int `json:"fingerprintType"`
+	// Fingerprint is the hex-encoded hash of the public key.
+	Fingerprint string `json:"fingerprint"`
+}
+
 // ManagedNodeStatus defines the observed state of ManagedNode
 type ManagedNodeStatus struct {
-	Release    string                      `json:"release,omitempty"`
-	Interfaces map[string]NetworkInterface `json:"interfaces,omitempty"`
-	ConfigSets []ConfigSetApplyStatus      `json:"configsets,omitempty"`
+	Release     string                      `json:"release,omitempty"`
+	Interfaces  map[string]NetworkInterface `json:"interfaces,omitempty"`
+	ConfigSets  []ConfigSetApplyStatus      `json:"configsets,omitempty"`
+	SSHHostKeys []SSHHostKey                `json:"sshHostKeys,omitempty"`
 }
 
 //+kubebuilder:object:root=true

@@ -91,6 +91,30 @@ spec:
                 type: object
               release:
                 type: string
+              sshHostKeys:
+                items:
+                  description: |-
+                    SSHHostKey holds the SSHFP record fields for one SSH host key, ready for
+                    direct insertion into a DNS zone as an SSHFP record (RFC 4255).
+                  properties:
+                    algorithm:
+                      description: 'Algorithm is the SSHFP algorithm number: 1=RSA,
+                        2=DSA, 3=ECDSA, 4=Ed25519.'
+                      type: integer
+                    fingerprint:
+                      description: Fingerprint is the hex-encoded hash of the public
+                        key.
+                      type: string
+                    fingerprintType:
+                      description: 'FingerprintType is the SSHFP fingerprint type:
+                        1=SHA-1, 2=SHA-256.'
+                      type: integer
+                  required:
+                  - algorithm
+                  - fingerprint
+                  - fingerprintType
+                  type: object
+                type: array
             type: object
         type: object
     served: true

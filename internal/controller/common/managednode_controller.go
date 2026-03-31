@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorhill/cronexpr"
@@ -209,6 +211,7 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 	info := r.system.Node().Info(ctx)
 	node.Status.Release = info.OS.Release
 	node.Status.Interfaces = collectNetworkInterfaces()
+	node.Status.SSHHostKeys = collectSSHHostKeys(ctx, r.system.Exec(), node.Name)
 
 	r.logger.Info("updating node status", "node", node.Name, "release", node.Status.Release)
 
@@ -270,6 +273,42 @@ func collectNetworkInterfaces() map[string]commonv1.NetworkInterface {
 		return nil
 	}
 	return result
+}
+
+// collectSSHHostKeys runs ssh-keygen -r <hostname> and parses the SSHFP
+// record lines it emits. Each line has the form:
+//
+//	<hostname> IN SSHFP <algorithm> <fp-type> <fingerprint-hex>
+//
+// Returns nil if ssh-keygen is unavailable or produces no output.
+func collectSSHHostKeys(ctx context.Context, exec handler.ExecHandler, hostname string) []commonv1.SSHHostKey {
+	out, _, err := exec.RunCommand(ctx, "ssh-keygen", "-r", hostname)
+	if err != nil || strings.TrimSpace(out) == "" {
+		return nil
+	}
+
+	var keys []commonv1.SSHHostKey
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		// Expected: <name> IN SSHFP <alg> <fp-type> <fingerprint>
+		if len(fields) != 6 || fields[2] != "SSHFP" {
+			continue
+		}
+		alg, err := strconv.Atoi(fields[3])
+		if err != nil {
+			continue
+		}
+		fpType, err := strconv.Atoi(fields[4])
+		if err != nil {
+			continue
+		}
+		keys = append(keys, commonv1.SSHHostKey{
+			Algorithm:       alg,
+			FingerprintType: fpType,
+			Fingerprint:     fields[5],
+		})
+	}
+	return keys
 }
 
 func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv1.ManagedNode) (time.Time, error) {
