@@ -543,6 +543,7 @@ func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet [
 func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string, file commonv1.File, node commonv1.ManagedNode) (data Data, err error) {
 	var nodeData NodeData
 	nodeData.Labels = node.Labels
+	nodeData.Status = node.Status
 
 	secrets := map[string][]byte{}
 	for _, s := range file.SecretRefs {
@@ -582,6 +583,19 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string,
 	nodeData.ConfigMaps = configMaps
 
 	data.Node = nodeData
+
+	// Collect all ManagedNodes so templates can generate per-peer config.
+	var allNodes commonv1.ManagedNodeList
+	if err := r.List(ctx, &allNodes, client.InNamespace(namespace)); err != nil {
+		return Data{}, fmt.Errorf("listing ManagedNodes: %w", err)
+	}
+	for _, n := range allNodes.Items {
+		data.Nodes = append(data.Nodes, NodeInfo{
+			Name:   n.Name,
+			Labels: n.Labels,
+			Status: n.Status,
+		})
+	}
 
 	return data, nil
 }

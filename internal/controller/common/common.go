@@ -21,10 +21,21 @@ type NodeData struct {
 	Labels     map[string]string
 	ConfigMaps map[string]string
 	Secrets    map[string][]byte
+	Status     commonv1.ManagedNodeStatus
+}
+
+// NodeInfo carries the identity and observed state of a single ManagedNode,
+// available to templates via the Nodes field so they can generate per-peer
+// configuration (e.g. WireGuard peers, SSHFP records).
+type NodeInfo struct {
+	Name   string
+	Labels map[string]string
+	Status commonv1.ManagedNodeStatus
 }
 
 type Data struct {
-	Node NodeData
+	Node  NodeData
+	Nodes []NodeInfo
 }
 
 var poudriereLabelGate map[string]string = map[string]string{"poudriere.freebsd.nodemanager/builder": "true"}
