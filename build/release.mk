@@ -24,4 +24,8 @@ snapshot: release-clean
 	@echo "=== $(PROJECT_NAME) === [ snapshot         ]:   THIS WILL NOT BE PUBLISHED!"
 	$(REL_CMD) --skip=publish --snapshot
 
-.PHONY: release release-clean release-publish snapshot
+release-downstream: ## Propagate the current tag to nodemanager-bin, aur, and jsonnet-libs
+	@echo "=== $(PROJECT_NAME) === [ release-downstream ]: Updating downstream repos"
+	./tools/release-downstream.sh
+
+.PHONY: release release-clean release-publish snapshot release-downstream

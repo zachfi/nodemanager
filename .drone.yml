@@ -18,7 +18,6 @@ trigger:
   - refs/heads/main
   - refs/heads/dependabot/**
   - refs/tags/v*
-  - refs/pull/**
 ---
 depends_on: []
 kind: pipeline
@@ -52,7 +51,23 @@ trigger:
   ref:
   - refs/tags/v*
 ---
-kind: signature
-hmac: ec82ac5a693ba90a3d861356bffe2568429f4c70c6882f031b89b5bac92a6ea3
-
-...
+depends_on:
+- release
+kind: pipeline
+name: downstream
+steps:
+- commands:
+  - make release-downstream
+  environment:
+    CI: "true"
+    GITHUB_TOKEN:
+      from_secret: GITHUB_TOKEN
+  image: reg.dist.svc.cluster.znet:5000/zachfi/tools
+  name: release-downstream
+  pull: always
+  when:
+    ref:
+    - refs/tags/v*
+trigger:
+  ref:
+  - refs/tags/v*

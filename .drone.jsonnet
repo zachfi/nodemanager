@@ -66,6 +66,12 @@ local withGithub() = {
   },
 };
 
+local withCI() = {
+  environment+: {
+    CI: 'true',
+  },
+};
+
 [
   (
     pipeline('ci') {
@@ -92,6 +98,19 @@ local withGithub() = {
         [
           make('release')
           + withGithub()
+          + withTags(),
+        ],
+    }
+  ),
+  (
+    pipeline('downstream')
+    + withPipelineTags()
+    + { depends_on: ['release'] } {
+      steps:
+        [
+          make('release-downstream')
+          + withGithub()
+          + withCI()
           + withTags(),
         ],
     }
