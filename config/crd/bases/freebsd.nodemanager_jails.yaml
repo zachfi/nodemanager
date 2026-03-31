@@ -96,6 +96,11 @@ spec:
                   delay:
                     description: Delay is the minimum time between updates (e.g. "24h").
                     type: string
+                  group:
+                    description: |-
+                      Group is a lease group name.  Only one jail in the group will run
+                      freebsd-update at a time, preventing concurrent disruption across hosts.
+                    type: string
                   schedule:
                     description: Schedule is a cron expression for when updates should
                       run.

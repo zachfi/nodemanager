@@ -241,10 +241,6 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName str
 
 	handler := r.system.Package()
 
-	currentlyInstalled := func(packages []string, pkg string) bool {
-		return slices.Contains(packages, pkg)
-	}
-
 	pkgs, err := handler.List(ctx)
 	if err != nil {
 		return err
@@ -253,8 +249,10 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName str
 	for _, pkg := range packageSet {
 		switch packages.PackageEnsureFromString(pkg.Ensure) {
 		case packages.Installed:
-			if !currentlyInstalled(pkgs, pkg.Name) {
-				err := handler.Install(ctx, pkg.Name)
+			installedVersion, installed := pkgs[pkg.Name]
+			needsInstall := !installed || (pkg.Version != "" && installedVersion != pkg.Version)
+			if needsInstall {
+				err := handler.Install(ctx, pkg.Name, pkg.Version)
 				result := "success"
 				if err != nil {
 					result = "error"
@@ -265,7 +263,7 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName str
 				}
 			}
 		case packages.Absent:
-			if currentlyInstalled(pkgs, pkg.Name) {
+			if _, installed := pkgs[pkg.Name]; installed {
 				r.logger.Info("removing package", "name", pkg.Name)
 				err := handler.Remove(ctx, pkg.Name)
 				result := "success"

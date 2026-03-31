@@ -29,7 +29,7 @@ func New(logger *slog.Logger, exec handler.ExecHandler) handler.PackageHandler {
 	}
 }
 
-func (h *Pkgng) Install(ctx context.Context, name string) error {
+func (h *Pkgng) Install(ctx context.Context, name, version string) error {
 	_, span := tracer.Start(ctx, "Install")
 	defer span.End()
 
@@ -40,16 +40,22 @@ func (h *Pkgng) Install(ctx context.Context, name string) error {
 		return errors.Wrap(err, "failed to list packages")
 	}
 
-	for _, p := range pkgs {
-		if p == name {
+	if installedVersion, ok := pkgs[name]; ok {
+		if version == "" || installedVersion == version {
 			return nil
 		}
 	}
 
-	span.SetAttributes(attribute.Bool("install", true))
-	h.logger.Info("installing package", "name", name)
+	// pkgng identifies exact versions as "name-version"
+	target := name
+	if version != "" {
+		target = name + "-" + version
+	}
 
-	return h.exec.SimpleRunCommand(ctx, pkg, "install", "-qy", name)
+	span.SetAttributes(attribute.Bool("install", true))
+	h.logger.Info("installing package", "name", name, "version", version)
+
+	return h.exec.SimpleRunCommand(ctx, pkg, "install", "-qy", target)
 }
 
 func (h *Pkgng) Remove(ctx context.Context, name string) error {
@@ -60,15 +66,21 @@ func (h *Pkgng) Remove(ctx context.Context, name string) error {
 	return h.exec.SimpleRunCommand(ctx, pkg, "remove", "-qy", name)
 }
 
-func (h *Pkgng) List(ctx context.Context) ([]string, error) {
+func (h *Pkgng) List(ctx context.Context) (map[string]string, error) {
 	_, span := tracer.Start(ctx, "List")
 	defer span.End()
-	output, _, err := h.exec.RunCommand(ctx, pkg, "query", "-a", "%n")
+	output, _, err := h.exec.RunCommand(ctx, pkg, "query", "-a", "%n %v")
 	if err != nil {
-		return []string{}, err
+		return nil, err
 	}
 
-	packages := strings.Split(output, "\n")
+	packages := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		parts := strings.Fields(line)
+		if len(parts) == 2 {
+			packages[parts[0]] = parts[1]
+		}
+	}
 
 	return packages, nil
 }

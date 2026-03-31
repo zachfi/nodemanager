@@ -30,12 +30,17 @@ func New(logger *slog.Logger, exec handler.ExecHandler) handler.PackageHandler {
 	}
 }
 
-func (h *Pacman) Install(ctx context.Context, name string) error {
+func (h *Pacman) Install(ctx context.Context, name, version string) error {
 	_, span := tracer.Start(ctx, "Install")
 	defer span.End()
 
-	h.logger.Info("installing package", "name", name)
-	return h.exec.SimpleRunCommand(ctx, pacman, "-Sy", "--needed", "--noconfirm", name)
+	pkg := name
+	if version != "" {
+		pkg = name + "=" + version
+	}
+
+	h.logger.Info("installing package", "name", name, "version", version)
+	return h.exec.SimpleRunCommand(ctx, pacman, "-Sy", "--needed", "--noconfirm", pkg)
 }
 
 func (h *Pacman) Remove(ctx context.Context, name string) error {
@@ -44,15 +49,15 @@ func (h *Pacman) Remove(ctx context.Context, name string) error {
 	return h.exec.SimpleRunCommand(ctx, pacman, "-Rcs", "--noconfirm", name)
 }
 
-func (h *Pacman) List(ctx context.Context) ([]string, error) {
+func (h *Pacman) List(ctx context.Context) (map[string]string, error) {
 	_, span := tracer.Start(ctx, "List")
 	defer span.End()
 	output, _, err := h.exec.RunCommand(ctx, pacman, "-Q")
 	if err != nil {
-		return []string{}, err
+		return nil, err
 	}
 
-	var packages []string
+	packages := make(map[string]string)
 
 	reader := bytes.NewReader([]byte(output))
 	scanner := bufio.NewScanner(reader)
@@ -60,9 +65,9 @@ func (h *Pacman) List(ctx context.Context) ([]string, error) {
 		line := scanner.Text()
 		parts := strings.Fields(line)
 		if len(parts) != 2 {
-			return []string{}, fmt.Errorf("unknown output")
+			return nil, fmt.Errorf("unknown output")
 		}
-		packages = append(packages, parts[0])
+		packages[parts[0]] = parts[1]
 	}
 
 	return packages, nil

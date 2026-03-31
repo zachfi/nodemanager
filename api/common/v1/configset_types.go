@@ -29,8 +29,9 @@ type ConfigSetSpec struct {
 }
 
 type Package struct {
-	Ensure string `json:"ensure,omitempty"`
-	Name   string `json:"name,omitempty"`
+	Ensure  string `json:"ensure,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 type Service struct {

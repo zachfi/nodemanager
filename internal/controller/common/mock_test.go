@@ -154,11 +154,11 @@ func (m *mockServiceHandler) SetArguments(ctx context.Context, service, args str
 type mockPackageHandler struct {
 	installCalls map[string]int
 	removeCalls  map[string]int
-	packageList  []string
+	packageList  map[string]string
 	upgradeCalls int
 }
 
-func (m *mockPackageHandler) Install(ctx context.Context, pkg string) error {
+func (m *mockPackageHandler) Install(ctx context.Context, pkg, version string) error {
 	if m.installCalls == nil {
 		m.installCalls = make(map[string]int)
 	}
@@ -171,9 +171,9 @@ func (m *mockPackageHandler) Remove(ctx context.Context, pkg string) error {
 	return nil // Simulate successful uninstallation
 }
 
-func (m *mockPackageHandler) List(ctx context.Context) ([]string, error) {
+func (m *mockPackageHandler) List(ctx context.Context) (map[string]string, error) {
 	if m.packageList == nil {
-		m.packageList = []string{"pkg1", "pkg2", "pkg3"} // Simulate a list of installed packages
+		m.packageList = map[string]string{"pkg1": "", "pkg2": "", "pkg3": ""}
 	}
 	return m.packageList, nil // Return the simulated package list
 }
