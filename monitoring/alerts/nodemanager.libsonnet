@@ -129,6 +129,30 @@
       },
     },
 
+    // ── File drift metrics ───────────────────────────────────────────────────
+
+    {
+      alert: 'NodeManagerFileDrift',
+      // Fires when file changes are occurring continuously, indicating that
+      // the rendered content never stabilises (e.g. non-deterministic template
+      // output) and services are being restarted on every reconcile.
+      expr: |||
+        rate(nodemanager_file_changes_total{result="success"}[5m]) > 0
+      |||,
+      'for': '20m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'Perpetual file drift on node {{ $labels.node }} for ConfigSet {{ $labels.configset }}.',
+        description: |||
+          Files managed by ConfigSet {{ $labels.configset }} on node {{ $labels.node }}
+          have been continuously changing for more than 20 minutes.
+          This typically means template output is non-deterministic (e.g. unsorted
+          node list) causing a hash mismatch and service restart every reconcile.
+          Check the rendered template output for ordering instability.
+        |||,
+      },
+    },
+
     // ── Package operation metrics ────────────────────────────────────────────
 
     {

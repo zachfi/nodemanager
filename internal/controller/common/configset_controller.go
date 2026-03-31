@@ -17,6 +17,7 @@ package common
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -644,6 +645,9 @@ func (r *ConfigSetReconciler) collectData(ctx context.Context, namespace string,
 			Status: n.Status,
 		})
 	}
+	slices.SortFunc(data.Nodes, func(a, b NodeInfo) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
 
 	return data, nil
 }
@@ -719,9 +723,11 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv
 		return true, fmt.Errorf("failed to chown file: %w", err)
 	}
 
-	modeChanged, err = handler.SetMode(ctx, file.Path, file.Mode)
-	if err != nil {
-		return true, fmt.Errorf("failed to set file mode: %w", err)
+	if file.Mode != "" {
+		modeChanged, err = handler.SetMode(ctx, file.Path, file.Mode)
+		if err != nil {
+			return true, fmt.Errorf("failed to set file mode: %w", err)
+		}
 	}
 
 	return contentChanged || ownerChanged || modeChanged, nil
