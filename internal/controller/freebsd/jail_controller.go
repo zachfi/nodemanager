@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,6 +39,7 @@ import (
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/jail"
+	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
 const jailFinalizer = "freebsd.nodemanager/finalizer"
@@ -52,11 +54,12 @@ type JailReconciler struct {
 	system   handler.System
 	cfg      JailConfig
 	hostname string
+	locker   locker.Locker
 
 	manager jail.Manager
 }
 
-func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System) (*JailReconciler, error) {
+func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System, lkr locker.Locker) (*JailReconciler, error) {
 	hostname, err := system.Node().Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("getting local hostname: %w", err)
@@ -75,6 +78,7 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 		system:   system,
 		cfg:      cfg,
 		hostname: hostname,
+		locker:   lkr,
 		manager:  manager,
 	}, nil
 }
@@ -217,6 +221,19 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	const forgiveness = time.Minute
 	next := cron.Next(time.Now().Add(-forgiveness))
 
+	var lockReq types.NamespacedName
+	if j.Spec.Update.Group != "" {
+		lockReq = types.NamespacedName{Name: j.Spec.Update.Group, Namespace: j.Namespace}
+
+		// If we hold the lock, we've just finished an update — release and requeue.
+		if r.locker.Locked(ctx, lockReq) {
+			if err := r.locker.Unlock(ctx, lockReq); err != nil {
+				r.logger.Warn("failed to release jail update lock", "lease", lockReq, "err", err)
+			}
+			return next, nil
+		}
+	}
+
 	// Check last update time from annotation.
 	if last, ok := j.Annotations[jail.AnnotationLastUpdate]; ok {
 		t, err := time.Parse(time.RFC3339, last)
@@ -235,6 +252,12 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 
 	r.logger.Info("running freebsd-update", "jail", j.Name)
+
+	if j.Spec.Update.Group != "" {
+		if err := r.locker.Lock(ctx, lockReq); err != nil {
+			return time.Time{}, fmt.Errorf("acquiring jail update lock for %s: %w", j.Name, err)
+		}
+	}
 
 	if err := r.manager.StopJail(ctx, j.Name); err != nil {
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "stop", "error").Inc()

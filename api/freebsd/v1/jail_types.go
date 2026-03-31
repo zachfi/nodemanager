@@ -29,6 +29,9 @@ type JailUpdate struct {
 	Schedule string `json:"schedule,omitempty"`
 	// Delay is the minimum time between updates (e.g. "24h").
 	Delay string `json:"delay,omitempty"`
+	// Group is a lease group name.  Only one jail in the group will run
+	// freebsd-update at a time, preventing concurrent disruption across hosts.
+	Group string `json:"group,omitempty"`
 }
 
 // JailSpec defines the desired state of Jail.
