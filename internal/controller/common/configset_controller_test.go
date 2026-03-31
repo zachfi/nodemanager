@@ -93,8 +93,9 @@ var _ = Describe("ConfigSet Controller", func() {
 			}
 
 			By("checking ManagedNode status records conflicts for both ConfigSets")
+			osHostname, _ := os.Hostname()
 			mn := &commonv1.ManagedNode{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: hostname, Namespace: "default"}, mn)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: osHostname, Namespace: "default"}, mn)).To(Succeed())
 			for _, name := range []string{csA, csB} {
 				var found *commonv1.ConfigSetApplyStatus
 				for i := range mn.Status.ConfigSets {
@@ -191,8 +192,9 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			By("checking ManagedNode status has no conflicts for the matching ConfigSet")
+			osHostname, _ := os.Hostname()
 			mn := &commonv1.ManagedNode{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: hostname, Namespace: "default"}, mn)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: osHostname, Namespace: "default"}, mn)).To(Succeed())
 			for _, entry := range mn.Status.ConfigSets {
 				if entry.Name == csMatch {
 					Expect(entry.Conflicts).To(BeEmpty())

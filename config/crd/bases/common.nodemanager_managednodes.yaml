@@ -78,9 +78,10 @@ spec:
                     outcome for a ConfigSet on this node.
                   properties:
                     conflicts:
-                      description: Conflicts lists resources claimed by both this ConfigSet
-                        and another matching ConfigSet. When non-empty, this ConfigSet
-                        was not applied.
+                      description: |-
+                        Conflicts lists resources claimed by both this ConfigSet and another matching
+                        ConfigSet, e.g. ["file:/etc/nginx/nginx.conf (also in configset \"web-base\")"].
+                        When non-empty, this ConfigSet was not applied on this reconcile.
                       items:
                         type: string
                       type: array

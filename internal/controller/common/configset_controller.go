@@ -146,17 +146,19 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	applyStart := time.Now()
 
-	var changedFiles []string
-	err = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
-	if err == nil {
-		changedFiles, err = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
-	}
-	if err == nil {
-		err = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
-	}
-	if err == nil {
-		err = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
-	}
+	var (
+		changedFiles []string
+		pkgErr       error
+		fileErr      error
+		svcErr       error
+		execErr      error
+	)
+
+	pkgErr = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
+	changedFiles, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
+	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
+	execErr = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
+	err = errors.Join(pkgErr, fileErr, svcErr, execErr)
 
 	applyResult := "success"
 	if err != nil {
@@ -324,6 +326,7 @@ func (r *ConfigSetReconciler) detectConflicts(ctx context.Context, cs *commonv1.
 	// Build resource inventory from all OTHER ConfigSets that match this node.
 	claimedFiles := make(map[string]string)    // path → owning configset name
 	claimedServices := make(map[string]string) // name → owning configset name
+	claimedPackages := make(map[string]string) // name → owning configset name
 
 	for _, other := range all.Items {
 		if other.Name == cs.Name {
@@ -338,6 +341,9 @@ func (r *ConfigSetReconciler) detectConflicts(ctx context.Context, cs *commonv1.
 		for _, s := range other.Spec.Services {
 			claimedServices[s.Name] = other.Name
 		}
+		for _, p := range other.Spec.Packages {
+			claimedPackages[p.Name] = other.Name
+		}
 	}
 
 	var conflicts []string
@@ -349,6 +355,11 @@ func (r *ConfigSetReconciler) detectConflicts(ctx context.Context, cs *commonv1.
 	for _, s := range cs.Spec.Services {
 		if owner, ok := claimedServices[s.Name]; ok {
 			conflicts = append(conflicts, fmt.Sprintf("service:%s (also in configset %q)", s.Name, owner))
+		}
+	}
+	for _, p := range cs.Spec.Packages {
+		if owner, ok := claimedPackages[p.Name]; ok {
+			conflicts = append(conflicts, fmt.Sprintf("package:%s (also in configset %q)", p.Name, owner))
 		}
 	}
 
@@ -366,41 +377,38 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName str
 		return err
 	}
 
+	var errs []error
 	for _, pkg := range packageSet {
 		switch packages.PackageEnsureFromString(pkg.Ensure) {
 		case packages.Installed:
 			installedVersion, installed := pkgs[pkg.Name]
 			needsInstall := !installed || (pkg.Version != "" && installedVersion != pkg.Version)
 			if needsInstall {
-				err := handler.Install(ctx, pkg.Name, pkg.Version)
+				installErr := handler.Install(ctx, pkg.Name, pkg.Version)
 				result := "success"
-				if err != nil {
+				if installErr != nil {
 					result = "error"
+					errs = append(errs, installErr)
 				}
 				packageOperationsTotal.WithLabelValues(nodeName, "install", result).Inc()
-				if err != nil {
-					return err
-				}
 			}
 		case packages.Absent:
 			if _, installed := pkgs[pkg.Name]; installed {
 				r.logger.Info("removing package", "name", pkg.Name)
-				err := handler.Remove(ctx, pkg.Name)
+				removeErr := handler.Remove(ctx, pkg.Name)
 				result := "success"
-				if err != nil {
+				if removeErr != nil {
 					result = "error"
+					errs = append(errs, removeErr)
 				}
 				packageOperationsTotal.WithLabelValues(nodeName, "remove", result).Inc()
-				if err != nil {
-					return err
-				}
 			}
 		default:
-			return fmt.Errorf("unhandled Ensure value %q for package %q", pkg.Ensure, pkg.Name)
+			errs = append(errs, fmt.Errorf("unhandled Ensure value %q for package %q", pkg.Ensure, pkg.Name))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (r *ConfigSetReconciler) WithTracer(tracer trace.Tracer) {
@@ -451,31 +459,26 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		svcCtx := serviceContext(ctx, svc.User)
 
 		if svc.Enable {
-			err := handler.Enable(svcCtx, svc.Name)
+			enableErr := handler.Enable(svcCtx, svc.Name)
 			result := "success"
-			if err != nil {
+			if enableErr != nil {
 				result = "error"
+				errs = append(errs, fmt.Errorf("failed to enable service %q: %w", svc.Name, enableErr))
 			}
 			serviceOperationsTotal.WithLabelValues(nodeName, "enable", result).Inc()
-			if err != nil {
-				return fmt.Errorf("failed to enable service: %w", err)
-			}
 		} else {
-			err := handler.Disable(svcCtx, svc.Name)
+			disableErr := handler.Disable(svcCtx, svc.Name)
 			result := "success"
-			if err != nil {
+			if disableErr != nil {
 				result = "error"
+				errs = append(errs, fmt.Errorf("failed to disable service %q: %w", svc.Name, disableErr))
 			}
 			serviceOperationsTotal.WithLabelValues(nodeName, "disable", result).Inc()
-			if err != nil {
-				return fmt.Errorf("failed to disable service: %w", err)
-			}
 		}
 
 		if svc.Arguments != "" {
-			err := handler.SetArguments(svcCtx, svc.Name, svc.Arguments)
-			if err != nil {
-				return fmt.Errorf("failed to set service arguments: %w", err)
+			if argsErr := handler.SetArguments(svcCtx, svc.Name, svc.Arguments); argsErr != nil {
+				errs = append(errs, fmt.Errorf("failed to set service arguments for %q: %w", svc.Name, argsErr))
 			}
 		}
 
@@ -485,27 +488,23 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		switch services.ServiceStatusFromString(svc.Ensure) {
 		case services.Running:
 			if status != services.Running {
-				err := handler.Start(svcCtx, svc.Name)
+				startErr := handler.Start(svcCtx, svc.Name)
 				result := "success"
-				if err != nil {
+				if startErr != nil {
 					result = "error"
+					errs = append(errs, fmt.Errorf("failed to start service %q: %w", svc.Name, startErr))
 				}
 				serviceOperationsTotal.WithLabelValues(nodeName, "start", result).Inc()
-				if err != nil {
-					return fmt.Errorf("failed to start service: %w", err)
-				}
 			}
 		case services.Stopped:
 			if status != services.Stopped {
-				err := handler.Stop(svcCtx, svc.Name)
+				stopErr := handler.Stop(svcCtx, svc.Name)
 				result := "success"
-				if err != nil {
+				if stopErr != nil {
 					result = "error"
+					errs = append(errs, fmt.Errorf("failed to stop service %q: %w", svc.Name, stopErr))
 				}
 				serviceOperationsTotal.WithLabelValues(nodeName, "stop", result).Inc()
-				if err != nil {
-					return fmt.Errorf("failed to stop service: %w", err)
-				}
 			}
 		}
 	}
@@ -573,20 +572,23 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 	handler := r.system.File()
 
 	changedFiles := make([]string, 0, len(fileSet))
+	var errs []error
 
 	for _, file := range fileSet {
 		switch files.FileEnsureFromString(file.Ensure) {
 		case files.File:
 			// If we have a template, let's set the content based on the rendered template.
 			if file.Template != "" {
-				data, err := r.collectData(ctx, namespace, file, node)
-				if err != nil {
-					return changedFiles, err
+				data, dataErr := r.collectData(ctx, namespace, file, node)
+				if dataErr != nil {
+					errs = append(errs, dataErr)
+					continue
 				}
 
-				content, err := r.buildTemplate(ctx, file.Template, data)
-				if err != nil {
-					return changedFiles, fmt.Errorf("failed to build template for file %q: %s: %w", file.Path, file.Template, err)
+				content, tmplErr := r.buildTemplate(ctx, file.Template, data)
+				if tmplErr != nil {
+					errs = append(errs, fmt.Errorf("failed to build template for file %q: %s: %w", file.Path, file.Template, tmplErr))
+					continue
 				}
 
 				if len(content) > 0 {
@@ -595,9 +597,10 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 			}
 
 			if file.Content != "" && file.Ensure != files.Absent.String() {
-				changed, err := r.writeFileContent(ctx, file, handler)
-				if err != nil {
-					return changedFiles, err
+				changed, writeErr := r.writeFileContent(ctx, file, handler)
+				if writeErr != nil {
+					errs = append(errs, writeErr)
+					continue
 				}
 				if changed {
 					changedFiles = append(changedFiles, file.Path)
@@ -606,29 +609,32 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 		case files.Directory:
 			// Create the directory if it does not exist, with the correct mode.
-			if _, err := os.Stat(file.Path); os.IsNotExist(err) {
+			if _, statErr := os.Stat(file.Path); os.IsNotExist(statErr) {
 				var fileMode os.FileMode
 
 				if file.Mode == "" {
 					fileMode = os.FileMode(0o660)
 				} else {
-					fileMode, err = files.GetFileModeFromString(ctx, file.Mode)
-					if err != nil {
-						return changedFiles, fmt.Errorf("failed to get file mode from string: %w", err)
+					var modeErr error
+					fileMode, modeErr = files.GetFileModeFromString(ctx, file.Mode)
+					if modeErr != nil {
+						errs = append(errs, fmt.Errorf("failed to get file mode from string: %w", modeErr))
+						continue
 					}
 				}
 
-				err := os.Mkdir(file.Path, fileMode)
-				if err != nil {
-					return changedFiles, err
+				if mkdirErr := os.Mkdir(file.Path, fileMode); mkdirErr != nil {
+					errs = append(errs, mkdirErr)
+					continue
 				}
 				changedFiles = append(changedFiles, file.Path)
 			} else {
 				// Set the mode
 				if file.Mode != "" {
-					changed, err := handler.SetMode(ctx, file.Path, file.Mode)
-					if err != nil {
-						return changedFiles, fmt.Errorf("failed to set file mode: %w", err)
+					changed, modeErr := handler.SetMode(ctx, file.Path, file.Mode)
+					if modeErr != nil {
+						errs = append(errs, fmt.Errorf("failed to set file mode: %w", modeErr))
+						continue
 					}
 					if changed {
 						changedFiles = append(changedFiles, file.Path)
@@ -637,15 +643,17 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 			}
 
 		case files.Symlink:
-			target, err := os.Readlink(file.Path)
-			if err != nil {
-				return changedFiles, fmt.Errorf("failed to read symlink %q: %w", file.Path, err)
+			target, linkErr := os.Readlink(file.Path)
+			if linkErr != nil {
+				errs = append(errs, fmt.Errorf("failed to read symlink %q: %w", file.Path, linkErr))
+				continue
 			}
 
 			if target != file.Target {
-				changed, err := handler.Remove(ctx, file.Path)
-				if err != nil {
-					r.logger.Error("failed removing existing link", "path", file.Path, "err", err)
+				changed, removeErr := handler.Remove(ctx, file.Path)
+				if removeErr != nil {
+					r.logger.Error("failed removing existing link", "path", file.Path, "err", removeErr)
+					errs = append(errs, removeErr)
 					continue
 				}
 				if changed {
@@ -654,27 +662,28 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 				r.logger.Info("symlinking file", "name", file.Path)
 
-				err = os.Symlink(file.Target, file.Path)
-				if err != nil {
-					return changedFiles, fmt.Errorf("failed to create symlink %q -> %q: %w", file.Path, file.Target, err)
+				if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
+					errs = append(errs, fmt.Errorf("failed to create symlink %q -> %q: %w", file.Path, file.Target, symlinkErr))
+					continue
 				}
 			}
 		case files.Absent:
-			changed, err := handler.Remove(ctx, file.Path)
-			if err != nil {
-				r.logger.Error("failed removing file", "path", file.Path, "err", err)
+			changed, removeErr := handler.Remove(ctx, file.Path)
+			if removeErr != nil {
+				r.logger.Error("failed removing file", "path", file.Path, "err", removeErr)
+				errs = append(errs, removeErr)
 			}
 			if changed {
 				changedFiles = append(changedFiles, file.Path)
 			}
 		default:
-			return changedFiles, fmt.Errorf("unhandled file ensure %q", file.Ensure)
+			errs = append(errs, fmt.Errorf("unhandled file ensure %q", file.Ensure))
 		}
 	}
 
 	fileChangesTotal.WithLabelValues(nodeName, configSetName, "success").Add(float64(len(changedFiles)))
 
-	return changedFiles, nil
+	return changedFiles, errors.Join(errs...)
 }
 
 func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet []commonv1.Exec, changedFiles []string) error {
