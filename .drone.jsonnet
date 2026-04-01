@@ -73,13 +73,14 @@ local withCI() = {
 };
 
 local testStep() = step('test') {
-  // Use the tools-image setup-envtest (already in PATH) to locate pre-installed
-  // kube-apiserver/etcd binaries, then pass KUBEBUILDER_ASSETS to make test so
-  // the Makefile skips its own setup-envtest lookup (which may fail without network).
-  commands: [
-    'export KUBEBUILDER_ASSETS=$(setup-envtest use 1.29.0 --bin-dir /usr/local/kubebuilder/bin -p path)',
-    'make test',
-  ],
+  // Point directly at the envtest binaries pre-installed in the tools image by
+  //   setup-envtest use 1.29.0 --bin-dir /usr/local/kubebuilder/bin
+  // The Makefile uses ${KUBEBUILDER_ASSETS:-$(setup-envtest ...)} so this value
+  // takes priority; setup-envtest is not invoked and no network access is needed.
+  commands: ['make test'],
+  environment+: {
+    KUBEBUILDER_ASSETS: '/usr/local/kubebuilder/bin/k8s/1.29.0-linux-amd64',
+  },
 };
 
 [
