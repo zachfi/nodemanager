@@ -72,10 +72,14 @@ local withCI() = {
   },
 };
 
-local withEnvtestBinDir() = {
-  environment+: {
-    ENVTEST_BIN_DIR: '/usr/local/kubebuilder/bin',
-  },
+local testStep() = step('test') {
+  // Use the tools-image setup-envtest (already in PATH) to locate pre-installed
+  // kube-apiserver/etcd binaries, then pass KUBEBUILDER_ASSETS to make test so
+  // the Makefile skips its own setup-envtest lookup (which may fail without network).
+  commands: [
+    'export KUBEBUILDER_ASSETS=$(setup-envtest use 1.29.0 --bin-dir /usr/local/kubebuilder/bin -p path)',
+    'make test',
+  ],
 };
 
 [
@@ -84,7 +88,7 @@ local withEnvtestBinDir() = {
       steps:
         [
           make('build'),
-          make('test') + withEnvtestBinDir(),
+          testStep(),
         ],
     }
   ),

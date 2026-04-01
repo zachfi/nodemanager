@@ -9,9 +9,9 @@ steps:
   name: build
   pull: always
 - commands:
+  - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.29.0 --bin-dir /usr/local/kubebuilder/bin
+    -p path)
   - make test
-  environment:
-    ENVTEST_BIN_DIR: /usr/local/kubebuilder/bin
   image: reg.dist.svc.cluster.znet:5000/zachfi/tools
   name: test
   pull: always
