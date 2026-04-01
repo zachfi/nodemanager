@@ -10,6 +10,8 @@ steps:
   pull: always
 - commands:
   - make test
+  environment:
+    ENVTEST_BIN_DIR: /usr/local/kubebuilder/bin
   image: reg.dist.svc.cluster.znet:5000/zachfi/tools
   name: test
   pull: always

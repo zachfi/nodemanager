@@ -72,13 +72,19 @@ local withCI() = {
   },
 };
 
+local withEnvtestBinDir() = {
+  environment+: {
+    ENVTEST_BIN_DIR: '/usr/local/kubebuilder/bin',
+  },
+};
+
 [
   (
     pipeline('ci') {
       steps:
         [
           make('build'),
-          make('test'),
+          make('test') + withEnvtestBinDir(),
         ],
     }
   ),
