@@ -220,6 +220,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	cfg.ControllerConfig.ConfigSet.Namespace = cfg.ControllerConfig.Namespace
 	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {

@@ -4,11 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -272,4 +277,112 @@ func GetFileModeFromString(_ context.Context, mode string) (os.FileMode, error) 
 	}
 
 	return os.FileMode(octalMode), nil
+}
+
+// FileBucketMeta is the JSON sidecar stored alongside each blob in the filebucket.
+// It captures enough information to fully restore the original file.
+type FileBucketMeta struct {
+	Path       string `json:"path"`
+	BackedUpAt string `json:"backedUpAt"`
+	// Mode is the octal permission string, e.g. "0644".
+	Mode  string `json:"mode"`
+	UID   uint32 `json:"uid"`
+	GID   uint32 `json:"gid"`
+	Owner string `json:"owner,omitempty"` // best-effort name lookup
+	Group string `json:"group,omitempty"`
+}
+
+// SaveToFileBucket writes data to a content-addressed filebucket store rooted at
+// bucketPath. The blob is stored at:
+//
+//	<bucketPath>/<hash[0:2]>/<hash[2:4]>/<hash[4:]>
+//
+// with a JSON sidecar at the same path with a ".meta" suffix. Bucket directories
+// are created with mode 0700; blobs are written with mode 0600.
+//
+// The call is idempotent: if the blob already exists it is not rewritten.
+// info must be the os.FileInfo of the original file (used to capture permissions).
+// Returns the hex-encoded SHA256 hash of data.
+func SaveToFileBucket(bucketPath, filePath string, data []byte, info os.FileInfo) (string, error) {
+	h := sha256.Sum256(data)
+	hash := hex.EncodeToString(h[:])
+
+	dir := filepath.Join(bucketPath, hash[0:2], hash[2:4])
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("filebucket: create dir %s: %w", dir, err)
+	}
+
+	blobPath := filepath.Join(dir, hash[4:])
+
+	// Idempotent: skip write if blob already exists.
+	if _, err := os.Stat(blobPath); err == nil {
+		return hash, nil
+	}
+
+	if err := os.WriteFile(blobPath, data, 0o600); err != nil {
+		return "", fmt.Errorf("filebucket: write blob: %w", err)
+	}
+
+	meta := FileBucketMeta{
+		Path:       filePath,
+		BackedUpAt: time.Now().UTC().Format(time.RFC3339),
+		Mode:       fmt.Sprintf("%04o", info.Mode().Perm()),
+	}
+
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		meta.UID = stat.Uid
+		meta.GID = stat.Gid
+		if u, err := user.LookupId(strconv.Itoa(int(stat.Uid))); err == nil {
+			meta.Owner = u.Username
+		}
+		if g, err := user.LookupGroupId(strconv.Itoa(int(stat.Gid))); err == nil {
+			meta.Group = g.Name
+		}
+	}
+
+	metaBytes, err := json.Marshal(meta)
+	if err != nil {
+		return hash, nil // blob is written; meta failure is non-fatal
+	}
+	_ = os.WriteFile(blobPath+".meta", metaBytes, 0o600)
+
+	return hash, nil
+}
+
+// GCFileBucket removes blobs (and their .meta sidecars) from bucketPath whose
+// modification time is older than maxAge. Skips entries that are not regular
+// files and skips .meta files (they are removed together with their blob).
+func GCFileBucket(bucketPath string, maxAge time.Duration, logger *slog.Logger) error {
+	removed := 0
+	err := filepath.WalkDir(bucketPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries
+		}
+		if d.IsDir() {
+			return nil
+		}
+		// meta sidecars are handled alongside their blob
+		if filepath.Ext(path) == ".meta" {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if time.Since(info.ModTime()) < maxAge {
+			return nil
+		}
+
+		_ = os.Remove(path)
+		_ = os.Remove(path + ".meta")
+		removed++
+		return nil
+	})
+
+	if removed > 0 {
+		logger.Info("filebucket GC complete", "removed", removed, "bucket", bucketPath)
+	}
+
+	return err
 }

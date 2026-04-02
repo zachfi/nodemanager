@@ -149,16 +149,17 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	applyStart := time.Now()
 
 	var (
-		changedFiles []string
-		pkgErr       error
-		fileErr      error
-		svcErr       error
-		execErr      error
-		fileHashUpdates map[string]string
+		changedFiles      []string
+		pkgErr            error
+		fileErr           error
+		svcErr            error
+		execErr           error
+		fileHashUpdates   map[string]string
+		fileBackupUpdates map[string]string
 	)
 
 	pkgErr = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
-	changedFiles, fileHashUpdates, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
+	changedFiles, fileHashUpdates, fileBackupUpdates, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
 	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
 	execErr = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
 	err = errors.Join(pkgErr, fileErr, svcErr, execErr)
@@ -166,6 +167,12 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if len(fileHashUpdates) > 0 {
 		if hashErr := r.updateFileHashes(ctx, node.Name, node.Namespace, fileHashUpdates); hashErr != nil {
 			r.logger.Error("failed to update file hashes on node", "err", hashErr)
+		}
+	}
+
+	if len(fileBackupUpdates) > 0 {
+		if backupErr := r.updateFileBackups(ctx, node.Name, node.Namespace, fileBackupUpdates); backupErr != nil {
+			r.logger.Error("failed to update file backups on node", "err", backupErr)
 		}
 	}
 
@@ -188,11 +195,50 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.cfg.FileBucket.Enabled && r.cfg.FileBucket.MaxAge > 0 {
+		go r.runFileBucketGC(context.Background())
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&commonv1.ConfigSet{}).
 		Watches(&corev1.Secret{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingSecret)).
 		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
 		Complete(r)
+}
+
+// runFileBucketGC runs the filebucket garbage collector on a durable schedule.
+// It checks every hour whether the GC interval (MaxAge) has elapsed since the
+// last run, consulting ManagedNode.Status.LastFileBucketGC so the interval is
+// honoured across controller restarts and crash loops.
+func (r *ConfigSetReconciler) runFileBucketGC(ctx context.Context) {
+	maybeRunGC := func() {
+		node, err := r.getLocalManagedNode(ctx)
+		if err != nil {
+			r.logger.Warn("filebucket GC: could not get local ManagedNode", "err", err)
+			return
+		}
+		if node.Status.LastFileBucketGC != nil &&
+			time.Since(node.Status.LastFileBucketGC.Time) < r.cfg.FileBucket.MaxAge {
+			return
+		}
+		if gcErr := files.GCFileBucket(r.cfg.FileBucket.Path, r.cfg.FileBucket.MaxAge, r.logger); gcErr != nil {
+			r.logger.Error("filebucket GC failed", "err", gcErr)
+			return
+		}
+		r.updateLastGCTimestamp(ctx, node)
+	}
+
+	maybeRunGC()
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			maybeRunGC()
+		}
+	}
 }
 
 // configSetsReferencingSecret returns reconcile requests for every ConfigSet
@@ -574,7 +620,7 @@ func serviceContext(ctx context.Context, user string) context.Context {
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string, configSetName string, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, map[string]string, error) {
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string, configSetName string, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, map[string]string, map[string]string, error) {
 	ctx, span := r.tracer.Start(ctx, "handleFileSet")
 	defer span.End()
 
@@ -582,6 +628,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 	changedFiles := make([]string, 0, len(fileSet))
 	fileHashUpdates := make(map[string]string)
+	fileBackupUpdates := make(map[string]string)
 	var errs []error
 
 	for _, file := range fileSet {
@@ -619,7 +666,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 					}
 				}
 
-				changed, writeErr := r.writeFileContent(ctx, file, handler)
+				changed, backupHash, writeErr := r.writeFileContent(ctx, file, handler)
 				if writeErr != nil {
 					errs = append(errs, writeErr)
 					continue
@@ -629,6 +676,9 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 					if file.ProtectContent {
 						fileHashUpdates[file.Path] = fileContentHash([]byte(file.Content))
 					}
+				}
+				if backupHash != "" {
+					fileBackupUpdates[file.Path] = backupHash
 				}
 			}
 
@@ -708,7 +758,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 	fileChangesTotal.WithLabelValues(nodeName, configSetName, "success").Add(float64(len(changedFiles)))
 
-	return changedFiles, fileHashUpdates, errors.Join(errs...)
+	return changedFiles, fileHashUpdates, fileBackupUpdates, errors.Join(errs...)
 }
 
 func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet []commonv1.Exec, changedFiles []string) error {
@@ -852,6 +902,53 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 	return content, err
 }
 
+// updateFileBackups merges new path→backupHash entries into ManagedNode.Status.FileBackups.
+func (r *ConfigSetReconciler) updateFileBackups(ctx context.Context, nodeName, nodeNamespace string, updates map[string]string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var node commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: nodeName, Namespace: nodeNamespace}, &node); err != nil {
+			return err
+		}
+
+		if node.Status.FileBackups == nil {
+			node.Status.FileBackups = make(map[string]string, len(updates))
+		}
+		for path, hash := range updates {
+			node.Status.FileBackups[path] = hash
+		}
+
+		return r.Status().Update(ctx, &node)
+	})
+}
+
+// getLocalManagedNode fetches the ManagedNode for the local hostname.
+func (r *ConfigSetReconciler) getLocalManagedNode(ctx context.Context) (commonv1.ManagedNode, error) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return commonv1.ManagedNode{}, err
+	}
+
+	var node commonv1.ManagedNode
+	err = r.Get(ctx, types.NamespacedName{Name: hostname, Namespace: r.cfg.Namespace}, &node)
+	return node, err
+}
+
+// updateLastGCTimestamp records the current time as LastFileBucketGC in the node status.
+func (r *ConfigSetReconciler) updateLastGCTimestamp(ctx context.Context, node commonv1.ManagedNode) {
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var n commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &n); err != nil {
+			return err
+		}
+		now := metav1.Now()
+		n.Status.LastFileBucketGC = &now
+		return r.Status().Update(ctx, &n)
+	})
+	if err != nil {
+		r.logger.Error("failed to update LastFileBucketGC on node", "err", err)
+	}
+}
+
 // shouldSkipProtectedFile returns true when a file with ProtectContent enabled has been
 // modified out-of-band since nodemanager last wrote it.  It reads the current on-disk
 // content and compares its SHA256 hash to the stored last-written hash.
@@ -899,34 +996,56 @@ func fileContentHash(data []byte) string {
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
-func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (bool, error) {
-	var err error
-
-	// Determine the sha of the content
-	var b bytes.Buffer
-	_, err = b.WriteString(file.Content)
-	if err != nil {
-		return false, err
+// It returns whether anything changed, the SHA256 hash of any pre-write backup (empty
+// string if no backup was taken), and any error.
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (changed bool, backupHash string, err error) {
+	// Filebucket: back up the existing file before overwriting it.
+	if r.cfg.FileBucket.Enabled {
+		info, statErr := os.Stat(file.Path)
+		if statErr == nil && !info.IsDir() {
+			if r.cfg.FileBucket.MaxFileSizeBytes > 0 && info.Size() > r.cfg.FileBucket.MaxFileSizeBytes {
+				r.logger.Warn("skipping filebucket backup: file too large",
+					"path", file.Path,
+					"size", info.Size(),
+					"limit", r.cfg.FileBucket.MaxFileSizeBytes,
+				)
+			} else {
+				current, readErr := os.ReadFile(file.Path)
+				if readErr == nil {
+					h, bucketErr := files.SaveToFileBucket(r.cfg.FileBucket.Path, file.Path, current, info)
+					if bucketErr != nil {
+						r.logger.Warn("filebucket backup failed", "path", file.Path, "err", bucketErr)
+					} else {
+						backupHash = h
+						r.logger.Info("backed up file to filebucket",
+							"path", file.Path,
+							"hash", h,
+							"bucket", r.cfg.FileBucket.Path,
+						)
+					}
+				}
+			}
+		}
 	}
 
 	var contentChanged, ownerChanged, modeChanged bool
 
 	contentChanged, err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 	if err != nil {
-		return false, fmt.Errorf("failed to write content to file: %w", err)
+		return false, backupHash, fmt.Errorf("failed to write content to file: %w", err)
 	}
 
 	ownerChanged, err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
 	if err != nil {
-		return true, fmt.Errorf("failed to chown file: %w", err)
+		return true, backupHash, fmt.Errorf("failed to chown file: %w", err)
 	}
 
 	if file.Mode != "" {
 		modeChanged, err = handler.SetMode(ctx, file.Path, file.Mode)
 		if err != nil {
-			return true, fmt.Errorf("failed to set file mode: %w", err)
+			return true, backupHash, fmt.Errorf("failed to set file mode: %w", err)
 		}
 	}
 
-	return contentChanged || ownerChanged || modeChanged, nil
+	return contentChanged || ownerChanged || modeChanged, backupHash, nil
 }

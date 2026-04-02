@@ -99,6 +99,14 @@ type ManagedNodeStatus struct {
 	// nodemanager for each file path.  Used to detect out-of-band modifications
 	// when ProtectContent is enabled on a File entry in a ConfigSet.
 	FileHashes map[string]string `json:"fileHashes,omitempty"`
+	// FileBackups records the SHA256 hash of the content that was on disk
+	// immediately before nodemanager last replaced each file.  Use the hash to
+	// locate the backup blob in the filebucket store for recovery.
+	FileBackups map[string]string `json:"fileBackups,omitempty"`
+	// LastFileBucketGC records when the filebucket GC last ran successfully on
+	// this node.  Persisted so the GC interval is honoured across controller
+	// restarts and crash loops.
+	LastFileBucketGC *metav1.Time `json:"lastFileBucketGC,omitempty"`
 }
 
 //+kubebuilder:object:root=true

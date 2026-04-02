@@ -8,6 +8,27 @@ import (
 	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
+type FileBucketConfig struct {
+	// Enabled turns on pre-write backup of managed files to a content-addressed store.
+	Enabled bool `json:"enabled,omitempty"`
+	// Path is the root directory of the filebucket store.
+	// Defaults to /var/lib/nodemanager/filebucket.
+	Path string `json:"path,omitempty"`
+	// MaxFileSizeBytes skips backup when the existing on-disk file exceeds this
+	// size. 0 means unlimited.
+	MaxFileSizeBytes int64 `json:"maxFileSizeBytes,omitempty"`
+	// MaxAge is how long blobs are retained in the bucket before GC removes them.
+	// 0 means keep forever.
+	MaxAge time.Duration `json:"maxAge,omitempty"`
+}
+
+func (c *FileBucketConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+	f.BoolVar(&c.Enabled, prefix+".enabled", false, "Enable pre-write file backup to a content-addressed filebucket store")
+	f.StringVar(&c.Path, prefix+".path", "/var/lib/nodemanager/filebucket", "Root directory of the filebucket content-addressed backup store")
+	f.Int64Var(&c.MaxFileSizeBytes, prefix+".max-file-size-bytes", 102400, "Skip backup when existing file exceeds this size in bytes (0 = unlimited)")
+	f.DurationVar(&c.MaxAge, prefix+".max-age", 7*24*time.Hour, "Remove blobs from the filebucket older than this duration (0 = keep forever)")
+}
+
 type ControllerConfig struct {
 	MetricsAddr          string
 	EnableLeaderElection bool
@@ -49,7 +70,14 @@ func (c *ManagedNodeConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag
 	f.DurationVar(&c.DrainTimeout, prefix+".drain-timeout", 5*time.Minute, "The maximum duration to wait for pods to drain from a kubernetes node before proceeding with the upgrade.")
 }
 
-type ConfigSetConfig struct{}
+type ConfigSetConfig struct {
+	// Namespace is set by the controller harness from ControllerConfig.Namespace
+	// at startup so the ConfigSet reconciler knows which namespace to query.
+	// It is not exposed as a CLI flag (the top-level namespace flag is used instead).
+	Namespace  string           `json:"-"`
+	FileBucket FileBucketConfig `json:"fileBucket,omitempty"`
+}
 
 func (c *ConfigSetConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+	c.FileBucket.RegisterFlagsAndApplyDefaults(prefix+".file-bucket", f)
 }
