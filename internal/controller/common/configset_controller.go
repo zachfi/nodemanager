@@ -19,6 +19,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,13 +154,20 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		fileErr      error
 		svcErr       error
 		execErr      error
+		fileHashUpdates map[string]string
 	)
 
 	pkgErr = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
-	changedFiles, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
+	changedFiles, fileHashUpdates, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
 	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
 	execErr = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
 	err = errors.Join(pkgErr, fileErr, svcErr, execErr)
+
+	if len(fileHashUpdates) > 0 {
+		if hashErr := r.updateFileHashes(ctx, node.Name, node.Namespace, fileHashUpdates); hashErr != nil {
+			r.logger.Error("failed to update file hashes on node", "err", hashErr)
+		}
+	}
 
 	applyResult := "success"
 	if err != nil {
@@ -565,13 +574,14 @@ func serviceContext(ctx context.Context, user string) context.Context {
 }
 
 // handleFileSet
-func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string, configSetName string, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, error) {
+func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string, configSetName string, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, map[string]string, error) {
 	ctx, span := r.tracer.Start(ctx, "handleFileSet")
 	defer span.End()
 
 	handler := r.system.File()
 
 	changedFiles := make([]string, 0, len(fileSet))
+	fileHashUpdates := make(map[string]string)
 	var errs []error
 
 	for _, file := range fileSet {
@@ -597,6 +607,18 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 			}
 
 			if file.Content != "" && file.Ensure != files.Absent.String() {
+				if file.ProtectContent {
+					skip, skipErr := r.shouldSkipProtectedFile(file.Path, node.Status.FileHashes)
+					if skipErr != nil {
+						errs = append(errs, fmt.Errorf("failed to check protected file %q: %w", file.Path, skipErr))
+						continue
+					}
+					if skip {
+						r.logger.Info("skipping protected file modified out-of-band", "path", file.Path)
+						continue
+					}
+				}
+
 				changed, writeErr := r.writeFileContent(ctx, file, handler)
 				if writeErr != nil {
 					errs = append(errs, writeErr)
@@ -604,6 +626,9 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 				}
 				if changed {
 					changedFiles = append(changedFiles, file.Path)
+					if file.ProtectContent {
+						fileHashUpdates[file.Path] = fileContentHash([]byte(file.Content))
+					}
 				}
 			}
 
@@ -683,7 +708,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 	fileChangesTotal.WithLabelValues(nodeName, configSetName, "success").Add(float64(len(changedFiles)))
 
-	return changedFiles, errors.Join(errs...)
+	return changedFiles, fileHashUpdates, errors.Join(errs...)
 }
 
 func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet []commonv1.Exec, changedFiles []string) error {
@@ -825,6 +850,52 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 	content = stdout.Bytes()
 
 	return content, err
+}
+
+// shouldSkipProtectedFile returns true when a file with ProtectContent enabled has been
+// modified out-of-band since nodemanager last wrote it.  It reads the current on-disk
+// content and compares its SHA256 hash to the stored last-written hash.
+// Returns false (do not skip) when the file does not yet exist or has not been tracked.
+func (r *ConfigSetReconciler) shouldSkipProtectedFile(path string, fileHashes map[string]string) (bool, error) {
+	current, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil // file doesn't exist yet; write it
+	}
+	if err != nil {
+		return false, err
+	}
+
+	lastHash, tracked := fileHashes[path]
+	if !tracked {
+		return false, nil // never written by nodemanager; write it now and start tracking
+	}
+
+	return fileContentHash(current) != lastHash, nil
+}
+
+// updateFileHashes merges new path→hash entries into ManagedNode.Status.FileHashes.
+func (r *ConfigSetReconciler) updateFileHashes(ctx context.Context, nodeName, nodeNamespace string, updates map[string]string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var node commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: nodeName, Namespace: nodeNamespace}, &node); err != nil {
+			return err
+		}
+
+		if node.Status.FileHashes == nil {
+			node.Status.FileHashes = make(map[string]string, len(updates))
+		}
+		for path, hash := range updates {
+			node.Status.FileHashes[path] = hash
+		}
+
+		return r.Status().Update(ctx, &node)
+	})
+}
+
+// fileContentHash returns the hex-encoded SHA256 hash of data.
+func fileContentHash(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }
 
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.

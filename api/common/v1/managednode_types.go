@@ -95,6 +95,10 @@ type ManagedNodeStatus struct {
 	ConfigSets  []ConfigSetApplyStatus      `json:"configsets,omitempty"`
 	SSHHostKeys []SSHHostKey                `json:"sshHostKeys,omitempty"`
 	WireGuard   []WireGuardInterface        `json:"wireGuard,omitempty"`
+	// FileHashes records the SHA256 hash of the content last written by
+	// nodemanager for each file path.  Used to detect out-of-band modifications
+	// when ProtectContent is enabled on a File entry in a ConfigSet.
+	FileHashes map[string]string `json:"fileHashes,omitempty"`
 }
 
 //+kubebuilder:object:root=true

@@ -55,6 +55,12 @@ type File struct {
 	Template      string   `json:"template,omitempty"`
 	SecretRefs    []string `json:"secretRefs,omitempty"`
 	ConfigMapRefs []string `json:"configMapRefs,omitempty"`
+	// ProtectContent prevents nodemanager from overwriting the file if it has
+	// been modified out-of-band since the last time nodemanager wrote it.
+	// On the first reconcile the file is written normally and its SHA256 hash is
+	// stored in the ManagedNode status. On subsequent reconciles the on-disk hash
+	// is compared to the stored hash; if they differ the file is left untouched.
+	ProtectContent bool `json:"protectContent,omitempty"`
 }
 
 type Exec struct {
