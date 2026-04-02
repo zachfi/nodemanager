@@ -68,6 +68,14 @@ var (
 		Name: "nodemanager_configset_conflicts_total",
 		Help: "Total number of resource conflicts detected between ConfigSets on this node.",
 	}, []string{"node", "configset"})
+
+	// configSetAppliedResourceVersion records the Unix timestamp of the last successful
+	// ConfigSet apply for each (node, configset, resource_version) tuple. Old label sets
+	// are deleted when the resource_version changes so cardinality stays bounded.
+	configSetAppliedResourceVersion = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "nodemanager_configset_applied_resource_version",
+		Help: "Unix timestamp of the last successful ConfigSet apply, labelled by resource version. Use to track rollout convergence across nodes.",
+	}, []string{"node", "configset", "resource_version"})
 )
 
 func init() {
@@ -82,5 +90,6 @@ func init() {
 		lastUpgradeTimestamp,
 		lastConfigSetApplyTimestamp,
 		configSetConflictsTotal,
+		configSetAppliedResourceVersion,
 	)
 }

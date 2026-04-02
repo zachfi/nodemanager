@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -63,17 +64,24 @@ type ConfigSetReconciler struct {
 	system handler.System
 	locker locker.Locker
 	cfg    ConfigSetConfig
+
+	// lastResourceVersion tracks the resource_version label most recently recorded
+	// for each (node, configset) pair so stale label sets can be deleted from the
+	// configSetAppliedResourceVersion gauge.
+	lastResourceVersionMu sync.Mutex
+	lastResourceVersion   map[string]string // key: "node/configset"
 }
 
 func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker) *ConfigSetReconciler {
 	return &ConfigSetReconciler{
-		Client: client,
-		Scheme: scheme,
-		tracer: otel.Tracer("controller.common.configset"),
-		logger: logger.With("controller", "configset"),
-		locker: locker,
-		system: system,
-		cfg:    cfg,
+		Client:              client,
+		Scheme:              scheme,
+		tracer:              otel.Tracer("controller.common.configset"),
+		logger:              logger.With("controller", "configset"),
+		locker:              locker,
+		system:              system,
+		cfg:                 cfg,
+		lastResourceVersion: make(map[string]string),
 	}
 }
 
@@ -183,7 +191,9 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	configSetApplyTotal.WithLabelValues(nodeName, configSet.Name, applyResult).Inc()
 	configSetApplyDuration.WithLabelValues(nodeName, configSet.Name).Observe(time.Since(applyStart).Seconds())
 	if err == nil {
-		lastConfigSetApplyTimestamp.WithLabelValues(nodeName, configSet.Name).Set(float64(time.Now().Unix()))
+		now := float64(time.Now().Unix())
+		lastConfigSetApplyTimestamp.WithLabelValues(nodeName, configSet.Name).Set(now)
+		r.recordResourceVersion(nodeName, configSet.Name, configSet.ResourceVersion, now)
 	}
 
 	if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, err, nil); statusErr != nil {
@@ -1048,4 +1058,20 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv
 	}
 
 	return contentChanged || ownerChanged || modeChanged, backupHash, nil
+}
+
+// recordResourceVersion sets configSetAppliedResourceVersion for the given
+// (node, configset, resource_version) and removes the gauge entry for any
+// previous resource_version so cardinality stays bounded.
+func (r *ConfigSetReconciler) recordResourceVersion(node, configset, resourceVersion string, ts float64) {
+	key := node + "/" + configset
+	r.lastResourceVersionMu.Lock()
+	prev := r.lastResourceVersion[key]
+	r.lastResourceVersion[key] = resourceVersion
+	r.lastResourceVersionMu.Unlock()
+
+	if prev != "" && prev != resourceVersion {
+		configSetAppliedResourceVersion.DeleteLabelValues(node, configset, prev)
+	}
+	configSetAppliedResourceVersion.WithLabelValues(node, configset, resourceVersion).Set(ts)
 }
