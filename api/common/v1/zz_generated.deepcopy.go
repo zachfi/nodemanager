@@ -337,8 +337,7 @@ func (in *ManagedNodeStatus) DeepCopyInto(out *ManagedNodeStatus) {
 	}
 	if in.LastFileBucketGC != nil {
 		in, out := &in.LastFileBucketGC, &out.LastFileBucketGC
-		*out = new(metav1.Time)
-		(*in).DeepCopyInto(*out)
+		*out = (*in).DeepCopy()
 	}
 }
 
