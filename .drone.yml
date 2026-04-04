@@ -73,3 +73,8 @@ steps:
 trigger:
   ref:
   - refs/tags/v*
+---
+kind: signature
+hmac: 5ed746c6b929a1c6b7b3528f1e932f663a93e99c128250a9af64424e1b76e799
+
+...
