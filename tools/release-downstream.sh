@@ -12,18 +12,26 @@
 #   git, curl, awk, sed, make, docker (for jsonnet-libs step)
 #
 # Environment:
-#   GITHUB_TOKEN      — used to fetch release assets; required if repo is private
-#   AUR_DIR           — path to the aur checkout (default: ~/Code/aur)
-#   JSONNET_LIBS_DIR  — path to jsonnet-libs checkout (default: ~/Code/jsonnet-libs)
-#   GIT_AUTHOR_NAME   — overrides git commit author name (useful in CI)
-#   GIT_AUTHOR_EMAIL  — overrides git commit author email (useful in CI)
+#   GITHUB_TOKEN           — used to fetch release assets; required if repo is private
+#   AUR_DIR                — path to the aur checkout (default: ~/Code/aur)
+#   JSONNET_LIBS_DIR       — path to jsonnet-libs checkout (default: ~/Code/jsonnet-libs)
+#   GIT_AUTHOR_NAME        — overrides git commit author name (useful in CI)
+#   GIT_AUTHOR_EMAIL       — overrides git commit author email (useful in CI)
+#   DRY_RUN                — set to 1 to skip git push and docker/make steps
+#   NODEMANAGER_BIN_REMOTE — override nodemanager-bin clone URL (default: git@github.com:zachfi/nodemanager-bin.git)
+#   AUR_REMOTE             — override aur clone URL (default: git@github.com:zachfi/aur.git)
+#   JSONNET_LIBS_REMOTE    — override jsonnet-libs clone URL (default: git@github.com:zachfi/jsonnet-libs.git)
+#   CHECKSUMS_URL          — override checksums download URL (default: GitHub release URL)
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-WORK_DIR="$(mktemp -d)"
-trap 'rm -rf "${WORK_DIR}"' EXIT
+WORK_DIR="${WORK_DIR:-$(mktemp -d)}"
+# Only clean up if we created the directory ourselves (not caller-provided)
+[[ -z "${WORK_DIR_EXTERNAL:-}" ]] && trap 'rm -rf "${WORK_DIR}"' EXIT
+
+DRY_RUN="${DRY_RUN:-0}"
 
 # In CI, clone repos fresh into WORK_DIR. Locally, default to known checkout paths.
 if [[ -n "${CI:-}" ]]; then
@@ -33,6 +41,10 @@ else
   AUR_DIR="${AUR_DIR:-${HOME}/Code/aur}"
   JSONNET_LIBS_DIR="${JSONNET_LIBS_DIR:-${HOME}/Code/jsonnet-libs}"
 fi
+
+NODEMANAGER_BIN_REMOTE="${NODEMANAGER_BIN_REMOTE:-git@github.com:zachfi/nodemanager-bin.git}"
+AUR_REMOTE="${AUR_REMOTE:-git@github.com:zachfi/aur.git}"
+JSONNET_LIBS_REMOTE="${JSONNET_LIBS_REMOTE:-git@github.com:zachfi/jsonnet-libs.git}"
 
 # ── Version ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +56,7 @@ fi
 VERSION_NO_V="${VERSION#v}"
 
 echo "==> Downstream release: ${VERSION}"
+[[ "${DRY_RUN}" == "1" ]] && echo "    (DRY_RUN: git push and docker/make steps will be skipped)"
 
 # ── Git identity (CI-friendly) ────────────────────────────────────────────────
 
@@ -63,7 +76,8 @@ fi
 
 # ── Checksums ─────────────────────────────────────────────────────────────────
 
-CHECKSUMS_URL="https://github.com/zachfi/nodemanager/releases/download/${VERSION}/checksums.txt"
+DEFAULT_CHECKSUMS_URL="https://github.com/zachfi/nodemanager/releases/download/${VERSION}/checksums.txt"
+CHECKSUMS_URL="${CHECKSUMS_URL:-${DEFAULT_CHECKSUMS_URL}}"
 
 echo "--> Fetching ${CHECKSUMS_URL}"
 CURL_ARGS=(-fsSL)
@@ -90,7 +104,7 @@ echo "==> [1/3] nodemanager-bin"
 # ─────────────────────────────────────────────────────────────────────────────
 
 BIN_DIR="${WORK_DIR}/nodemanager-bin"
-git clone git@github.com:zachfi/nodemanager-bin.git "${BIN_DIR}"
+git clone "${NODEMANAGER_BIN_REMOTE}" "${BIN_DIR}"
 
 # Render version + checksums into PKGBUILD
 sed "s/{{ version }}/${VERSION_NO_V}/" "${BIN_DIR}/PKGBUILD.template" > "${BIN_DIR}/PKGBUILD"
@@ -103,9 +117,12 @@ grep -E "^pkgver|sha256" "${BIN_DIR}/PKGBUILD"
 
 git -C "${BIN_DIR}" add PKGBUILD
 git -C "${BIN_DIR}" commit -m "Update nodemanager to ${VERSION_NO_V}"
-git -C "${BIN_DIR}" push origin main
-
-echo "    nodemanager-bin pushed"
+if [[ "${DRY_RUN}" == "1" ]]; then
+  echo "    DRY_RUN: would push nodemanager-bin"
+else
+  git -C "${BIN_DIR}" push origin main
+  echo "    nodemanager-bin pushed"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
@@ -113,7 +130,7 @@ echo "==> [2/3] aur submodule"
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ ! -d "${AUR_DIR}/.git" ]]; then
-  git clone git@github.com:zachfi/aur.git "${AUR_DIR}"
+  git clone "${AUR_REMOTE}" "${AUR_DIR}"
   git -C "${AUR_DIR}" submodule update --init --recursive
 fi
 
@@ -124,8 +141,12 @@ if git -C "${AUR_DIR}" diff --staged --quiet; then
   echo "    nodemanager-bin submodule already at latest — nothing to commit"
 else
   git -C "${AUR_DIR}" commit -m "Update nodemanager-bin to ${VERSION}"
-  git -C "${AUR_DIR}" push
-  echo "    aur pushed (Woodpecker will rebuild pacman repo image)"
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "    DRY_RUN: would push aur"
+  else
+    git -C "${AUR_DIR}" push
+    echo "    aur pushed (Woodpecker will rebuild pacman repo image)"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +155,7 @@ echo "==> [3/3] jsonnet-libs"
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ ! -d "${JSONNET_LIBS_DIR}/.git" ]]; then
-  git clone git@github.com:zachfi/jsonnet-libs.git "${JSONNET_LIBS_DIR}"
+  git clone "${JSONNET_LIBS_REMOTE}" "${JSONNET_LIBS_DIR}"
 fi
 
 CONFIG="${JSONNET_LIBS_DIR}/libs/nodemanager/config.jsonnet"
@@ -147,23 +168,33 @@ else
   echo "    Added ${VERSION_NO_V} to config.jsonnet"
 fi
 
-# Regenerate CRD libsonnet (runs Docker image k8s-gen)
-make -C "${JSONNET_LIBS_DIR}" libs/nodemanager
+if [[ "${DRY_RUN}" == "1" ]]; then
+  echo "    DRY_RUN: would run: make -C ${JSONNET_LIBS_DIR} libs/nodemanager"
+else
+  # Regenerate CRD libsonnet (runs Docker image k8s-gen)
+  make -C "${JSONNET_LIBS_DIR}" libs/nodemanager
 
-GEN_DIR="${JSONNET_LIBS_DIR}/gen/nodemanager-libsonnet/${VERSION_NO_V}"
-if [[ ! -d "${GEN_DIR}" ]]; then
-  echo "ERROR: expected generated output at ${GEN_DIR} but it does not exist." >&2
-  exit 1
+  GEN_DIR="${JSONNET_LIBS_DIR}/gen/nodemanager-libsonnet/${VERSION_NO_V}"
+  if [[ ! -d "${GEN_DIR}" ]]; then
+    echo "ERROR: expected generated output at ${GEN_DIR} but it does not exist." >&2
+    exit 1
+  fi
+
+  git -C "${JSONNET_LIBS_DIR}" add "${CONFIG}" "${GEN_DIR}"
 fi
 
-git -C "${JSONNET_LIBS_DIR}" add "${CONFIG}" "${GEN_DIR}"
+git -C "${JSONNET_LIBS_DIR}" add "${CONFIG}"
 
 if git -C "${JSONNET_LIBS_DIR}" diff --staged --quiet; then
   echo "    No changes to commit in jsonnet-libs"
 else
   git -C "${JSONNET_LIBS_DIR}" commit -m "Add nodemanager ${VERSION} CRD libsonnet"
-  git -C "${JSONNET_LIBS_DIR}" push
-  echo "    jsonnet-libs pushed"
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "    DRY_RUN: would push jsonnet-libs"
+  else
+    git -C "${JSONNET_LIBS_DIR}" push
+    echo "    jsonnet-libs pushed"
+  fi
 fi
 
 echo ""

@@ -95,10 +95,6 @@ type ManagedNodeStatus struct {
 	ConfigSets  []ConfigSetApplyStatus      `json:"configsets,omitempty"`
 	SSHHostKeys []SSHHostKey                `json:"sshHostKeys,omitempty"`
 	WireGuard   []WireGuardInterface        `json:"wireGuard,omitempty"`
-	// FileHashes records the SHA256 hash of the content last written by
-	// nodemanager for each file path.  Used to detect out-of-band modifications
-	// when ProtectContent is enabled on a File entry in a ConfigSet.
-	FileHashes map[string]string `json:"fileHashes,omitempty"`
 	// FileBackups records the SHA256 hash of the content that was on disk
 	// immediately before nodemanager last replaced each file.  Use the hash to
 	// locate the backup blob in the filebucket store for recovery.

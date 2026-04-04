@@ -321,13 +321,6 @@ func (in *ManagedNodeStatus) DeepCopyInto(out *ManagedNodeStatus) {
 		*out = make([]WireGuardInterface, len(*in))
 		copy(*out, *in)
 	}
-	if in.FileHashes != nil {
-		in, out := &in.FileHashes, &out.FileHashes
-		*out = make(map[string]string, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
-	}
 	if in.FileBackups != nil {
 		in, out := &in.FileBackups, &out.FileBackups
 		*out = make(map[string]string, len(*in))

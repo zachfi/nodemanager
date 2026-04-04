@@ -28,4 +28,8 @@ release-downstream: ## Propagate the current tag to nodemanager-bin, aur, and js
 	@echo "=== $(PROJECT_NAME) === [ release-downstream ]: Updating downstream repos"
 	./tools/release-downstream.sh
 
-.PHONY: release release-clean release-publish snapshot release-downstream
+test-release-downstream: ## Test the release-downstream script against local bare repos (no network, no docker)
+	@echo "=== $(PROJECT_NAME) === [ test-release-downstream ]: Running release-downstream tests"
+	bash tools/test-release-downstream.sh
+
+.PHONY: release release-clean release-publish snapshot release-downstream test-release-downstream

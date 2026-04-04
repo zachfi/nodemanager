@@ -106,14 +106,6 @@ spec:
                   immediately before nodemanager last replaced each file.  Use the hash to
                   locate the backup blob in the filebucket store for recovery.
                 type: object
-              fileHashes:
-                additionalProperties:
-                  type: string
-                description: |-
-                  FileHashes records the SHA256 hash of the content last written by
-                  nodemanager for each file path.  Used to detect out-of-band modifications
-                  when ProtectContent is enabled on a File entry in a ConfigSet.
-                type: object
               interfaces:
                 additionalProperties:
                   description: NetworkInterface holds the addresses observed on a
