@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -209,6 +210,12 @@ func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *comm
 }
 
 func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *commonv1.ManagedNode) error {
+	// Snapshot the fields we manage so we can skip the write if nothing changed.
+	oldRelease := node.Status.Release
+	oldInterfaces := node.Status.Interfaces
+	oldSSHHostKeys := node.Status.SSHHostKeys
+	oldWireGuard := node.Status.WireGuard
+
 	info := r.system.Node().Info(ctx)
 	node.Status.Release = info.OS.Release
 	node.Status.Interfaces = collectNetworkInterfaces()
@@ -230,6 +237,13 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 	}
 
 	node.Status.WireGuard = liveWG
+
+	if node.Status.Release == oldRelease &&
+		reflect.DeepEqual(node.Status.Interfaces, oldInterfaces) &&
+		reflect.DeepEqual(node.Status.SSHHostKeys, oldSSHHostKeys) &&
+		reflect.DeepEqual(node.Status.WireGuard, oldWireGuard) {
+		return nil
+	}
 
 	r.logger.Info("updating node status", "node", node.Name, "release", node.Status.Release)
 
