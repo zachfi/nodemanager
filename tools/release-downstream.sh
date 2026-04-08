@@ -2,9 +2,10 @@
 # tools/release-downstream.sh
 #
 # Propagates a nodemanager release to downstream repos:
-#   1. nodemanager-bin  — renders PKGBUILD with new version + checksums, commits, pushes
-#   2. aur              — updates nodemanager-bin submodule, commits, pushes
-#   3. jsonnet-libs     — adds new version to CRD config, regenerates libsonnet, commits, pushes
+#   1. nodemanager-bin   — renders PKGBUILD with new version + checksums, commits, pushes
+#   2. aur               — updates nodemanager-bin submodule, commits, pushes
+#   3. jsonnet-libs      — adds new version to CRD config, regenerates libsonnet, commits, pushes
+#   4. personal-ports    — bumps PORTVERSION, regenerates distinfo from Go proxy + GitHub, commits, pushes
 #
 # Run from the repo root after `make release` has published binaries to GitHub.
 #
@@ -12,16 +13,18 @@
 #   git, curl, awk, sed, make, docker (for jsonnet-libs step)
 #
 # Environment:
-#   GITHUB_TOKEN           — used to fetch release assets; required if repo is private
-#   AUR_DIR                — path to the aur checkout (default: ~/Code/aur)
-#   JSONNET_LIBS_DIR       — path to jsonnet-libs checkout (default: ~/Code/jsonnet-libs)
-#   GIT_AUTHOR_NAME        — overrides git commit author name (useful in CI)
-#   GIT_AUTHOR_EMAIL       — overrides git commit author email (useful in CI)
-#   DRY_RUN                — set to 1 to skip git push and docker/make steps
-#   NODEMANAGER_BIN_REMOTE — override nodemanager-bin clone URL (default: git@github.com:zachfi/nodemanager-bin.git)
-#   AUR_REMOTE             — override aur clone URL (default: git@github.com:zachfi/aur.git)
-#   JSONNET_LIBS_REMOTE    — override jsonnet-libs clone URL (default: git@github.com:zachfi/jsonnet-libs.git)
-#   CHECKSUMS_URL          — override checksums download URL (default: GitHub release URL)
+#   GITHUB_TOKEN              — used to fetch release assets; required if repo is private
+#   AUR_DIR                   — path to the aur checkout (default: ~/Code/aur)
+#   JSONNET_LIBS_DIR          — path to jsonnet-libs checkout (default: ~/Code/jsonnet-libs)
+#   PERSONAL_PORTS_DIR        — path to personal-ports checkout (default: ~/Code/personal-ports)
+#   GIT_AUTHOR_NAME           — overrides git commit author name (useful in CI)
+#   GIT_AUTHOR_EMAIL          — overrides git commit author email (useful in CI)
+#   DRY_RUN                   — set to 1 to skip git push and docker/make steps
+#   NODEMANAGER_BIN_REMOTE    — override nodemanager-bin clone URL
+#   AUR_REMOTE                — override aur clone URL
+#   JSONNET_LIBS_REMOTE       — override jsonnet-libs clone URL
+#   PERSONAL_PORTS_REMOTE     — override personal-ports clone URL
+#   CHECKSUMS_URL             — override checksums download URL (default: GitHub release URL)
 
 set -euo pipefail
 
@@ -37,14 +40,17 @@ DRY_RUN="${DRY_RUN:-0}"
 if [[ -n "${CI:-}" ]]; then
   AUR_DIR="${WORK_DIR}/aur"
   JSONNET_LIBS_DIR="${WORK_DIR}/jsonnet-libs"
+  PERSONAL_PORTS_DIR="${WORK_DIR}/personal-ports"
 else
   AUR_DIR="${AUR_DIR:-${HOME}/Code/aur}"
   JSONNET_LIBS_DIR="${JSONNET_LIBS_DIR:-${HOME}/Code/jsonnet-libs}"
+  PERSONAL_PORTS_DIR="${PERSONAL_PORTS_DIR:-${HOME}/Code/personal-ports}"
 fi
 
 NODEMANAGER_BIN_REMOTE="${NODEMANAGER_BIN_REMOTE:-git@github.com:zachfi/nodemanager-bin.git}"
 AUR_REMOTE="${AUR_REMOTE:-git@github.com:zachfi/aur.git}"
 JSONNET_LIBS_REMOTE="${JSONNET_LIBS_REMOTE:-git@github.com:zachfi/jsonnet-libs.git}"
+PERSONAL_PORTS_REMOTE="${PERSONAL_PORTS_REMOTE:-git@github.com:zachfi/personal-ports.git}"
 
 # ── Version ──────────────────────────────────────────────────────────────────
 
@@ -100,7 +106,7 @@ echo "    armv7h: ${SHA_ARMV7}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> [1/3] nodemanager-bin"
+echo "==> [1/4] nodemanager-bin"
 # ─────────────────────────────────────────────────────────────────────────────
 
 BIN_DIR="${WORK_DIR}/nodemanager-bin"
@@ -126,7 +132,7 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> [2/3] aur submodule"
+echo "==> [2/4] aur submodule"
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ ! -d "${AUR_DIR}/.git" ]]; then
@@ -151,7 +157,7 @@ fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> [3/3] jsonnet-libs"
+echo "==> [3/4] jsonnet-libs"
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [[ ! -d "${JSONNET_LIBS_DIR}/.git" ]]; then
@@ -172,7 +178,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "    DRY_RUN: would run: make -C ${JSONNET_LIBS_DIR} libs/nodemanager"
 else
   # Regenerate CRD libsonnet (runs Docker image k8s-gen)
-  make -C "${JSONNET_LIBS_DIR}" libs/nodemanager
+  make -C "${JSONNET_LIBS_DIR}" libs/nodemanager OUTPUT_DIR="${JSONNET_LIBS_DIR}/gen"
 
   GEN_DIR="${JSONNET_LIBS_DIR}/gen/nodemanager-libsonnet/${VERSION_NO_V}"
   if [[ ! -d "${GEN_DIR}" ]]; then
@@ -194,6 +200,87 @@ else
   else
     git -C "${JSONNET_LIBS_DIR}" push
     echo "    jsonnet-libs pushed"
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "==> [4/4] personal-ports (FreeBSD)"
+# ─────────────────────────────────────────────────────────────────────────────
+# Computes distinfo by fetching from the Go module proxy and GitHub — no
+# FreeBSD toolchain required.  Build validation (poudriere) is left to a
+# dedicated FreeBSD Woodpecker runner once one is available.
+
+PORT_SUBDIR="sysutils/nodemanager"
+GH_ACCOUNT="zachfi"
+GO_MODULE="github.com/${GH_ACCOUNT}/nodemanager"
+# distinfo path prefix matches the FreeBSD ports convention:
+#   go/<CATEGORIES>_<PORTNAME>/<GH_ACCOUNT>-<GH_PROJECT>-<DISTVERSIONPREFIX><VER>_GH0/
+DIST_PREFIX="go/sysutils_nodemanager/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0"
+
+if [[ ! -d "${PERSONAL_PORTS_DIR}/.git" ]]; then
+  git clone "${PERSONAL_PORTS_REMOTE}" "${PERSONAL_PORTS_DIR}"
+fi
+
+PORT_DIR="${PERSONAL_PORTS_DIR}/${PORT_SUBDIR}"
+
+# Check if already at this version
+CURRENT_VER="$(grep '^PORTVERSION' "${PORT_DIR}/Makefile" | awk '{print $NF}')"
+if [[ "${CURRENT_VER}" == "${VERSION_NO_V}" ]]; then
+  echo "    ${VERSION_NO_V} already set in port Makefile — skipping"
+else
+  # Bump PORTVERSION and reset PORTREVISION
+  sed -i "s|^PORTVERSION=.*|PORTVERSION=\t${VERSION_NO_V}|" "${PORT_DIR}/Makefile"
+  sed -i "s|^PORTREVISION=.*|PORTREVISION=\t0|"             "${PORT_DIR}/Makefile"
+  echo "    PORTVERSION → ${VERSION_NO_V}"
+
+  # Fetch distfiles and compute SHA256 + SIZE
+  echo "--> Fetching distfiles for ${GO_MODULE}@v${VERSION_NO_V}"
+
+  MOD_FILE="${WORK_DIR}/v${VERSION_NO_V}.mod"
+  ZIP_FILE="${WORK_DIR}/v${VERSION_NO_V}.zip"
+  TGZ_FILE="${WORK_DIR}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz"
+
+  PORT_MOD_URL="${PORT_MOD_URL:-https://proxy.golang.org/${GO_MODULE}/@v/v${VERSION_NO_V}.mod}"
+  PORT_ZIP_URL="${PORT_ZIP_URL:-https://proxy.golang.org/${GO_MODULE}/@v/v${VERSION_NO_V}.zip}"
+  PORT_TGZ_URL="${PORT_TGZ_URL:-https://github.com/${GH_ACCOUNT}/nodemanager/archive/refs/tags/v${VERSION_NO_V}.tar.gz}"
+
+  curl -fsSL "${PORT_MOD_URL}" -o "${MOD_FILE}"
+  curl -fsSL "${PORT_ZIP_URL}" -o "${ZIP_FILE}"
+  curl -fsSL "${PORT_TGZ_URL}" -o "${TGZ_FILE}"
+
+  SHA_MOD="$(sha256sum "${MOD_FILE}" | awk '{print $1}')"
+  SZ_MOD="$(wc -c < "${MOD_FILE}")"
+  SHA_ZIP="$(sha256sum "${ZIP_FILE}" | awk '{print $1}')"
+  SZ_ZIP="$(wc -c < "${ZIP_FILE}")"
+  SHA_TGZ="$(sha256sum "${TGZ_FILE}" | awk '{print $1}')"
+  SZ_TGZ="$(wc -c < "${TGZ_FILE}")"
+
+  echo "    .mod  sha256=${SHA_MOD} size=${SZ_MOD}"
+  echo "    .zip  sha256=${SHA_ZIP} size=${SZ_ZIP}"
+  echo "    .tar.gz sha256=${SHA_TGZ} size=${SZ_TGZ}"
+
+  # Write distinfo
+  cat > "${PORT_DIR}/distinfo" <<EOF
+TIMESTAMP = $(date +%s)
+SHA256 (${DIST_PREFIX}/v${VERSION_NO_V}.mod) = ${SHA_MOD}
+SIZE (${DIST_PREFIX}/v${VERSION_NO_V}.mod) = ${SZ_MOD}
+SHA256 (${DIST_PREFIX}/v${VERSION_NO_V}.zip) = ${SHA_ZIP}
+SIZE (${DIST_PREFIX}/v${VERSION_NO_V}.zip) = ${SZ_ZIP}
+SHA256 (${DIST_PREFIX}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz) = ${SHA_TGZ}
+SIZE (${DIST_PREFIX}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz) = ${SZ_TGZ}
+EOF
+
+  git -C "${PERSONAL_PORTS_DIR}" add "${PORT_DIR}/Makefile" "${PORT_DIR}/distinfo"
+  git -C "${PERSONAL_PORTS_DIR}" commit \
+    -m "chore: update sysutils/nodemanager/ for ${VERSION}"
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "    DRY_RUN: would push personal-ports"
+  else
+    git -C "${PERSONAL_PORTS_DIR}" push
+    echo "    personal-ports pushed"
+    echo "    NOTE: poudriere build validation requires a FreeBSD Woodpecker runner"
   fi
 fi
 
