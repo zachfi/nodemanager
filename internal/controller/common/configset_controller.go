@@ -26,6 +26,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -306,6 +307,14 @@ func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeNam
 		found := false
 		for i, cs := range node.Status.ConfigSets {
 			if cs.Name == configSetName {
+				// Skip the write if nothing meaningful changed — avoids triggering
+				// a ManagedNode watch event (and a downstream ManagedNode reconcile)
+				// on every ConfigSet reconcile.
+				if cs.ResourceVersion == entry.ResourceVersion &&
+					cs.Error == entry.Error &&
+					reflect.DeepEqual(cs.Conflicts, entry.Conflicts) {
+					return nil
+				}
 				node.Status.ConfigSets[i] = entry
 				found = true
 				break
