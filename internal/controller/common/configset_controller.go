@@ -43,6 +43,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
@@ -198,7 +199,12 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // SetupWithManager sets up the controller with the Manager.
 func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.cfg.FileBucket.Enabled && r.cfg.FileBucket.MaxAge > 0 {
-		go r.runFileBucketGC(context.Background())
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			r.runFileBucketGC(ctx)
+			return nil
+		})); err != nil {
+			return fmt.Errorf("failed to register filebucket GC runnable: %w", err)
+		}
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
