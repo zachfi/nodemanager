@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	corev1 "k8s.io/api/core/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -46,10 +47,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/internal/notification"
 	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/locker"
+	notificationv1 "github.com/zachfi/nodemanager/pkg/notification/v1"
 	"github.com/zachfi/nodemanager/pkg/util"
 )
 
@@ -64,9 +67,10 @@ type ManagedNodeReconciler struct {
 	cfg          ManagedNodeConfig
 	clientset    kubernetes.Interface
 	agentVersion string
+	notifier     notification.Notifier
 }
 
-func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface, agentVersion string) *ManagedNodeReconciler {
+func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface, agentVersion string, notifier notification.Notifier) *ManagedNodeReconciler {
 	return &ManagedNodeReconciler{
 		Client:       client,
 		Scheme:       scheme,
@@ -77,6 +81,7 @@ func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logg
 		cfg:          cfg,
 		clientset:    clientset,
 		agentVersion: agentVersion,
+		notifier:     notifier,
 	}
 }
 
@@ -469,6 +474,24 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return next, nil
 	}
 
+	// If notification is enabled, gate the upgrade on agent approval.
+	if r.notifier != nil {
+		if !r.notifier.HasSubscribers() {
+			r.logger.Info("no notification agent connected, skipping upgrade until agent is available")
+			return next, nil
+		}
+
+		approved, approvalErr := r.requestUpgradeApproval(ctx, node, next)
+		if approvalErr != nil {
+			r.logger.Error("upgrade approval request failed", "err", approvalErr)
+			return next, nil
+		}
+		if !approved {
+			r.logger.Info("upgrade denied or delayed by user, will retry next cycle")
+			return next, nil
+		}
+	}
+
 	// Proceed with the upgrade
 
 	if node.Spec.Upgrade.Group != "" {
@@ -479,6 +502,16 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	}
 
 	upgradeStart := time.Now()
+
+	if r.notifier != nil {
+		r.notifier.Notify(&notificationv1.Event{
+			Payload: &notificationv1.Event_UpgradeStarted{
+				UpgradeStarted: &notificationv1.UpgradeStarted{
+					Description: fmt.Sprintf("system upgrade on %s", node.Name),
+				},
+			},
+		})
+	}
 
 	// Cordon and drain if this host is a Kubernetes node
 	k8sNode, err := r.getKubernetesNode(ctx, node.Name)
@@ -535,10 +568,71 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return time.Time{}, fmt.Errorf("failed to set last upgrade time: %w", err)
 	}
 
+	if r.notifier != nil {
+		r.notifier.Notify(&notificationv1.Event{
+			Payload: &notificationv1.Event_UpgradeCompleted{
+				UpgradeCompleted: &notificationv1.UpgradeCompleted{
+					Success:       true,
+					RebootPending: true,
+				},
+			},
+		})
+	}
+
 	// Reboot the system after we've marked the system as upgraded
 	r.system.Node().Reboot(ctx)
 
 	return time.Time{}, err
+}
+
+// requestUpgradeApproval sends an UpgradeApprovalRequest to connected agents
+// and waits for a response. Returns true if approved, false if denied/delayed/timed out.
+func (r *ManagedNodeReconciler) requestUpgradeApproval(ctx context.Context, node *commonv1.ManagedNode, scheduledTime time.Time) (bool, error) {
+	eventID := fmt.Sprintf("upgrade-%s-%d", node.Name, scheduledTime.Unix())
+	deadline := time.Now().Add(r.cfg.ForgivenessPeriod)
+
+	approvalCh := r.notifier.WaitForApproval(eventID)
+	defer r.notifier.CancelApproval(eventID)
+
+	r.notifier.Notify(&notificationv1.Event{
+		Id: eventID,
+		Payload: &notificationv1.Event_UpgradeApprovalRequest{
+			UpgradeApprovalRequest: &notificationv1.UpgradeApprovalRequest{
+				Description:   fmt.Sprintf("system upgrade on %s", node.Name),
+				Schedule:      timestamppb.New(scheduledTime),
+				Deadline:      timestamppb.New(deadline),
+				DefaultAction: notificationv1.ApprovalAction_APPROVAL_ACTION_APPROVE,
+			},
+		},
+	})
+
+	r.logger.Info("waiting for upgrade approval from agent", "event", eventID, "deadline", deadline)
+
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+
+	select {
+	case resp := <-approvalCh:
+		switch resp.GetAction() {
+		case notificationv1.ApprovalAction_APPROVAL_ACTION_APPROVE:
+			r.logger.Info("upgrade approved by user", "user", resp.GetUser())
+			return true, nil
+		case notificationv1.ApprovalAction_APPROVAL_ACTION_DENY:
+			r.logger.Info("upgrade denied by user", "user", resp.GetUser())
+			return false, nil
+		case notificationv1.ApprovalAction_APPROVAL_ACTION_DELAY:
+			r.logger.Info("upgrade delayed by user", "user", resp.GetUser())
+			return false, nil
+		default:
+			r.logger.Info("upgrade approval: unspecified action, treating as approved")
+			return true, nil
+		}
+	case <-timer.C:
+		r.logger.Info("upgrade approval deadline reached, proceeding with default action (approve)")
+		return true, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
 }
 
 func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (time.Time, error) {

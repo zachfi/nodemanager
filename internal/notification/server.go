@@ -184,3 +184,10 @@ func (s *Server) CancelApproval(eventID string) {
 	delete(s.approvals, eventID)
 	s.approvalsMu.Unlock()
 }
+
+// HasSubscribers returns true if at least one agent is connected.
+func (s *Server) HasSubscribers() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.subscribers) > 0
+}

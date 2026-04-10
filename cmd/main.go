@@ -223,14 +223,26 @@ func main() {
 
 	controller.SetBuildInfo(version, gitCommit, buildDate, goarch, goos)
 
-	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker, clientset, version)
+	// Set up notification server if enabled; the Notifier interface is passed
+	// to reconcilers so they can gate upgrades and send backup events.
+	var notifier notification.Notifier
+	if cfg.ControllerConfig.Notification.Enabled {
+		notifServer := notification.NewServer(logger, cfg.ControllerConfig.Notification)
+		if err := mgr.Add(notifServer); err != nil {
+			setupLog.Error(err, "unable to add notification server")
+			os.Exit(1)
+		}
+		notifier = notifServer
+	}
+
+	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker, clientset, version, notifier)
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)
 	}
 
 	cfg.ControllerConfig.ConfigSet.Namespace = cfg.ControllerConfig.Namespace
-	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker)
+	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker, notifier)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
@@ -253,14 +265,6 @@ func main() {
 
 		if err = jailReconciler.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Jail")
-			os.Exit(1)
-		}
-	}
-
-	if cfg.ControllerConfig.Notification.Enabled {
-		notifServer := notification.NewServer(logger, cfg.ControllerConfig.Notification)
-		if err := mgr.Add(notifServer); err != nil {
-			setupLog.Error(err, "unable to add notification server")
 			os.Exit(1)
 		}
 	}

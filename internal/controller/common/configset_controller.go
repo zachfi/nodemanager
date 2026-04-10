@@ -47,9 +47,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/internal/notification"
 	"github.com/zachfi/nodemanager/pkg/files"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/locker"
+	notificationv1 "github.com/zachfi/nodemanager/pkg/notification/v1"
 	"github.com/zachfi/nodemanager/pkg/packages"
 	"github.com/zachfi/nodemanager/pkg/services"
 	"github.com/zachfi/nodemanager/pkg/services/systemd"
@@ -58,12 +60,13 @@ import (
 // ConfigSetReconciler reconciles a ConfigSet object
 type ConfigSetReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	tracer trace.Tracer
-	logger *slog.Logger
-	system handler.System
-	locker locker.Locker
-	cfg    ConfigSetConfig
+	Scheme   *runtime.Scheme
+	tracer   trace.Tracer
+	logger   *slog.Logger
+	system   handler.System
+	locker   locker.Locker
+	cfg      ConfigSetConfig
+	notifier notification.Notifier
 
 	// lastResourceVersion tracks the resource_version label most recently recorded
 	// for each (node, configset) pair so stale label sets can be deleted from the
@@ -72,7 +75,7 @@ type ConfigSetReconciler struct {
 	lastResourceVersion   map[string]string // key: "node/configset"
 }
 
-func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker) *ConfigSetReconciler {
+func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker, notifier notification.Notifier) *ConfigSetReconciler {
 	return &ConfigSetReconciler{
 		Client:              client,
 		Scheme:              scheme,
@@ -81,6 +84,7 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 		locker:              locker,
 		system:              system,
 		cfg:                 cfg,
+		notifier:            notifier,
 		lastResourceVersion: make(map[string]string),
 	}
 }
@@ -642,6 +646,22 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 	handler := r.system.File()
 
+	// Notify agents that file processing is starting (fire-and-forget).
+	if r.notifier != nil && r.cfg.FileBucket.Enabled && len(fileSet) > 0 {
+		paths := make([]string, 0, len(fileSet))
+		for _, f := range fileSet {
+			paths = append(paths, f.Path)
+		}
+		r.notifier.Notify(&notificationv1.Event{
+			Payload: &notificationv1.Event_BackupStarted{
+				BackupStarted: &notificationv1.BackupStarted{
+					Files:     paths,
+					Configset: configSetName,
+				},
+			},
+		})
+	}
+
 	changedFiles := make([]string, 0, len(fileSet))
 	fileBackupUpdates := make(map[string]string)
 	var errs []error
@@ -763,6 +783,26 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 	}
 
 	fileChangesTotal.WithLabelValues(nodeName, configSetName, "success").Add(float64(len(changedFiles)))
+
+	// Notify agents that file processing completed (fire-and-forget).
+	if r.notifier != nil && r.cfg.FileBucket.Enabled && len(fileBackupUpdates) > 0 {
+		results := make([]*notificationv1.FileBackupResult, 0, len(fileBackupUpdates))
+		for path, hash := range fileBackupUpdates {
+			results = append(results, &notificationv1.FileBackupResult{
+				Path:    path,
+				Success: true,
+				Sha256:  hash,
+			})
+		}
+		r.notifier.Notify(&notificationv1.Event{
+			Payload: &notificationv1.Event_BackupCompleted{
+				BackupCompleted: &notificationv1.BackupCompleted{
+					Results:   results,
+					Configset: configSetName,
+				},
+			},
+		})
+	}
 
 	return changedFiles, fileBackupUpdates, errors.Join(errs...)
 }
