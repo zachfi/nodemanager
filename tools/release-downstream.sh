@@ -122,12 +122,16 @@ echo "--> PKGBUILD for ${VERSION_NO_V}:"
 grep -E "^pkgver|sha256" "${BIN_DIR}/PKGBUILD"
 
 git -C "${BIN_DIR}" add PKGBUILD
-git -C "${BIN_DIR}" commit -m "Update nodemanager to ${VERSION_NO_V}"
-if [[ "${DRY_RUN}" == "1" ]]; then
-  echo "    DRY_RUN: would push nodemanager-bin"
+if git -C "${BIN_DIR}" diff --staged --quiet; then
+  echo "    PKGBUILD already at ${VERSION_NO_V} — nothing to commit"
 else
-  git -C "${BIN_DIR}" push origin main
-  echo "    nodemanager-bin pushed"
+  git -C "${BIN_DIR}" commit -m "Update nodemanager to ${VERSION_NO_V}"
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "    DRY_RUN: would push nodemanager-bin"
+  else
+    git -C "${BIN_DIR}" push origin main
+    echo "    nodemanager-bin pushed"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
