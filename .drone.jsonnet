@@ -72,6 +72,17 @@ local withCI() = {
   },
 };
 
+local dockerCIStep() = step('docker-ci') {
+  // Build and push a versioned image to the local registry.
+  // Requires the host to have docker socket access (volumes wired in pipeline).
+  commands: ['make docker-ci REGISTRY=%s/%s' % [localRegistry, owner]],
+  volumes: [{ name: 'docker-sock', path: '/var/run/docker.sock' }],
+};
+
+local withDockerSock() = {
+  volumes+: [{ name: 'docker-sock', host: { path: '/var/run/docker.sock' } }],
+};
+
 local testStep() = step('test') {
   // Point directly at the envtest binaries pre-installed in the tools image by
   //   setup-envtest use 1.29.0 --bin-dir /usr/local/kubebuilder/bin
@@ -95,10 +106,12 @@ local testStep() = step('test') {
   ),
   (
     pipeline('main')
-    + withPipelineMain() {
+    + withPipelineMain()
+    + withDockerSock() {
       steps:
         [
           make('snapshot'),
+          dockerCIStep(),
         ],
     }
   ),

@@ -6,6 +6,12 @@ import (
 )
 
 var (
+	// buildInfoGauge exposes build metadata as a Prometheus info metric (value always 1).
+	buildInfoGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "nodemanager_build_info",
+		Help: "Build information for the nodemanager binary. Value is always 1; use labels to identify the version.",
+	}, []string{"version", "git_commit", "build_date", "goarch", "goos"})
+
 	// configSetApplyTotal counts ConfigSet apply operations, labelled by node,
 	// configset name, and result ("success" or "error").
 	configSetApplyTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -78,8 +84,15 @@ var (
 	}, []string{"node", "configset", "resource_version"})
 )
 
+// SetBuildInfo sets the build info metric to 1 with the given labels.
+// Call once at startup from main() after the metrics registry is initialised.
+func SetBuildInfo(ver, commit, date, arch, os string) {
+	buildInfoGauge.WithLabelValues(ver, commit, date, arch, os).Set(1)
+}
+
 func init() {
 	metrics.Registry.MustRegister(
+		buildInfoGauge,
 		configSetApplyTotal,
 		configSetApplyDuration,
 		packageOperationsTotal,

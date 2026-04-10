@@ -55,6 +55,7 @@ import (
 )
 
 var (
+	version   = "dev"                    // semantic version, populated via -ldflags
 	goos      = "unknown"
 	goarch    = "unknown"
 	gitCommit = "$Format:%H$" // sha1 from git, output of $(git rev-parse HEAD)
@@ -62,8 +63,9 @@ var (
 	buildDate = "1970-01-01T00:00:00Z" // build date in ISO8601 format, output of $(date -u +'%Y-%m-%dT%H:%M:%SZ')
 )
 
-// version contains all the information related to the CLI version
-type version struct {
+// buildInfo contains all the information related to the CLI version
+type buildInfo struct {
+	Version   string `json:"version"`
 	GitCommit string `json:"gitCommit"`
 	BuildDate string `json:"buildDate"`
 	GoOs      string `json:"goOs"`
@@ -72,7 +74,8 @@ type version struct {
 
 // versionString returns the CLI version
 func versionString() string {
-	return fmt.Sprintf("Version: %#v", version{
+	return fmt.Sprintf("Version: %#v", buildInfo{
+		version,
 		gitCommit,
 		buildDate,
 		goos,
@@ -217,7 +220,9 @@ func main() {
 
 	locker := locker.NewLeaseLocker(ctx, logger, cfg.ControllerConfig.Locker, clientset, cfg.ControllerConfig.Namespace, hostname)
 
-	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker, clientset)
+	controller.SetBuildInfo(version, gitCommit, buildDate, goarch, goos)
+
+	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker, clientset, version)
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)

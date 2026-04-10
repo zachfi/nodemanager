@@ -81,12 +81,20 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 
 ##@ Build
 
+GIT_VERSION ?= $(shell git describe --tags --always --dirty)
+GIT_COMMIT  ?= $(shell git rev-parse HEAD)
+BUILD_DATE  ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+
 LD_FLAGS=-ldflags " \
+    -X main.version=$(GIT_VERSION) \
     -X main.goos=$(shell go env GOOS) \
     -X main.goarch=$(shell go env GOARCH) \
-    -X main.gitCommit=$(shell git rev-parse HEAD) \
-    -X main.buildDate=$(shell date -u +'%Y-%m-%dT%H:%M:%SZ') \
+    -X main.gitCommit=$(GIT_COMMIT) \
+    -X main.buildDate=$(BUILD_DATE) \
     "
+
+# REGISTRY is the container registry prefix to push to (e.g. reg.dist.svc.cluster.znet:5000/zachfi).
+REGISTRY ?=
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager binary.
@@ -106,6 +114,18 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-ci
+docker-ci: ## Build and push versioned image to REGISTRY (e.g. make docker-ci REGISTRY=reg.dist.svc.cluster.znet:5000/zachfi).
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(REGISTRY)/nodemanager:$(GIT_VERSION) \
+		-t $(REGISTRY)/nodemanager:main-$(shell git rev-parse --short HEAD) \
+		.
+	$(CONTAINER_TOOL) push $(REGISTRY)/nodemanager:$(GIT_VERSION)
+	$(CONTAINER_TOOL) push $(REGISTRY)/nodemanager:main-$(shell git rev-parse --short HEAD)
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:

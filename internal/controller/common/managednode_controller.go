@@ -56,25 +56,27 @@ import (
 // ManagedNodeReconciler reconciles a ManagedNode object
 type ManagedNodeReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	tracer    trace.Tracer
-	logger    *slog.Logger
-	system    handler.System
-	locker    locker.Locker
-	cfg       ManagedNodeConfig
-	clientset kubernetes.Interface
+	Scheme       *runtime.Scheme
+	tracer       trace.Tracer
+	logger       *slog.Logger
+	system       handler.System
+	locker       locker.Locker
+	cfg          ManagedNodeConfig
+	clientset    kubernetes.Interface
+	agentVersion string
 }
 
-func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface) *ManagedNodeReconciler {
+func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface, agentVersion string) *ManagedNodeReconciler {
 	return &ManagedNodeReconciler{
-		Client:    client,
-		Scheme:    scheme,
-		tracer:    otel.Tracer("controller.common.managednode"),
-		logger:    logger.With("controller", "managednode"),
-		locker:    locker,
-		system:    system,
-		cfg:       cfg,
-		clientset: clientset,
+		Client:       client,
+		Scheme:       scheme,
+		tracer:       otel.Tracer("controller.common.managednode"),
+		logger:       logger.With("controller", "managednode"),
+		locker:       locker,
+		system:       system,
+		cfg:          cfg,
+		clientset:    clientset,
+		agentVersion: agentVersion,
 	}
 }
 
@@ -211,11 +213,13 @@ func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *comm
 
 func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *commonv1.ManagedNode) error {
 	// Snapshot the fields we manage so we can skip the write if nothing changed.
+	oldAgentVersion := node.Status.AgentVersion
 	oldRelease := node.Status.Release
 	oldInterfaces := node.Status.Interfaces
 	oldSSHHostKeys := node.Status.SSHHostKeys
 	oldWireGuard := node.Status.WireGuard
 
+	node.Status.AgentVersion = r.agentVersion
 	info := r.system.Node().Info(ctx)
 	node.Status.Release = info.OS.Release
 	node.Status.Interfaces = collectNetworkInterfaces()
@@ -238,7 +242,8 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 
 	node.Status.WireGuard = liveWG
 
-	if node.Status.Release == oldRelease &&
+	if node.Status.AgentVersion == oldAgentVersion &&
+		node.Status.Release == oldRelease &&
 		reflect.DeepEqual(node.Status.Interfaces, oldInterfaces) &&
 		reflect.DeepEqual(node.Status.SSHHostKeys, oldSSHHostKeys) &&
 		reflect.DeepEqual(node.Status.WireGuard, oldWireGuard) {

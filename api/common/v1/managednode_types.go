@@ -90,7 +90,10 @@ type SSHHostKey struct {
 
 // ManagedNodeStatus defines the observed state of ManagedNode
 type ManagedNodeStatus struct {
-	Release     string                      `json:"release,omitempty"`
+	// AgentVersion is the semantic version of the nodemanager binary currently
+	// reconciling this node, as reported by the running agent.
+	AgentVersion string `json:"agentVersion,omitempty"`
+	Release      string `json:"release,omitempty"`
 	Interfaces  map[string]NetworkInterface `json:"interfaces,omitempty"`
 	ConfigSets  []ConfigSetApplyStatus      `json:"configsets,omitempty"`
 	SSHHostKeys []SSHHostKey                `json:"sshHostKeys,omitempty"`
