@@ -8,7 +8,8 @@ before:
     # you may remove this if you don't need go generate
     - go generate ./...
 builds:
-  - ldflags:
+  - id: nodemanager
+    ldflags:
       - -X main.version={{.Version}}
       - -X main.gitCommit={{.Commit}}
       - -X main.buildDate={{.Date}}
@@ -37,6 +38,27 @@ builds:
         goarch: arm
         goarm: 7
     main: './cmd/'
+  - id: nodemanager-agent
+    binary: nodemanager-agent
+    ldflags:
+      - -X main.version={{.Version}}
+      - -X main.gitCommit={{.Commit}}
+      - -X main.buildDate={{.Date}}
+      - -X main.goos={{.Os}}
+      - -X main.goarch={{.Arch}}
+    env:
+      - CGO_ENABLED=0
+    goarm:
+      - '7'
+    goamd64:
+      - 'v1'
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm
+      - arm64
+    main: './cmd/agent/'
 checksum:
   name_template: 'checksums.txt'
 snapshot:
@@ -48,6 +70,12 @@ changelog:
       - '^docs:'
       - '^test:'
 archives:
-  - id: 'default'
+  - id: nodemanager
+    builds:
+      - nodemanager
     files:
       - config/crd/bases/*.yaml
+  - id: nodemanager-agent
+    builds:
+      - nodemanager-agent
+    name_template: "nodemanager-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"

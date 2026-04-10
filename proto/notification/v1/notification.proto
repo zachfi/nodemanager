@@ -1,0 +1,104 @@
+// Copyright 2024.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package notification.v1;
+
+option go_package = "github.com/zachfi/nodemanager/pkg/notification/v1;notificationv1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// NodeNotificationService allows a user-space agent to receive notifications
+// from the nodemanager daemon and respond to approval requests.
+service NodeNotificationService {
+  // Subscribe opens a server-streaming connection. The agent identifies itself
+  // and receives events for the lifetime of the stream.
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+
+  // RespondToApproval sends the user's decision for a pending approval request.
+  rpc RespondToApproval(ApprovalResponse) returns (ApprovalResponseAck);
+}
+
+message SubscribeRequest {
+  string user = 1;
+  string session_id = 2;
+}
+
+message Event {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+
+  oneof payload {
+    BackupStarted backup_started = 10;
+    BackupCompleted backup_completed = 11;
+    UpgradeApprovalRequest upgrade_approval_request = 12;
+    UpgradeStarted upgrade_started = 13;
+    UpgradeCompleted upgrade_completed = 14;
+  }
+}
+
+message BackupStarted {
+  repeated string files = 1;
+  string configset = 2;
+}
+
+message BackupCompleted {
+  repeated FileBackupResult results = 1;
+  string configset = 2;
+}
+
+message FileBackupResult {
+  string path = 1;
+  bool success = 2;
+  string sha256 = 3;
+  string error = 4;
+}
+
+message UpgradeApprovalRequest {
+  string description = 1;
+  google.protobuf.Timestamp schedule = 2;
+  google.protobuf.Timestamp deadline = 3;
+  ApprovalAction default_action = 4;
+}
+
+message UpgradeStarted {
+  string description = 1;
+}
+
+message UpgradeCompleted {
+  bool success = 1;
+  string error = 2;
+  bool reboot_pending = 3;
+}
+
+enum ApprovalAction {
+  APPROVAL_ACTION_UNSPECIFIED = 0;
+  APPROVAL_ACTION_APPROVE = 1;
+  APPROVAL_ACTION_DENY = 2;
+  APPROVAL_ACTION_DELAY = 3;
+}
+
+message ApprovalResponse {
+  string event_id = 1;
+  ApprovalAction action = 2;
+  google.protobuf.Duration delay_duration = 3;
+  string user = 4;
+}
+
+message ApprovalResponseAck {
+  bool accepted = 1;
+  string reason = 2;
+}

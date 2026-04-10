@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/zachfi/nodemanager/internal/controller/freebsd"
+	"github.com/zachfi/nodemanager/internal/notification"
 	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
@@ -37,10 +38,11 @@ type ControllerConfig struct {
 	EnableHTTP2          bool
 	Namespace            string
 
-	ManagedNode ManagedNodeConfig
-	ConfigSet   ConfigSetConfig
-	Locker      locker.Config
-	FreeBSD     freebsd.ControllerConfig
+	ManagedNode  ManagedNodeConfig
+	ConfigSet    ConfigSetConfig
+	Locker       locker.Config
+	FreeBSD      freebsd.ControllerConfig
+	Notification notification.Config
 }
 
 func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
@@ -58,6 +60,8 @@ func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.
 
 	// OS specific controller settings
 	c.FreeBSD.RegisterFlagsAndApplyDefaults("freebsd", f)
+
+	c.Notification.RegisterFlagsAndApplyDefaults("notification", f)
 }
 
 type ManagedNodeConfig struct {

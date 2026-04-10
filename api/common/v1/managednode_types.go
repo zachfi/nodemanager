@@ -92,12 +92,12 @@ type SSHHostKey struct {
 type ManagedNodeStatus struct {
 	// AgentVersion is the semantic version of the nodemanager binary currently
 	// reconciling this node, as reported by the running agent.
-	AgentVersion string `json:"agentVersion,omitempty"`
-	Release      string `json:"release,omitempty"`
-	Interfaces  map[string]NetworkInterface `json:"interfaces,omitempty"`
-	ConfigSets  []ConfigSetApplyStatus      `json:"configsets,omitempty"`
-	SSHHostKeys []SSHHostKey                `json:"sshHostKeys,omitempty"`
-	WireGuard   []WireGuardInterface        `json:"wireGuard,omitempty"`
+	AgentVersion string                      `json:"agentVersion,omitempty"`
+	Release      string                      `json:"release,omitempty"`
+	Interfaces   map[string]NetworkInterface `json:"interfaces,omitempty"`
+	ConfigSets   []ConfigSetApplyStatus      `json:"configsets,omitempty"`
+	SSHHostKeys  []SSHHostKey                `json:"sshHostKeys,omitempty"`
+	WireGuard    []WireGuardInterface        `json:"wireGuard,omitempty"`
 	// FileBackups records the SHA256 hash of the content that was on disk
 	// immediately before nodemanager last replaced each file.  Use the hash to
 	// locate the backup blob in the filebucket store for recovery.

@@ -43,6 +43,7 @@ import (
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	controller "github.com/zachfi/nodemanager/internal/controller/common"
 	"github.com/zachfi/nodemanager/internal/controller/freebsd"
+	"github.com/zachfi/nodemanager/internal/notification"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -55,7 +56,7 @@ import (
 )
 
 var (
-	version   = "dev"                    // semantic version, populated via -ldflags
+	version   = "dev" // semantic version, populated via -ldflags
 	goos      = "unknown"
 	goarch    = "unknown"
 	gitCommit = "$Format:%H$" // sha1 from git, output of $(git rev-parse HEAD)
@@ -252,6 +253,14 @@ func main() {
 
 		if err = jailReconciler.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Jail")
+			os.Exit(1)
+		}
+	}
+
+	if cfg.ControllerConfig.Notification.Enabled {
+		notifServer := notification.NewServer(logger, cfg.ControllerConfig.Notification)
+		if err := mgr.Add(notifServer); err != nil {
+			setupLog.Error(err, "unable to add notification server")
 			os.Exit(1)
 		}
 	}
