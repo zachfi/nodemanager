@@ -123,8 +123,8 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // SetupWithManager sets up the controller with the Manager.
 func (r *PoudriereReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		// Uncomment the following line adding a pointer to an instance of the controlled resource as an argument
-		// For().
+		For(&freebsdv1.PoudriereBulk{}).
+		Named("Poudriere").
 		Complete(r)
 }
 
