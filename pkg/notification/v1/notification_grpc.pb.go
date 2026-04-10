@@ -35,6 +35,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	NodeNotificationService_Subscribe_FullMethodName         = "/notification.v1.NodeNotificationService/Subscribe"
 	NodeNotificationService_RespondToApproval_FullMethodName = "/notification.v1.NodeNotificationService/RespondToApproval"
+	NodeNotificationService_SendNotification_FullMethodName  = "/notification.v1.NodeNotificationService/SendNotification"
 )
 
 // NodeNotificationServiceClient is the client API for NodeNotificationService service.
@@ -42,13 +43,18 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // NodeNotificationService allows a user-space agent to receive notifications
-// from the nodemanager daemon and respond to approval requests.
+// from the nodemanager daemon and respond to approval requests. External
+// scripts can also push generic notifications via SendNotification.
 type NodeNotificationServiceClient interface {
 	// Subscribe opens a server-streaming connection. The agent identifies itself
 	// and receives events for the lifetime of the stream.
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 	// RespondToApproval sends the user's decision for a pending approval request.
 	RespondToApproval(ctx context.Context, in *ApprovalResponse, opts ...grpc.CallOption) (*ApprovalResponseAck, error)
+	// SendNotification pushes a generic notification through the server to all
+	// connected agents. Intended for use by external scripts (backup jobs,
+	// maintenance tasks, etc.) that want to inform the desktop user.
+	SendNotification(ctx context.Context, in *Notification, opts ...grpc.CallOption) (*NotificationAck, error)
 }
 
 type nodeNotificationServiceClient struct {
@@ -88,18 +94,33 @@ func (c *nodeNotificationServiceClient) RespondToApproval(ctx context.Context, i
 	return out, nil
 }
 
+func (c *nodeNotificationServiceClient) SendNotification(ctx context.Context, in *Notification, opts ...grpc.CallOption) (*NotificationAck, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NotificationAck)
+	err := c.cc.Invoke(ctx, NodeNotificationService_SendNotification_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeNotificationServiceServer is the server API for NodeNotificationService service.
 // All implementations must embed UnimplementedNodeNotificationServiceServer
 // for forward compatibility.
 //
 // NodeNotificationService allows a user-space agent to receive notifications
-// from the nodemanager daemon and respond to approval requests.
+// from the nodemanager daemon and respond to approval requests. External
+// scripts can also push generic notifications via SendNotification.
 type NodeNotificationServiceServer interface {
 	// Subscribe opens a server-streaming connection. The agent identifies itself
 	// and receives events for the lifetime of the stream.
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[Event]) error
 	// RespondToApproval sends the user's decision for a pending approval request.
 	RespondToApproval(context.Context, *ApprovalResponse) (*ApprovalResponseAck, error)
+	// SendNotification pushes a generic notification through the server to all
+	// connected agents. Intended for use by external scripts (backup jobs,
+	// maintenance tasks, etc.) that want to inform the desktop user.
+	SendNotification(context.Context, *Notification) (*NotificationAck, error)
 	mustEmbedUnimplementedNodeNotificationServiceServer()
 }
 
@@ -115,6 +136,9 @@ func (UnimplementedNodeNotificationServiceServer) Subscribe(*SubscribeRequest, g
 }
 func (UnimplementedNodeNotificationServiceServer) RespondToApproval(context.Context, *ApprovalResponse) (*ApprovalResponseAck, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RespondToApproval not implemented")
+}
+func (UnimplementedNodeNotificationServiceServer) SendNotification(context.Context, *Notification) (*NotificationAck, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendNotification not implemented")
 }
 func (UnimplementedNodeNotificationServiceServer) mustEmbedUnimplementedNodeNotificationServiceServer() {
 }
@@ -167,6 +191,24 @@ func _NodeNotificationService_RespondToApproval_Handler(srv interface{}, ctx con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeNotificationService_SendNotification_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Notification)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeNotificationServiceServer).SendNotification(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeNotificationService_SendNotification_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeNotificationServiceServer).SendNotification(ctx, req.(*Notification))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeNotificationService_ServiceDesc is the grpc.ServiceDesc for NodeNotificationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -177,6 +219,10 @@ var NodeNotificationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RespondToApproval",
 			Handler:    _NodeNotificationService_RespondToApproval_Handler,
+		},
+		{
+			MethodName: "SendNotification",
+			Handler:    _NodeNotificationService_SendNotification_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

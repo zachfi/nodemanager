@@ -125,3 +125,54 @@ func TestRespondToApproval(t *testing.T) {
 	cancel()
 	require.NoError(t, <-errCh)
 }
+
+func TestSendNotification(t *testing.T) {
+	srv, sock := testServer(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	conn, err := grpc.NewClient(
+		"unix://"+sock,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := notificationv1.NewNodeNotificationServiceClient(conn)
+
+	// Subscribe first so we can receive the notification.
+	stream, err := client.Subscribe(ctx, &notificationv1.SubscribeRequest{
+		User:      "testuser",
+		SessionId: "test-session",
+	})
+	require.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+
+	// Send a generic notification via the RPC.
+	ack, err := client.SendNotification(ctx, &notificationv1.Notification{
+		Title:    "Backup complete",
+		Body:     "/home backed up successfully",
+		Severity: notificationv1.Severity_SEVERITY_INFO,
+	})
+	require.NoError(t, err)
+	require.True(t, ack.GetAccepted())
+
+	// The subscriber should receive it as an Event with a Notification payload.
+	event, err := stream.Recv()
+	require.NoError(t, err)
+	require.NotEmpty(t, event.GetId())
+
+	n := event.GetNotification()
+	require.NotNil(t, n)
+	require.Equal(t, "Backup complete", n.GetTitle())
+	require.Equal(t, "/home backed up successfully", n.GetBody())
+	require.Equal(t, notificationv1.Severity_SEVERITY_INFO, n.GetSeverity())
+
+	cancel()
+	require.NoError(t, <-errCh)
+}

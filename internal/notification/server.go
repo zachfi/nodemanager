@@ -144,6 +144,17 @@ func (s *Server) RespondToApproval(_ context.Context, req *notificationv1.Approv
 	}
 }
 
+// SendNotification implements the unary RPC. External scripts call this to
+// push a generic notification to all connected agents.
+func (s *Server) SendNotification(_ context.Context, req *notificationv1.Notification) (*notificationv1.NotificationAck, error) {
+	s.Notify(&notificationv1.Event{
+		Payload: &notificationv1.Event_Notification{
+			Notification: req,
+		},
+	})
+	return &notificationv1.NotificationAck{Accepted: true}, nil
+}
+
 // Notify broadcasts an event to all connected subscribers.
 func (s *Server) Notify(event *notificationv1.Event) {
 	if event.GetId() == "" {

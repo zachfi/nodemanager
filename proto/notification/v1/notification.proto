@@ -22,7 +22,8 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 // NodeNotificationService allows a user-space agent to receive notifications
-// from the nodemanager daemon and respond to approval requests.
+// from the nodemanager daemon and respond to approval requests. External
+// scripts can also push generic notifications via SendNotification.
 service NodeNotificationService {
   // Subscribe opens a server-streaming connection. The agent identifies itself
   // and receives events for the lifetime of the stream.
@@ -30,6 +31,11 @@ service NodeNotificationService {
 
   // RespondToApproval sends the user's decision for a pending approval request.
   rpc RespondToApproval(ApprovalResponse) returns (ApprovalResponseAck);
+
+  // SendNotification pushes a generic notification through the server to all
+  // connected agents. Intended for use by external scripts (backup jobs,
+  // maintenance tasks, etc.) that want to inform the desktop user.
+  rpc SendNotification(Notification) returns (NotificationAck);
 }
 
 message SubscribeRequest {
@@ -42,29 +48,30 @@ message Event {
   google.protobuf.Timestamp timestamp = 2;
 
   oneof payload {
-    BackupStarted backup_started = 10;
-    BackupCompleted backup_completed = 11;
+    Notification notification = 10;
     UpgradeApprovalRequest upgrade_approval_request = 12;
     UpgradeStarted upgrade_started = 13;
     UpgradeCompleted upgrade_completed = 14;
   }
 }
 
-message BackupStarted {
-  repeated string files = 1;
-  string configset = 2;
+// Notification is a generic user-facing message. External scripts send these
+// via SendNotification; the agent displays them as desktop notifications.
+message Notification {
+  string title = 1;
+  string body = 2;
+  Severity severity = 3;
 }
 
-message BackupCompleted {
-  repeated FileBackupResult results = 1;
-  string configset = 2;
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_WARNING = 2;
+  SEVERITY_ERROR = 3;
 }
 
-message FileBackupResult {
-  string path = 1;
-  bool success = 2;
-  string sha256 = 3;
-  string error = 4;
+message NotificationAck {
+  bool accepted = 1;
 }
 
 message UpgradeApprovalRequest {

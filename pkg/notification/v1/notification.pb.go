@@ -37,6 +37,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type Severity int32
+
+const (
+	Severity_SEVERITY_UNSPECIFIED Severity = 0
+	Severity_SEVERITY_INFO        Severity = 1
+	Severity_SEVERITY_WARNING     Severity = 2
+	Severity_SEVERITY_ERROR       Severity = 3
+)
+
+// Enum value maps for Severity.
+var (
+	Severity_name = map[int32]string{
+		0: "SEVERITY_UNSPECIFIED",
+		1: "SEVERITY_INFO",
+		2: "SEVERITY_WARNING",
+		3: "SEVERITY_ERROR",
+	}
+	Severity_value = map[string]int32{
+		"SEVERITY_UNSPECIFIED": 0,
+		"SEVERITY_INFO":        1,
+		"SEVERITY_WARNING":     2,
+		"SEVERITY_ERROR":       3,
+	}
+)
+
+func (x Severity) Enum() *Severity {
+	p := new(Severity)
+	*p = x
+	return p
+}
+
+func (x Severity) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Severity) Descriptor() protoreflect.EnumDescriptor {
+	return file_notification_v1_notification_proto_enumTypes[0].Descriptor()
+}
+
+func (Severity) Type() protoreflect.EnumType {
+	return &file_notification_v1_notification_proto_enumTypes[0]
+}
+
+func (x Severity) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Severity.Descriptor instead.
+func (Severity) EnumDescriptor() ([]byte, []int) {
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{0}
+}
+
 type ApprovalAction int32
 
 const (
@@ -73,11 +125,11 @@ func (x ApprovalAction) String() string {
 }
 
 func (ApprovalAction) Descriptor() protoreflect.EnumDescriptor {
-	return file_notification_v1_notification_proto_enumTypes[0].Descriptor()
+	return file_notification_v1_notification_proto_enumTypes[1].Descriptor()
 }
 
 func (ApprovalAction) Type() protoreflect.EnumType {
-	return &file_notification_v1_notification_proto_enumTypes[0]
+	return &file_notification_v1_notification_proto_enumTypes[1]
 }
 
 func (x ApprovalAction) Number() protoreflect.EnumNumber {
@@ -86,7 +138,7 @@ func (x ApprovalAction) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ApprovalAction.Descriptor instead.
 func (ApprovalAction) EnumDescriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{0}
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{1}
 }
 
 type SubscribeRequest struct {
@@ -147,8 +199,7 @@ type Event struct {
 	Timestamp *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
-	//	*Event_BackupStarted
-	//	*Event_BackupCompleted
+	//	*Event_Notification
 	//	*Event_UpgradeApprovalRequest
 	//	*Event_UpgradeStarted
 	//	*Event_UpgradeCompleted
@@ -208,19 +259,10 @@ func (x *Event) GetPayload() isEvent_Payload {
 	return nil
 }
 
-func (x *Event) GetBackupStarted() *BackupStarted {
+func (x *Event) GetNotification() *Notification {
 	if x != nil {
-		if x, ok := x.Payload.(*Event_BackupStarted); ok {
-			return x.BackupStarted
-		}
-	}
-	return nil
-}
-
-func (x *Event) GetBackupCompleted() *BackupCompleted {
-	if x != nil {
-		if x, ok := x.Payload.(*Event_BackupCompleted); ok {
-			return x.BackupCompleted
+		if x, ok := x.Payload.(*Event_Notification); ok {
+			return x.Notification
 		}
 	}
 	return nil
@@ -257,12 +299,8 @@ type isEvent_Payload interface {
 	isEvent_Payload()
 }
 
-type Event_BackupStarted struct {
-	BackupStarted *BackupStarted `protobuf:"bytes,10,opt,name=backup_started,json=backupStarted,proto3,oneof"`
-}
-
-type Event_BackupCompleted struct {
-	BackupCompleted *BackupCompleted `protobuf:"bytes,11,opt,name=backup_completed,json=backupCompleted,proto3,oneof"`
+type Event_Notification struct {
+	Notification *Notification `protobuf:"bytes,10,opt,name=notification,proto3,oneof"`
 }
 
 type Event_UpgradeApprovalRequest struct {
@@ -277,9 +315,7 @@ type Event_UpgradeCompleted struct {
 	UpgradeCompleted *UpgradeCompleted `protobuf:"bytes,14,opt,name=upgrade_completed,json=upgradeCompleted,proto3,oneof"`
 }
 
-func (*Event_BackupStarted) isEvent_Payload() {}
-
-func (*Event_BackupCompleted) isEvent_Payload() {}
+func (*Event_Notification) isEvent_Payload() {}
 
 func (*Event_UpgradeApprovalRequest) isEvent_Payload() {}
 
@@ -287,28 +323,31 @@ func (*Event_UpgradeStarted) isEvent_Payload() {}
 
 func (*Event_UpgradeCompleted) isEvent_Payload() {}
 
-type BackupStarted struct {
+// Notification is a generic user-facing message. External scripts send these
+// via SendNotification; the agent displays them as desktop notifications.
+type Notification struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Files         []string               `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
-	Configset     string                 `protobuf:"bytes,2,opt,name=configset,proto3" json:"configset,omitempty"`
+	Title         string                 `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty"`
+	Body          string                 `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
+	Severity      Severity               `protobuf:"varint,3,opt,name=severity,proto3,enum=notification.v1.Severity" json:"severity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *BackupStarted) Reset() {
-	*x = BackupStarted{}
+func (x *Notification) Reset() {
+	*x = Notification{}
 	mi := &file_notification_v1_notification_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackupStarted) String() string {
+func (x *Notification) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackupStarted) ProtoMessage() {}
+func (*Notification) ProtoMessage() {}
 
-func (x *BackupStarted) ProtoReflect() protoreflect.Message {
+func (x *Notification) ProtoReflect() protoreflect.Message {
 	mi := &file_notification_v1_notification_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -320,47 +359,53 @@ func (x *BackupStarted) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackupStarted.ProtoReflect.Descriptor instead.
-func (*BackupStarted) Descriptor() ([]byte, []int) {
+// Deprecated: Use Notification.ProtoReflect.Descriptor instead.
+func (*Notification) Descriptor() ([]byte, []int) {
 	return file_notification_v1_notification_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *BackupStarted) GetFiles() []string {
+func (x *Notification) GetTitle() string {
 	if x != nil {
-		return x.Files
-	}
-	return nil
-}
-
-func (x *BackupStarted) GetConfigset() string {
-	if x != nil {
-		return x.Configset
+		return x.Title
 	}
 	return ""
 }
 
-type BackupCompleted struct {
+func (x *Notification) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
+func (x *Notification) GetSeverity() Severity {
+	if x != nil {
+		return x.Severity
+	}
+	return Severity_SEVERITY_UNSPECIFIED
+}
+
+type NotificationAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Results       []*FileBackupResult    `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
-	Configset     string                 `protobuf:"bytes,2,opt,name=configset,proto3" json:"configset,omitempty"`
+	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *BackupCompleted) Reset() {
-	*x = BackupCompleted{}
+func (x *NotificationAck) Reset() {
+	*x = NotificationAck{}
 	mi := &file_notification_v1_notification_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BackupCompleted) String() string {
+func (x *NotificationAck) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BackupCompleted) ProtoMessage() {}
+func (*NotificationAck) ProtoMessage() {}
 
-func (x *BackupCompleted) ProtoReflect() protoreflect.Message {
+func (x *NotificationAck) ProtoReflect() protoreflect.Message {
 	mi := &file_notification_v1_notification_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -372,91 +417,16 @@ func (x *BackupCompleted) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BackupCompleted.ProtoReflect.Descriptor instead.
-func (*BackupCompleted) Descriptor() ([]byte, []int) {
+// Deprecated: Use NotificationAck.ProtoReflect.Descriptor instead.
+func (*NotificationAck) Descriptor() ([]byte, []int) {
 	return file_notification_v1_notification_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *BackupCompleted) GetResults() []*FileBackupResult {
+func (x *NotificationAck) GetAccepted() bool {
 	if x != nil {
-		return x.Results
-	}
-	return nil
-}
-
-func (x *BackupCompleted) GetConfigset() string {
-	if x != nil {
-		return x.Configset
-	}
-	return ""
-}
-
-type FileBackupResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
-	Sha256        string                 `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FileBackupResult) Reset() {
-	*x = FileBackupResult{}
-	mi := &file_notification_v1_notification_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FileBackupResult) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FileBackupResult) ProtoMessage() {}
-
-func (x *FileBackupResult) ProtoReflect() protoreflect.Message {
-	mi := &file_notification_v1_notification_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FileBackupResult.ProtoReflect.Descriptor instead.
-func (*FileBackupResult) Descriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *FileBackupResult) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *FileBackupResult) GetSuccess() bool {
-	if x != nil {
-		return x.Success
+		return x.Accepted
 	}
 	return false
-}
-
-func (x *FileBackupResult) GetSha256() string {
-	if x != nil {
-		return x.Sha256
-	}
-	return ""
-}
-
-func (x *FileBackupResult) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
 }
 
 type UpgradeApprovalRequest struct {
@@ -471,7 +441,7 @@ type UpgradeApprovalRequest struct {
 
 func (x *UpgradeApprovalRequest) Reset() {
 	*x = UpgradeApprovalRequest{}
-	mi := &file_notification_v1_notification_proto_msgTypes[5]
+	mi := &file_notification_v1_notification_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -483,7 +453,7 @@ func (x *UpgradeApprovalRequest) String() string {
 func (*UpgradeApprovalRequest) ProtoMessage() {}
 
 func (x *UpgradeApprovalRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_notification_v1_notification_proto_msgTypes[5]
+	mi := &file_notification_v1_notification_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -496,7 +466,7 @@ func (x *UpgradeApprovalRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeApprovalRequest.ProtoReflect.Descriptor instead.
 func (*UpgradeApprovalRequest) Descriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{5}
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *UpgradeApprovalRequest) GetDescription() string {
@@ -536,7 +506,7 @@ type UpgradeStarted struct {
 
 func (x *UpgradeStarted) Reset() {
 	*x = UpgradeStarted{}
-	mi := &file_notification_v1_notification_proto_msgTypes[6]
+	mi := &file_notification_v1_notification_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +518,7 @@ func (x *UpgradeStarted) String() string {
 func (*UpgradeStarted) ProtoMessage() {}
 
 func (x *UpgradeStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_notification_v1_notification_proto_msgTypes[6]
+	mi := &file_notification_v1_notification_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +531,7 @@ func (x *UpgradeStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeStarted.ProtoReflect.Descriptor instead.
 func (*UpgradeStarted) Descriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{6}
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *UpgradeStarted) GetDescription() string {
@@ -582,7 +552,7 @@ type UpgradeCompleted struct {
 
 func (x *UpgradeCompleted) Reset() {
 	*x = UpgradeCompleted{}
-	mi := &file_notification_v1_notification_proto_msgTypes[7]
+	mi := &file_notification_v1_notification_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -594,7 +564,7 @@ func (x *UpgradeCompleted) String() string {
 func (*UpgradeCompleted) ProtoMessage() {}
 
 func (x *UpgradeCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_notification_v1_notification_proto_msgTypes[7]
+	mi := &file_notification_v1_notification_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -607,7 +577,7 @@ func (x *UpgradeCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeCompleted.ProtoReflect.Descriptor instead.
 func (*UpgradeCompleted) Descriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{7}
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpgradeCompleted) GetSuccess() bool {
@@ -643,7 +613,7 @@ type ApprovalResponse struct {
 
 func (x *ApprovalResponse) Reset() {
 	*x = ApprovalResponse{}
-	mi := &file_notification_v1_notification_proto_msgTypes[8]
+	mi := &file_notification_v1_notification_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -655,7 +625,7 @@ func (x *ApprovalResponse) String() string {
 func (*ApprovalResponse) ProtoMessage() {}
 
 func (x *ApprovalResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_notification_v1_notification_proto_msgTypes[8]
+	mi := &file_notification_v1_notification_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -668,7 +638,7 @@ func (x *ApprovalResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalResponse.ProtoReflect.Descriptor instead.
 func (*ApprovalResponse) Descriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{8}
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ApprovalResponse) GetEventId() string {
@@ -709,7 +679,7 @@ type ApprovalResponseAck struct {
 
 func (x *ApprovalResponseAck) Reset() {
 	*x = ApprovalResponseAck{}
-	mi := &file_notification_v1_notification_proto_msgTypes[9]
+	mi := &file_notification_v1_notification_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -721,7 +691,7 @@ func (x *ApprovalResponseAck) String() string {
 func (*ApprovalResponseAck) ProtoMessage() {}
 
 func (x *ApprovalResponseAck) ProtoReflect() protoreflect.Message {
-	mi := &file_notification_v1_notification_proto_msgTypes[9]
+	mi := &file_notification_v1_notification_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -734,7 +704,7 @@ func (x *ApprovalResponseAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovalResponseAck.ProtoReflect.Descriptor instead.
 func (*ApprovalResponseAck) Descriptor() ([]byte, []int) {
-	return file_notification_v1_notification_proto_rawDescGZIP(), []int{9}
+	return file_notification_v1_notification_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ApprovalResponseAck) GetAccepted() bool {
@@ -759,28 +729,22 @@ const file_notification_v1_notification_proto_rawDesc = "" +
 	"\x10SubscribeRequest\x12\x12\n" +
 	"\x04user\x18\x01 \x01(\tR\x04user\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\"\xf7\x03\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\xa4\x03\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x128\n" +
-	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12G\n" +
-	"\x0ebackup_started\x18\n" +
-	" \x01(\v2\x1e.notification.v1.BackupStartedH\x00R\rbackupStarted\x12M\n" +
-	"\x10backup_completed\x18\v \x01(\v2 .notification.v1.BackupCompletedH\x00R\x0fbackupCompleted\x12c\n" +
+	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12C\n" +
+	"\fnotification\x18\n" +
+	" \x01(\v2\x1d.notification.v1.NotificationH\x00R\fnotification\x12c\n" +
 	"\x18upgrade_approval_request\x18\f \x01(\v2'.notification.v1.UpgradeApprovalRequestH\x00R\x16upgradeApprovalRequest\x12J\n" +
 	"\x0fupgrade_started\x18\r \x01(\v2\x1f.notification.v1.UpgradeStartedH\x00R\x0eupgradeStarted\x12P\n" +
 	"\x11upgrade_completed\x18\x0e \x01(\v2!.notification.v1.UpgradeCompletedH\x00R\x10upgradeCompletedB\t\n" +
-	"\apayload\"C\n" +
-	"\rBackupStarted\x12\x14\n" +
-	"\x05files\x18\x01 \x03(\tR\x05files\x12\x1c\n" +
-	"\tconfigset\x18\x02 \x01(\tR\tconfigset\"l\n" +
-	"\x0fBackupCompleted\x12;\n" +
-	"\aresults\x18\x01 \x03(\v2!.notification.v1.FileBackupResultR\aresults\x12\x1c\n" +
-	"\tconfigset\x18\x02 \x01(\tR\tconfigset\"n\n" +
-	"\x10FileBackupResult\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x16\n" +
-	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xf2\x01\n" +
+	"\apayload\"o\n" +
+	"\fNotification\x12\x14\n" +
+	"\x05title\x18\x01 \x01(\tR\x05title\x12\x12\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body\x125\n" +
+	"\bseverity\x18\x03 \x01(\x0e2\x19.notification.v1.SeverityR\bseverity\"-\n" +
+	"\x0fNotificationAck\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\"\xf2\x01\n" +
 	"\x16UpgradeApprovalRequest\x12 \n" +
 	"\vdescription\x18\x01 \x01(\tR\vdescription\x126\n" +
 	"\bschedule\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bschedule\x126\n" +
@@ -799,15 +763,21 @@ const file_notification_v1_notification_proto_rawDesc = "" +
 	"\x04user\x18\x04 \x01(\tR\x04user\"I\n" +
 	"\x13ApprovalResponseAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason*\x83\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason*a\n" +
+	"\bSeverity\x12\x18\n" +
+	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\x11\n" +
+	"\rSEVERITY_INFO\x10\x01\x12\x14\n" +
+	"\x10SEVERITY_WARNING\x10\x02\x12\x12\n" +
+	"\x0eSEVERITY_ERROR\x10\x03*\x83\x01\n" +
 	"\x0eApprovalAction\x12\x1f\n" +
 	"\x1bAPPROVAL_ACTION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17APPROVAL_ACTION_APPROVE\x10\x01\x12\x18\n" +
 	"\x14APPROVAL_ACTION_DENY\x10\x02\x12\x19\n" +
-	"\x15APPROVAL_ACTION_DELAY\x10\x032\xc1\x01\n" +
+	"\x15APPROVAL_ACTION_DELAY\x10\x032\x96\x02\n" +
 	"\x17NodeNotificationService\x12H\n" +
 	"\tSubscribe\x12!.notification.v1.SubscribeRequest\x1a\x16.notification.v1.Event0\x01\x12\\\n" +
-	"\x11RespondToApproval\x12!.notification.v1.ApprovalResponse\x1a$.notification.v1.ApprovalResponseAckBBZ@github.com/zachfi/nodemanager/pkg/notification/v1;notificationv1b\x06proto3"
+	"\x11RespondToApproval\x12!.notification.v1.ApprovalResponse\x1a$.notification.v1.ApprovalResponseAck\x12S\n" +
+	"\x10SendNotification\x12\x1d.notification.v1.Notification\x1a .notification.v1.NotificationAckBBZ@github.com/zachfi/nodemanager/pkg/notification/v1;notificationv1b\x06proto3"
 
 var (
 	file_notification_v1_notification_proto_rawDescOnce sync.Once
@@ -821,15 +791,15 @@ func file_notification_v1_notification_proto_rawDescGZIP() []byte {
 	return file_notification_v1_notification_proto_rawDescData
 }
 
-var file_notification_v1_notification_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_notification_v1_notification_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_notification_v1_notification_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_notification_v1_notification_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_notification_v1_notification_proto_goTypes = []any{
-	(ApprovalAction)(0),            // 0: notification.v1.ApprovalAction
-	(*SubscribeRequest)(nil),       // 1: notification.v1.SubscribeRequest
-	(*Event)(nil),                  // 2: notification.v1.Event
-	(*BackupStarted)(nil),          // 3: notification.v1.BackupStarted
-	(*BackupCompleted)(nil),        // 4: notification.v1.BackupCompleted
-	(*FileBackupResult)(nil),       // 5: notification.v1.FileBackupResult
+	(Severity)(0),                  // 0: notification.v1.Severity
+	(ApprovalAction)(0),            // 1: notification.v1.ApprovalAction
+	(*SubscribeRequest)(nil),       // 2: notification.v1.SubscribeRequest
+	(*Event)(nil),                  // 3: notification.v1.Event
+	(*Notification)(nil),           // 4: notification.v1.Notification
+	(*NotificationAck)(nil),        // 5: notification.v1.NotificationAck
 	(*UpgradeApprovalRequest)(nil), // 6: notification.v1.UpgradeApprovalRequest
 	(*UpgradeStarted)(nil),         // 7: notification.v1.UpgradeStarted
 	(*UpgradeCompleted)(nil),       // 8: notification.v1.UpgradeCompleted
@@ -840,26 +810,27 @@ var file_notification_v1_notification_proto_goTypes = []any{
 }
 var file_notification_v1_notification_proto_depIdxs = []int32{
 	11, // 0: notification.v1.Event.timestamp:type_name -> google.protobuf.Timestamp
-	3,  // 1: notification.v1.Event.backup_started:type_name -> notification.v1.BackupStarted
-	4,  // 2: notification.v1.Event.backup_completed:type_name -> notification.v1.BackupCompleted
-	6,  // 3: notification.v1.Event.upgrade_approval_request:type_name -> notification.v1.UpgradeApprovalRequest
-	7,  // 4: notification.v1.Event.upgrade_started:type_name -> notification.v1.UpgradeStarted
-	8,  // 5: notification.v1.Event.upgrade_completed:type_name -> notification.v1.UpgradeCompleted
-	5,  // 6: notification.v1.BackupCompleted.results:type_name -> notification.v1.FileBackupResult
-	11, // 7: notification.v1.UpgradeApprovalRequest.schedule:type_name -> google.protobuf.Timestamp
-	11, // 8: notification.v1.UpgradeApprovalRequest.deadline:type_name -> google.protobuf.Timestamp
-	0,  // 9: notification.v1.UpgradeApprovalRequest.default_action:type_name -> notification.v1.ApprovalAction
-	0,  // 10: notification.v1.ApprovalResponse.action:type_name -> notification.v1.ApprovalAction
-	12, // 11: notification.v1.ApprovalResponse.delay_duration:type_name -> google.protobuf.Duration
-	1,  // 12: notification.v1.NodeNotificationService.Subscribe:input_type -> notification.v1.SubscribeRequest
-	9,  // 13: notification.v1.NodeNotificationService.RespondToApproval:input_type -> notification.v1.ApprovalResponse
-	2,  // 14: notification.v1.NodeNotificationService.Subscribe:output_type -> notification.v1.Event
+	4,  // 1: notification.v1.Event.notification:type_name -> notification.v1.Notification
+	6,  // 2: notification.v1.Event.upgrade_approval_request:type_name -> notification.v1.UpgradeApprovalRequest
+	7,  // 3: notification.v1.Event.upgrade_started:type_name -> notification.v1.UpgradeStarted
+	8,  // 4: notification.v1.Event.upgrade_completed:type_name -> notification.v1.UpgradeCompleted
+	0,  // 5: notification.v1.Notification.severity:type_name -> notification.v1.Severity
+	11, // 6: notification.v1.UpgradeApprovalRequest.schedule:type_name -> google.protobuf.Timestamp
+	11, // 7: notification.v1.UpgradeApprovalRequest.deadline:type_name -> google.protobuf.Timestamp
+	1,  // 8: notification.v1.UpgradeApprovalRequest.default_action:type_name -> notification.v1.ApprovalAction
+	1,  // 9: notification.v1.ApprovalResponse.action:type_name -> notification.v1.ApprovalAction
+	12, // 10: notification.v1.ApprovalResponse.delay_duration:type_name -> google.protobuf.Duration
+	2,  // 11: notification.v1.NodeNotificationService.Subscribe:input_type -> notification.v1.SubscribeRequest
+	9,  // 12: notification.v1.NodeNotificationService.RespondToApproval:input_type -> notification.v1.ApprovalResponse
+	4,  // 13: notification.v1.NodeNotificationService.SendNotification:input_type -> notification.v1.Notification
+	3,  // 14: notification.v1.NodeNotificationService.Subscribe:output_type -> notification.v1.Event
 	10, // 15: notification.v1.NodeNotificationService.RespondToApproval:output_type -> notification.v1.ApprovalResponseAck
-	14, // [14:16] is the sub-list for method output_type
-	12, // [12:14] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	5,  // 16: notification.v1.NodeNotificationService.SendNotification:output_type -> notification.v1.NotificationAck
+	14, // [14:17] is the sub-list for method output_type
+	11, // [11:14] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_notification_v1_notification_proto_init() }
@@ -868,8 +839,7 @@ func file_notification_v1_notification_proto_init() {
 		return
 	}
 	file_notification_v1_notification_proto_msgTypes[1].OneofWrappers = []any{
-		(*Event_BackupStarted)(nil),
-		(*Event_BackupCompleted)(nil),
+		(*Event_Notification)(nil),
 		(*Event_UpgradeApprovalRequest)(nil),
 		(*Event_UpgradeStarted)(nil),
 		(*Event_UpgradeCompleted)(nil),
@@ -879,8 +849,8 @@ func file_notification_v1_notification_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_notification_v1_notification_proto_rawDesc), len(file_notification_v1_notification_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   10,
+			NumEnums:      2,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
