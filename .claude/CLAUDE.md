@@ -9,7 +9,7 @@ A controller that uses Kubernetes CRDs as a unified configuration source to mana
 ## Build & Test
 
 ```sh
-make build          # → bin/manager
+make build          # → bin/nodemanager + bin/nodemanager-agent
 make test           # unit tests via envtest
 make test-e2e       # e2e against Kind cluster
 make lint           # golangci-lint

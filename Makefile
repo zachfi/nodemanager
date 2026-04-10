@@ -98,7 +98,7 @@ REGISTRY ?=
 
 .PHONY: build
 build: manifests generate fmt vet ## Build manager and agent binaries.
-	go build $(LD_FLAGS) -o bin/manager cmd/*.go
+	go build $(LD_FLAGS) -o bin/nodemanager cmd/*.go
 	go build $(LD_FLAGS) -o bin/nodemanager-agent ./cmd/agent/
 
 .PHONY: build-agent

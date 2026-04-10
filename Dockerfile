@@ -1,4 +1,4 @@
-# Build the manager binary
+# Build the nodemanager binary
 FROM golang:1.21 AS builder
 ARG TARGETOS
 ARG TARGETARCH
@@ -28,13 +28,11 @@ COPY internal/controller/ internal/controller/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build \
     -ldflags "-X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X main.buildDate=${BUILD_DATE} -X main.goos=${TARGETOS:-linux} -X main.goarch=${TARGETARCH}" \
-    -a -o manager cmd/main.go
+    -a -o nodemanager cmd/main.go
 
-# Use distroless as minimal base image to package the manager binary
-# Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /workspace/manager .
+COPY --from=builder /workspace/nodemanager .
 USER 65532:65532
 
-ENTRYPOINT ["/manager"]
+ENTRYPOINT ["/nodemanager"]

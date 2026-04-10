@@ -87,7 +87,7 @@ source:
 
 ```sh
 make build
-# produces bin/manager
+# produces bin/nodemanager and bin/nodemanager-agent
 ```
 
 ## Running as a systemd service (Linux)
