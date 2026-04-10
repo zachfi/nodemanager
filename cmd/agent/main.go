@@ -58,7 +58,8 @@ func main() {
 	runSubscribe()
 }
 
-// runSubscribe is the default mode: connect to the daemon and stream events.
+// runSubscribe is the default mode: connect to the daemon, stream events,
+// and relay them as desktop notifications via D-Bus.
 func runSubscribe() {
 	var (
 		socketPath string
@@ -96,8 +97,15 @@ func runSubscribe() {
 }
 
 func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string) error {
-	logger.Info("connecting to notification server", "socket", socketPath)
+	// Connect to D-Bus for desktop notifications.
+	desk, err := newDesktop(logger)
+	if err != nil {
+		return fmt.Errorf("desktop notifications: %w", err)
+	}
+	defer desk.close()
+	logger.Info("connected to session D-Bus")
 
+	// Connect to the nodemanager daemon.
 	conn, err := grpc.NewClient(
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -130,7 +138,117 @@ func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string
 			return fmt.Errorf("recv: %w", err)
 		}
 
-		logEvent(logger, event)
+		handleEvent(ctx, logger, desk, client, user, event)
+	}
+}
+
+func handleEvent(ctx context.Context, logger *slog.Logger, desk *desktop, client notificationv1.NodeNotificationServiceClient, user string, event *notificationv1.Event) {
+	switch p := event.GetPayload().(type) {
+	case *notificationv1.Event_Notification:
+		n := p.Notification
+		icon := severityIcon(n.GetSeverity())
+		if _, err := desk.notify(n.GetTitle(), n.GetBody(), icon); err != nil {
+			logger.Error("failed to show notification", "err", err)
+		}
+		logger.Info("notification shown", "title", n.GetTitle(), "severity", n.GetSeverity())
+
+	case *notificationv1.Event_UpgradeApprovalRequest:
+		req := p.UpgradeApprovalRequest
+		handleUpgradeApproval(ctx, logger, desk, client, user, event.GetId(), req)
+
+	case *notificationv1.Event_UpgradeStarted:
+		if _, err := desk.notify("Upgrade Started", p.UpgradeStarted.GetDescription(), "system-software-update"); err != nil {
+			logger.Error("failed to show upgrade started notification", "err", err)
+		}
+		logger.Info("upgrade started", "description", p.UpgradeStarted.GetDescription())
+
+	case *notificationv1.Event_UpgradeCompleted:
+		summary := "Upgrade Completed"
+		body := "System upgrade finished successfully."
+		icon := "emblem-default"
+		if !p.UpgradeCompleted.GetSuccess() {
+			summary = "Upgrade Failed"
+			body = p.UpgradeCompleted.GetError()
+			icon = "dialog-error"
+		} else if p.UpgradeCompleted.GetRebootPending() {
+			body = "System upgrade finished. A reboot is pending."
+			icon = "system-reboot"
+		}
+		if _, err := desk.notify(summary, body, icon); err != nil {
+			logger.Error("failed to show upgrade completed notification", "err", err)
+		}
+		logger.Info("upgrade completed",
+			"success", p.UpgradeCompleted.GetSuccess(),
+			"reboot_pending", p.UpgradeCompleted.GetRebootPending(),
+		)
+
+	default:
+		logger.Warn("unknown event type", "event_id", event.GetId())
+	}
+}
+
+func handleUpgradeApproval(ctx context.Context, logger *slog.Logger, desk *desktop, client notificationv1.NodeNotificationServiceClient, user, eventID string, req *notificationv1.UpgradeApprovalRequest) {
+	deadline := req.GetDeadline().AsTime()
+	remaining := time.Until(deadline)
+	body := fmt.Sprintf("%s\nAuto-approves in %s", req.GetDescription(), remaining.Round(time.Second))
+
+	logger.Info("showing upgrade approval request",
+		"event", eventID,
+		"description", req.GetDescription(),
+		"deadline", deadline,
+	)
+
+	// Show notification with Approve/Deny actions.
+	_, err := desk.notifyWithActions(
+		"Upgrade Approval Required",
+		body,
+		"system-software-update",
+		[]string{"approve", "Approve", "deny", "Deny"},
+		int32(remaining.Milliseconds()),
+		func(actionKey string) {
+			var action notificationv1.ApprovalAction
+			switch actionKey {
+			case "approve":
+				action = notificationv1.ApprovalAction_APPROVAL_ACTION_APPROVE
+				logger.Info("user approved upgrade", "event", eventID)
+			case "deny":
+				action = notificationv1.ApprovalAction_APPROVAL_ACTION_DENY
+				logger.Info("user denied upgrade", "event", eventID)
+			default:
+				logger.Warn("unexpected action key", "key", actionKey, "event", eventID)
+				return
+			}
+
+			rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+
+			ack, sendErr := client.RespondToApproval(rctx, &notificationv1.ApprovalResponse{
+				EventId: eventID,
+				Action:  action,
+				User:    user,
+			})
+			if sendErr != nil {
+				logger.Error("failed to send approval response", "err", sendErr, "event", eventID)
+				return
+			}
+			if !ack.GetAccepted() {
+				logger.Warn("approval response not accepted", "reason", ack.GetReason(), "event", eventID)
+			}
+		},
+	)
+	if err != nil {
+		logger.Error("failed to show upgrade approval notification", "err", err)
+	}
+}
+
+func severityIcon(sev notificationv1.Severity) string {
+	switch sev {
+	case notificationv1.Severity_SEVERITY_WARNING:
+		return "dialog-warning"
+	case notificationv1.Severity_SEVERITY_ERROR:
+		return "dialog-error"
+	default:
+		return "dialog-information"
 	}
 }
 
@@ -201,33 +319,5 @@ func runNotify(args []string) {
 	if !ack.GetAccepted() {
 		fmt.Fprintln(os.Stderr, "notification was not accepted")
 		os.Exit(1)
-	}
-}
-
-func logEvent(logger *slog.Logger, event *notificationv1.Event) {
-	base := logger.With("event_id", event.GetId(), "timestamp", event.GetTimestamp().AsTime())
-
-	switch p := event.GetPayload().(type) {
-	case *notificationv1.Event_Notification:
-		base.Info("notification",
-			"title", p.Notification.GetTitle(),
-			"body", p.Notification.GetBody(),
-			"severity", p.Notification.GetSeverity(),
-		)
-	case *notificationv1.Event_UpgradeApprovalRequest:
-		base.Info("upgrade approval requested",
-			"description", p.UpgradeApprovalRequest.GetDescription(),
-			"deadline", p.UpgradeApprovalRequest.GetDeadline().AsTime(),
-			"default_action", p.UpgradeApprovalRequest.GetDefaultAction(),
-		)
-	case *notificationv1.Event_UpgradeStarted:
-		base.Info("upgrade started", "description", p.UpgradeStarted.GetDescription())
-	case *notificationv1.Event_UpgradeCompleted:
-		base.Info("upgrade completed",
-			"success", p.UpgradeCompleted.GetSuccess(),
-			"reboot_pending", p.UpgradeCompleted.GetRebootPending(),
-		)
-	default:
-		base.Warn("unknown event type")
 	}
 }

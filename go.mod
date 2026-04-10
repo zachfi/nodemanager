@@ -8,6 +8,7 @@ require (
 	github.com/drone/envsubst v1.0.3
 	github.com/go-ini/ini v1.67.0
 	github.com/go-logr/logr v1.4.3
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75
 	github.com/grafana/dskit v0.0.0-20250808065120-c54005d12afc
