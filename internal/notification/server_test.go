@@ -126,6 +126,84 @@ func TestRespondToApproval(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
+func TestHasSubscribers(t *testing.T) {
+	srv, sock := testServer(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	// No subscribers initially.
+	require.False(t, srv.HasSubscribers())
+
+	conn, err := grpc.NewClient(
+		"unix://"+sock,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := notificationv1.NewNodeNotificationServiceClient(conn)
+
+	subCtx, subCancel := context.WithCancel(ctx)
+	_, err = client.Subscribe(subCtx, &notificationv1.SubscribeRequest{
+		User:      "testuser",
+		SessionId: "test-session",
+	})
+	require.NoError(t, err)
+	time.Sleep(50 * time.Millisecond)
+
+	// Now we have a subscriber.
+	require.True(t, srv.HasSubscribers())
+
+	// Disconnect the subscriber.
+	subCancel()
+	time.Sleep(50 * time.Millisecond)
+
+	require.False(t, srv.HasSubscribers())
+
+	cancel()
+	require.NoError(t, <-errCh)
+}
+
+func TestNotifyWithoutSubscribers(t *testing.T) {
+	srv, _ := testServer(t)
+
+	// Notify with no subscribers should not panic or block.
+	srv.Notify(&notificationv1.Event{
+		Payload: &notificationv1.Event_Notification{
+			Notification: &notificationv1.Notification{
+				Title: "nobody listening",
+			},
+		},
+	})
+}
+
+func TestCancelApproval(t *testing.T) {
+	srv, _ := testServer(t)
+
+	ch := srv.WaitForApproval("evt-cancel")
+
+	// Cancel before any response arrives.
+	srv.CancelApproval("evt-cancel")
+
+	// Channel should be empty and the map cleaned up.
+	select {
+	case <-ch:
+		t.Fatal("expected no response on cancelled approval")
+	default:
+	}
+
+	// Double cancel should not panic.
+	srv.CancelApproval("evt-cancel")
+}
+
+// Verify Server satisfies the Notifier interface at compile time.
+var _ Notifier = (*Server)(nil)
+
 func TestSendNotification(t *testing.T) {
 	srv, sock := testServer(t)
 

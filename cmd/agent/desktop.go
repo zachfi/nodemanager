@@ -8,9 +8,18 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
+// desktopNotifier is the interface used by the event handler to show
+// desktop notifications. The concrete implementation uses D-Bus; tests
+// provide a mock.
+type desktopNotifier interface {
+	notify(summary, body, icon string) (uint32, error)
+	notifyWithActions(summary, body, icon string, actions []string, timeout int32, cb func(actionKey string)) (uint32, error)
+	close()
+}
+
 const (
-	dbusNotifyDest = "org.freedesktop.Notifications"
-	dbusNotifyPath = "/org/freedesktop/Notifications"
+	dbusNotifyDest  = "org.freedesktop.Notifications"
+	dbusNotifyPath  = "/org/freedesktop/Notifications"
 	dbusNotifyIface = "org.freedesktop.Notifications"
 )
 
@@ -105,14 +114,14 @@ func (d *desktop) listenSignals() {
 func (d *desktop) notify(summary, body, icon string) (uint32, error) {
 	obj := d.conn.Object(dbusNotifyDest, dbusNotifyPath)
 	call := obj.Call(dbusNotifyIface+".Notify", 0,
-		"nodemanager",         // app_name
-		uint32(0),             // replaces_id
-		icon,                  // app_icon
-		summary,               // summary
-		body,                  // body
-		[]string{},            // actions
+		"nodemanager",             // app_name
+		uint32(0),                 // replaces_id
+		icon,                      // app_icon
+		summary,                   // summary
+		body,                      // body
+		[]string{},                // actions
 		map[string]dbus.Variant{}, // hints
-		int32(-1),             // expire_timeout (-1 = server default)
+		int32(-1),                 // expire_timeout (-1 = server default)
 	)
 	if call.Err != nil {
 		return 0, call.Err

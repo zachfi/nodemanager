@@ -142,7 +142,7 @@ func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string
 	}
 }
 
-func handleEvent(ctx context.Context, logger *slog.Logger, desk *desktop, client notificationv1.NodeNotificationServiceClient, user string, event *notificationv1.Event) {
+func handleEvent(ctx context.Context, logger *slog.Logger, desk desktopNotifier, client notificationv1.NodeNotificationServiceClient, user string, event *notificationv1.Event) {
 	switch p := event.GetPayload().(type) {
 	case *notificationv1.Event_Notification:
 		n := p.Notification
@@ -187,7 +187,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, desk *desktop, client
 	}
 }
 
-func handleUpgradeApproval(ctx context.Context, logger *slog.Logger, desk *desktop, client notificationv1.NodeNotificationServiceClient, user, eventID string, req *notificationv1.UpgradeApprovalRequest) {
+func handleUpgradeApproval(ctx context.Context, logger *slog.Logger, desk desktopNotifier, client notificationv1.NodeNotificationServiceClient, user, eventID string, req *notificationv1.UpgradeApprovalRequest) {
 	deadline := req.GetDeadline().AsTime()
 	remaining := time.Until(deadline)
 	body := fmt.Sprintf("%s\nAuto-approves in %s", req.GetDescription(), remaining.Round(time.Second))
