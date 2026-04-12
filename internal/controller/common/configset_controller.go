@@ -217,6 +217,23 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	nodeLabels := labels.DefaultLabels(context.Background(), r.system.Node())
+
+	// Try to fetch the ManagedNode's full label set so the predicate accounts
+	// for role labels and other labels added after initial creation.
+	// DefaultLabels only has os/arch/hostname which causes ConfigSets that
+	// match on additional labels (e.g. role.nodemanager/workstation) to be
+	// incorrectly filtered out.
+	var node commonv1.ManagedNode
+	hostname, _ := os.Hostname()
+	if hostname != "" {
+		if err := mgr.GetAPIReader().Get(context.Background(), types.NamespacedName{
+			Name:      hostname,
+			Namespace: r.cfg.Namespace,
+		}, &node); err == nil && len(node.Labels) > 0 {
+			nodeLabels = node.Labels
+		}
+	}
+
 	labelPredicate := newNodeLabelMatchPredicate(nodeLabels)
 
 	return ctrl.NewControllerManagedBy(mgr).
