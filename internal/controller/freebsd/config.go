@@ -19,9 +19,11 @@ func (c *PoudriereConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.F
 type JailConfig struct {
 	JailDataPath string
 	ZfsDataset   string
+	Mirror       string
 }
 
 func (c *JailConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	f.StringVar(&c.JailDataPath, prefix+".data-path", "/usr/local/nodemanager", "The base path where jail data is stored.")
 	f.StringVar(&c.ZfsDataset, prefix+".zfs-dataset", "zroot/nodemanager", "The ZFS dataset to use for jail storage.")
+	f.StringVar(&c.Mirror, prefix+".mirror", "https://download.freebsd.org/releases", "The FreeBSD mirror base URL for downloading release archives.")
 }

@@ -13,8 +13,6 @@ import (
 	"github.com/zachfi/nodemanager/pkg/zfs"
 )
 
-const freebsdMirror = "https://download.freebsd.org/releases"
-
 // goarchToFreeBSD maps Go GOARCH values to the FreeBSD mirror path segment
 // used in release URLs: <machine>/<processor>.
 var goarchToFreeBSD = map[string][2]string{
@@ -39,6 +37,9 @@ type releaseManager struct {
 	// dataset is the ZFS dataset path for releases,
 	// e.g. zroot/nodemanager/releases.
 	dataset string
+	// mirror is the FreeBSD mirror base URL,
+	// e.g. "https://download.freebsd.org/releases".
+	mirror string
 	// arch is the FreeBSD mirror path segment, e.g. "amd64/amd64".
 	arch string
 
@@ -47,11 +48,12 @@ type releaseManager struct {
 	httpClient *http.Client
 }
 
-func newReleaseManager(basePath, dataset string, zfsManager zfs.Manager, exec handler.ExecHandler) ReleaseManager {
+func newReleaseManager(basePath, dataset, mirror string, zfsManager zfs.Manager, exec handler.ExecHandler) ReleaseManager {
 	machine, processor := freebsdArch()
 	return &releaseManager{
 		basePath:   basePath,
 		dataset:    dataset,
+		mirror:     mirror,
 		arch:       machine + "/" + processor,
 		zfs:        zfsManager,
 		exec:       exec,
@@ -77,7 +79,7 @@ func (r *releaseManager) Ensure(ctx context.Context, version string) error {
 	}
 
 	// Download base.txz to a temporary file.
-	url := fmt.Sprintf("%s/%s/%s/base.txz", freebsdMirror, r.arch, version)
+	url := fmt.Sprintf("%s/%s/%s/base.txz", r.mirror, r.arch, version)
 	tmp, err := os.CreateTemp("", "nodemanager-base-*.txz")
 	if err != nil {
 		return fmt.Errorf("creating temp file for release download: %w", err)

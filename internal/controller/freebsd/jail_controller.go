@@ -65,7 +65,7 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 		return nil, fmt.Errorf("getting local hostname: %w", err)
 	}
 
-	manager, err := jail.NewManager(ctx, cfg.JailDataPath, cfg.ZfsDataset, system.Exec())
+	manager, err := jail.NewManager(ctx, cfg.JailDataPath, cfg.ZfsDataset, cfg.Mirror, system.Exec())
 	if err != nil {
 		return nil, fmt.Errorf("creating jail manager: %w", err)
 	}

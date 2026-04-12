@@ -7,4 +7,4 @@ metadata:
   name: jail-sample
 spec:
   nodeName: myhost.example.com
-  release: "14.2-RELEASE"
+  release: "14.4-RELEASE"

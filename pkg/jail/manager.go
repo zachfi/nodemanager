@@ -81,7 +81,7 @@ type manager struct {
 
 // NewManager initialises the manager, ensuring the base ZFS dataset layout
 // exists. It does not start or modify any jails.
-func NewManager(ctx context.Context, basePath, zfsDataset string, exec handler.ExecHandler) (Manager, error) {
+func NewManager(ctx context.Context, basePath, zfsDataset, mirror string, exec handler.ExecHandler) (Manager, error) {
 	zfsManager := zfs.NewZfsManager(exec)
 
 	// Base dataset with explicit mountpoint.
@@ -100,6 +100,7 @@ func NewManager(ctx context.Context, basePath, zfsDataset string, exec handler.E
 	releases := newReleaseManager(
 		filepath.Join(basePath, ReleaseRootDir),
 		filepath.Join(zfsDataset, ReleaseRootDir),
+		mirror,
 		zfsManager,
 		exec,
 	)
