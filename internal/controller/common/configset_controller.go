@@ -146,7 +146,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			r.logger.Error("failed to update conflict condition on configset", "err", statusErr)
 		}
 		err = nil
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 
 	// Clear any previously recorded conflict condition now that the conflict is resolved.
