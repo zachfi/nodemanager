@@ -94,15 +94,30 @@ SHA_AMD64="$(awk "/nodemanager_${VERSION_NO_V}_linux_amd64\\.tar\\.gz/{print \$1
 SHA_ARM64="$(awk "/nodemanager_${VERSION_NO_V}_linux_arm64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
 SHA_ARMV7="$(awk "/nodemanager_${VERSION_NO_V}_linux_armv7\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
 
+AGENT_SHA_AMD64="$(awk "/nodemanager-agent_${VERSION_NO_V}_linux_amd64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
+AGENT_SHA_ARM64="$(awk "/nodemanager-agent_${VERSION_NO_V}_linux_arm64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
+AGENT_SHA_ARMV7="$(awk "/nodemanager-agent_${VERSION_NO_V}_linux_armv7\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
+
 if [[ -z "${SHA_AMD64}" || -z "${SHA_ARM64}" || -z "${SHA_ARMV7}" ]]; then
-  echo "ERROR: one or more checksums not found. Contents of checksums.txt:" >&2
+  echo "ERROR: one or more nodemanager checksums not found. Contents of checksums.txt:" >&2
   cat "${WORK_DIR}/checksums.txt" >&2
   exit 1
 fi
 
-echo "    amd64:  ${SHA_AMD64}"
-echo "    arm64:  ${SHA_ARM64}"
-echo "    armv7h: ${SHA_ARMV7}"
+if [[ -z "${AGENT_SHA_AMD64}" || -z "${AGENT_SHA_ARM64}" || -z "${AGENT_SHA_ARMV7}" ]]; then
+  echo "ERROR: one or more nodemanager-agent checksums not found. Contents of checksums.txt:" >&2
+  cat "${WORK_DIR}/checksums.txt" >&2
+  exit 1
+fi
+
+echo "    nodemanager:"
+echo "      amd64:  ${SHA_AMD64}"
+echo "      arm64:  ${SHA_ARM64}"
+echo "      armv7h: ${SHA_ARMV7}"
+echo "    nodemanager-agent:"
+echo "      amd64:  ${AGENT_SHA_AMD64}"
+echo "      arm64:  ${AGENT_SHA_ARM64}"
+echo "      armv7h: ${AGENT_SHA_ARMV7}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
@@ -114,9 +129,9 @@ git clone "${NODEMANAGER_BIN_REMOTE}" "${BIN_DIR}"
 
 # Render version + checksums into PKGBUILD
 sed "s/{{ version }}/${VERSION_NO_V}/" "${BIN_DIR}/PKGBUILD.template" > "${BIN_DIR}/PKGBUILD"
-sed -i "s|sha256sums_x86_64=('[^']*')|sha256sums_x86_64=('${SHA_AMD64}')|"   "${BIN_DIR}/PKGBUILD"
-sed -i "s|sha256sums_aarch64=('[^']*')|sha256sums_aarch64=('${SHA_ARM64}')|" "${BIN_DIR}/PKGBUILD"
-sed -i "s|sha256sums_armv7h=('[^']*')|sha256sums_armv7h=('${SHA_ARMV7}')|"   "${BIN_DIR}/PKGBUILD"
+sed -i "s|sha256sums_x86_64=('SKIP' 'SKIP')|sha256sums_x86_64=('${SHA_AMD64}' '${AGENT_SHA_AMD64}')|"   "${BIN_DIR}/PKGBUILD"
+sed -i "s|sha256sums_aarch64=('SKIP' 'SKIP')|sha256sums_aarch64=('${SHA_ARM64}' '${AGENT_SHA_ARM64}')|" "${BIN_DIR}/PKGBUILD"
+sed -i "s|sha256sums_armv7h=('SKIP' 'SKIP')|sha256sums_armv7h=('${SHA_ARMV7}' '${AGENT_SHA_ARMV7}')|"   "${BIN_DIR}/PKGBUILD"
 
 echo "--> PKGBUILD for ${VERSION_NO_V}:"
 grep -E "^pkgver|sha256" "${BIN_DIR}/PKGBUILD"
