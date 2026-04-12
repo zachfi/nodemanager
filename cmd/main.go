@@ -109,6 +109,9 @@ func main() {
 		case "rbac":
 			runRBAC(os.Args[2:])
 			return
+		case "version", "-version", "--version":
+			fmt.Println(versionString())
+			return
 		}
 	}
 
