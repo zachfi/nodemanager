@@ -255,6 +255,7 @@ func (h *FileHandlerCommon) Remove(ctx context.Context, path string) (bool, erro
 
 	_, err = os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
+		err = nil // already absent — desired state reached
 		return false, nil
 	}
 
