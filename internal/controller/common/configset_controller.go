@@ -41,12 +41,16 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/files"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -93,9 +97,12 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to handle changes to a ConfigSet object.
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	r.logger.Debug("reconciling configset", "configset", req.Name, "namespace", req.Namespace)
+
 	var err error
 
 	if ctx.Err() != nil {
+		r.logger.Warn("context already cancelled, skipping reconcile", "configset", req.Name)
 		return ctrl.Result{}, nil
 	}
 
@@ -126,8 +133,9 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
 		r.logger.Debug("configset labels do not match node, skipping", "configset", configSet.Name, "node", node.Name)
-		err = nil                 // for the span defer
-		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
+		err = nil // for the span defer
+		// Requeue so we retry after the ManagedNode reconciler sets labels.
+		return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
 	}
 
 	nodeName := node.Name
@@ -208,11 +216,29 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 	}
 
+	nodeLabels := labels.DefaultLabels(context.Background(), r.system.Node())
+	labelPredicate := newNodeLabelMatchPredicate(nodeLabels)
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&commonv1.ConfigSet{}).
+		For(&commonv1.ConfigSet{}, builder.WithPredicates(labelPredicate)).
 		Watches(&corev1.Secret{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingSecret)).
 		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
 		Complete(r)
+}
+
+// newNodeLabelMatchPredicate returns a predicate that only admits ConfigSet
+// events whose labels are a non-empty subset of the local node's labels.
+// This prevents ConfigSets targeting other nodes from ever entering the workqueue.
+func newNodeLabelMatchPredicate(nodeLabels map[string]string) predicate.Predicate {
+	matches := func(obj client.Object) bool {
+		return matchAllLabels(nodeLabels, obj.GetLabels())
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return matches(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return matches(e.ObjectNew) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return matches(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return matches(e.Object) },
+	}
 }
 
 // runFileBucketGC runs the filebucket garbage collector on a durable schedule.

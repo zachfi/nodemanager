@@ -84,8 +84,14 @@ func createInitialNode(ctx context.Context, w client.Writer, obj client.Object) 
 	return nil
 }
 
-// Match all labels returns true if all of the received labels match the receiveed matchers.
+// matchAllLabels returns true if matchers is non-empty and every key/value
+// pair in matchers exists in labels.  An empty matchers map returns false
+// so that unlabeled ConfigSets do not accidentally match every node.
 func matchAllLabels(labels, matchers map[string]string) bool {
+	if len(matchers) == 0 {
+		return false
+	}
+
 	for k, v := range matchers {
 		if val, ok := labels[k]; ok {
 			if val != v {
