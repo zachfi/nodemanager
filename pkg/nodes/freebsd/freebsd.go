@@ -56,13 +56,13 @@ func (h *FreeBSD) Upgrade(ctx context.Context) error {
 	// return after a failed fetch because there are updates to install, then we
 	// should install them, fetch, and then install again.  Probably.
 
-	output, exit, err := h.exec.RunCommand(ctx, freebsdUpdate, "fetch")
+	output, exit, err := h.exec.RunCommand(ctx, freebsdUpdate, "--not-running-from-cron", "fetch")
 	if err != nil {
-		h.logger.Error("failed to run freebsd-udpate fetch", "err", err, "exit", exit, "output", output)
+		h.logger.Error("failed to run freebsd-update fetch", "err", err, "exit", exit, "output", output)
 		return err
 	}
 
-	output, exit, err = h.exec.RunCommand(ctx, freebsdUpdate, "install")
+	output, exit, err = h.exec.RunCommand(ctx, freebsdUpdate, "--not-running-from-cron", "install")
 	if exit == 2 {
 		return nil // no updates to install
 	} else if err != nil {
