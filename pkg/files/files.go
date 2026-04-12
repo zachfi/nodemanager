@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -102,22 +101,22 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		attribute.String("group", group),
 	)
 
-	u, err := user.Lookup(owner)
+	uidStr, err := lookupUID(owner)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to lookup user")
 	}
 
-	uid, err := strconv.Atoi(u.Uid)
+	uid, err := strconv.Atoi(uidStr)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to convert uid string")
 	}
 
-	g, err := user.LookupGroup(group)
+	gidStr, err := lookupGID(group)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to lookup group")
 	}
 
-	gid, err := strconv.Atoi(g.Gid)
+	gid, err := strconv.Atoi(gidStr)
 	if err != nil {
 		return false, errors.Wrap(err, "failed to convert gid string")
 	}
@@ -333,12 +332,8 @@ func SaveToFileBucket(bucketPath, filePath string, data []byte, info os.FileInfo
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		meta.UID = stat.Uid
 		meta.GID = stat.Gid
-		if u, err := user.LookupId(strconv.Itoa(int(stat.Uid))); err == nil {
-			meta.Owner = u.Username
-		}
-		if g, err := user.LookupGroupId(strconv.Itoa(int(stat.Gid))); err == nil {
-			meta.Group = g.Name
-		}
+		meta.Owner = lookupUsernameByUID(strconv.Itoa(int(stat.Uid)))
+		meta.Group = lookupGroupnameByGID(strconv.Itoa(int(stat.Gid)))
 	}
 
 	metaBytes, err := json.Marshal(meta)
