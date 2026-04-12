@@ -39,6 +39,10 @@ func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg Config, client
 }
 
 func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
@@ -114,6 +118,10 @@ func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error 
 }
 
 func (l *leaseLocker) Unlock(ctx context.Context, req types.NamespacedName) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 

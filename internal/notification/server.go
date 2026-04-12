@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -66,7 +67,21 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		s.logger.Info("shutting down notification server")
-		srv.GracefulStop()
+
+		// Use a short deadline for graceful shutdown, then force-stop to
+		// avoid blocking on long-lived subscriber streams.
+		done := make(chan struct{})
+		go func() {
+			srv.GracefulStop()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			s.logger.Info("graceful stop timed out, forcing stop")
+			srv.Stop()
+		}
 	}()
 
 	s.logger.Info("notification server listening", "socket", s.cfg.SocketPath)

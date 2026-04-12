@@ -162,10 +162,12 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
-	gracePeriod := 2 * time.Minute
+	gracePeriod := 30 * time.Second
+	syncPeriod := 2 * time.Minute
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Cache: cache.Options{
+			SyncPeriod: &syncPeriod,
 			DefaultNamespaces: map[string]cache.Config{
 				cfg.ControllerConfig.Namespace: {},
 			},
