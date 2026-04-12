@@ -125,6 +125,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
+		r.logger.Debug("configset labels do not match node, skipping", "configset", configSet.Name, "node", node.Name)
 		err = nil                 // for the span defer
 		return ctrl.Result{}, nil // Don't error if the configset doesn't match our label set
 	}
@@ -193,7 +194,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.logger.Error("failed to update configset status on node", "err", statusErr)
 	}
 
-	return ctrl.Result{}, err
+	return ctrl.Result{RequeueAfter: 2 * time.Minute}, err
 }
 
 // SetupWithManager sets up the controller with the Manager.

@@ -87,6 +87,8 @@ func runSubscribe() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: *level}))
 
+	logger.Info("starting agent", "version", version)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
