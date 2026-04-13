@@ -208,7 +208,10 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.logger.Error("failed to update configset status on node", "err", statusErr)
 	}
 
-	return ctrl.Result{RequeueAfter: 2 * time.Minute}, err
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

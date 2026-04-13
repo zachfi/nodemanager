@@ -414,7 +414,7 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 	// Check if we are a node that performs upgrades
 	if node.Spec.Upgrade.Schedule == "" {
-		r.logger.Info("managed node has no upgrade schedule")
+		r.logger.Debug("managed node has no upgrade schedule")
 		return time.Time{}, nil
 	}
 
