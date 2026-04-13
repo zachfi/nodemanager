@@ -20,6 +20,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/pprof"
 	"os"
 	"time"
 
@@ -176,6 +178,13 @@ func main() {
 			BindAddress:   cfg.ControllerConfig.MetricsAddr,
 			SecureServing: cfg.ControllerConfig.SecureMetrics,
 			TLSOpts:       tlsOpts,
+			ExtraHandlers: map[string]http.Handler{
+				"/debug/pprof/":        http.HandlerFunc(pprof.Index),
+				"/debug/pprof/cmdline": http.HandlerFunc(pprof.Cmdline),
+				"/debug/pprof/profile": http.HandlerFunc(pprof.Profile),
+				"/debug/pprof/symbol":  http.HandlerFunc(pprof.Symbol),
+				"/debug/pprof/trace":   http.HandlerFunc(pprof.Trace),
+			},
 		},
 		WebhookServer:           webhookServer,
 		HealthProbeBindAddress:  cfg.ControllerConfig.ProbeAddr,

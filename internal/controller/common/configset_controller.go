@@ -95,6 +95,10 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.logger.Info("reconciling configset", "configset", req.Name)
 
+	// Prevent a single stuck reconcile from blocking the worker indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	var err error
 
 	if ctx.Err() != nil {
@@ -983,7 +987,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	cmd := exec.Command(command, arg...)
+	cmd := exec.CommandContext(ctx, command, arg...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
