@@ -143,6 +143,11 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
+	// Migrate pre-0.9.0 upgrade annotation to status field.
+	if err = r.migrateUpgradeAnnotation(ctx, node); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	next, err = r.handleUpgrade(ctx, node)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -655,10 +660,102 @@ func (r *ManagedNodeReconciler) requestUpgradeApproval(ctx context.Context, node
 	}
 }
 
+// migrateUpgradeAnnotation copies pre-0.9.0 upgrade annotations into their
+// corresponding status fields and removes the annotations so the migration
+// runs only once.
+func (r *ManagedNodeReconciler) migrateUpgradeAnnotation(ctx context.Context, node *commonv1.ManagedNode) error {
+	type migration struct {
+		annotation string
+		target     string // human-readable for logging
+		set        func(fresh *commonv1.ManagedNode, t metav1.Time)
+		needed     func() bool
+	}
+
+	migrations := []migration{
+		{
+			annotation: "upgrade.nodemanager/last",
+			target:     "Status.LastUpgrade",
+			set:        func(f *commonv1.ManagedNode, t metav1.Time) { f.Status.LastUpgrade = &t },
+			needed:     func() bool { return node.Status.LastUpgrade == nil },
+		},
+		{
+			annotation: "upgrade.nodemanager/k8s-cordoned",
+			target:     "Status.KubernetesNodeCordoned",
+			set:        func(f *commonv1.ManagedNode, t metav1.Time) { f.Status.KubernetesNodeCordoned = &t },
+			needed:     func() bool { return node.Status.KubernetesNodeCordoned == nil },
+		},
+	}
+
+	var migrated bool
+
+	for _, m := range migrations {
+		if !m.needed() {
+			continue
+		}
+
+		v, ok := node.Annotations[m.annotation]
+		if !ok {
+			continue
+		}
+
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return fmt.Errorf("failed to parse legacy annotation %s: %w", m.annotation, err)
+		}
+
+		r.logger.Info("migrating legacy annotation to status field", "annotation", m.annotation, "target", m.target, "value", t)
+		metaTime := metav1.NewTime(t)
+
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			var fresh commonv1.ManagedNode
+			if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &fresh); err != nil {
+				return err
+			}
+			m.set(&fresh, metaTime)
+			return r.Status().Update(ctx, &fresh)
+		}); err != nil {
+			return fmt.Errorf("failed to migrate %s to status: %w", m.annotation, err)
+		}
+
+		// Remove the legacy annotation.
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			var fresh commonv1.ManagedNode
+			if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &fresh); err != nil {
+				return err
+			}
+			delete(fresh.Annotations, m.annotation)
+			return r.Update(ctx, &fresh)
+		}); err != nil {
+			return fmt.Errorf("failed to remove legacy annotation %s: %w", m.annotation, err)
+		}
+
+		migrated = true
+	}
+
+	if migrated {
+		// Refresh the in-memory copy so subsequent code sees the migrated status.
+		return r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, node)
+	}
+
+	return nil
+}
+
 func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (time.Time, error) {
 	if node.Status.LastUpgrade != nil {
 		r.logger.Info("last upgrade time found", "lastUpgrade", node.Status.LastUpgrade.Time)
 		return node.Status.LastUpgrade.Time, nil
+	}
+
+	// Fall back to the pre-0.9.0 annotation for nodes that haven't been
+	// reconciled since the migration to status fields.  This prevents a
+	// spurious upgrade immediately after the controller binary is updated.
+	if v, ok := node.Annotations["upgrade.nodemanager/last"]; ok {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse legacy upgrade annotation: %w", err)
+		}
+		r.logger.Info("last upgrade time found from legacy annotation", "lastUpgrade", t)
+		return t, nil
 	}
 
 	return time.Time{}, nil
