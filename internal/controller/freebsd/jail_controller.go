@@ -47,6 +47,13 @@ import (
 
 const jailFinalizer = "freebsd.nodemanager/finalizer"
 
+// Standard condition types for Jail resources.
+const (
+	condAvailable   = "Available"
+	condDegraded    = "Degraded"
+	condProgressing = "Progressing"
+)
+
 // JailReconciler reconciles Jail objects.
 type JailReconciler struct {
 	client.Client
@@ -116,7 +123,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			if err := r.manager.DeleteJail(ctx, *j); err != nil {
 				jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "error").Inc()
 				_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-					r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "DeleteFailed", err.Error())
+					r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "DeleteFailed", err.Error())
 				})
 				return ctrl.Result{}, err
 			}
@@ -137,7 +144,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		tmplKey := types.NamespacedName{Name: j.Spec.TemplateRef, Namespace: j.Namespace}
 		if err := r.Get(ctx, tmplKey, tmpl); err != nil {
 			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-				r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "TemplateNotFound",
+				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "TemplateNotFound",
 					fmt.Sprintf("JailTemplate %q not found: %v", j.Spec.TemplateRef, err))
 			})
 			return ctrl.Result{}, err
@@ -151,7 +158,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	mergedJail.Spec = mergedSpec
 
 	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-		r.setCondition(fresh, "Progressing", metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
+		r.setCondition(fresh, condProgressing, metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -162,8 +169,8 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "error").Inc()
 		r.logger.Error("failed to ensure jail", "jail", j.Name, "err", err)
 		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-			r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "EnsureFailed", err.Error())
-			r.setCondition(fresh, "Progressing", metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
+			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "EnsureFailed", err.Error())
+			r.setCondition(fresh, condProgressing, metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
 		})
 		return ctrl.Result{}, err
 	}
@@ -175,7 +182,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err != nil {
 		r.logger.Error("failed to check jail state", "jail", j.Name, "err", err)
 		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-			r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "StatusCheckFailed", err.Error())
+			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "StatusCheckFailed", err.Error())
 		})
 		return ctrl.Result{}, err
 	}
@@ -184,8 +191,8 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
 			r.logger.Error("failed to start jail", "jail", j.Name, "err", err)
 			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-				r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "StartFailed", err.Error())
-				r.setCondition(fresh, "Progressing", metav1.ConditionFalse, "StartFailed", "jail failed to start")
+				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "StartFailed", err.Error())
+				r.setCondition(fresh, condProgressing, metav1.ConditionFalse, "StartFailed", "jail failed to start")
 			})
 			return ctrl.Result{}, err
 		}
@@ -206,7 +213,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 				if err := r.manager.ExecInJail(ctx, j.Name, cmd.Command, cmd.Args...); err != nil {
 					jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "error").Inc()
 					_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-						r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "PostCreateFailed",
+						r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "PostCreateFailed",
 							fmt.Sprintf("postCreate hook %q failed: %v", cmd.Name, err))
 					})
 					return ctrl.Result{}, err
@@ -214,17 +221,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			}
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "success").Inc()
 
-			if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-				var fresh freebsdv1.Jail
-				if err := r.Get(ctx, req.NamespacedName, &fresh); err != nil {
-					return err
-				}
-				if fresh.Annotations == nil {
-					fresh.Annotations = make(map[string]string)
-				}
-				fresh.Annotations[common.AnnotationJailPostCreateDone] = time.Now().Format(time.RFC3339)
-				return r.Update(ctx, &fresh)
-			}); err != nil {
+			if err := r.setAnnotation(ctx, req.NamespacedName, common.AnnotationJailPostCreateDone, time.Now().Format(time.RFC3339)); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -240,13 +237,13 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-		r.setCondition(fresh, "Progressing", metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
+		r.setCondition(fresh, condProgressing, metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
 		if running {
-			r.setCondition(fresh, "Available", metav1.ConditionTrue, "Running", "jail is running")
-			r.setCondition(fresh, "Degraded", metav1.ConditionFalse, "Running", "")
+			r.setCondition(fresh, condAvailable, metav1.ConditionTrue, "Running", "jail is running")
+			r.setCondition(fresh, condDegraded, metav1.ConditionFalse, "Running", "")
 		} else {
-			r.setCondition(fresh, "Available", metav1.ConditionFalse, "NotRunning", "jail is not running after start")
-			r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "NotRunning", "jail is not running after start attempt")
+			r.setCondition(fresh, condAvailable, metav1.ConditionFalse, "NotRunning", "jail is not running after start")
+			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "NotRunning", "jail is not running after start attempt")
 		}
 		if release != "" {
 			fresh.Status.Release = release
@@ -301,7 +298,7 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 
 	// Check last update time from annotation.
-	if last, ok := j.Annotations[jail.AnnotationLastUpdate]; ok {
+	if last, ok := j.Annotations[common.AnnotationJailLastUpdate]; ok {
 		t, err := time.Parse(time.RFC3339, last)
 		if err == nil && time.Since(t) < delay {
 			return next, nil
@@ -351,17 +348,7 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	key := types.NamespacedName{Name: j.Name, Namespace: j.Namespace}
 
 	// Record the last-update annotation on the metadata subresource.
-	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		var fresh freebsdv1.Jail
-		if err := r.Get(ctx, key, &fresh); err != nil {
-			return err
-		}
-		if fresh.Annotations == nil {
-			fresh.Annotations = make(map[string]string)
-		}
-		fresh.Annotations[jail.AnnotationLastUpdate] = now.Format(time.RFC3339)
-		return r.Update(ctx, &fresh)
-	}); err != nil {
+	if err := r.setAnnotation(ctx, key, common.AnnotationJailLastUpdate, now.Format(time.RFC3339)); err != nil {
 		return time.Time{}, fmt.Errorf("recording last update annotation: %w", err)
 	}
 
@@ -373,6 +360,22 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 
 	return next, nil
+}
+
+// setAnnotation sets a single annotation on the Jail metadata inside a
+// RetryOnConflict loop so that stale resourceVersions do not cause errors.
+func (r *JailReconciler) setAnnotation(ctx context.Context, key types.NamespacedName, annotKey, annotValue string) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var fresh freebsdv1.Jail
+		if err := r.Get(ctx, key, &fresh); err != nil {
+			return err
+		}
+		if fresh.Annotations == nil {
+			fresh.Annotations = make(map[string]string)
+		}
+		fresh.Annotations[annotKey] = annotValue
+		return r.Update(ctx, &fresh)
+	})
 }
 
 // setCondition upserts a named condition on the jail's status.
