@@ -45,11 +45,11 @@ type Manager interface {
 	// DeleteJail stops the jail (if running) then tears down its ZFS datasets
 	// and config files.
 	DeleteJail(ctx context.Context, j freebsdv1.Jail) error
-	// StartJail starts a provisioned jail via `service jail start <name>`.
+	// StartJail starts a provisioned jail via `jail -c`.
 	StartJail(ctx context.Context, name string) error
-	// StopJail stops a running jail via `service jail stop <name>`.
+	// StopJail stops a running jail via `jail -r`.
 	StopJail(ctx context.Context, name string) error
-	// RestartJail restarts a running jail via `service jail restart <name>`.
+	// RestartJail stops and then starts a jail.
 	RestartJail(ctx context.Context, name string) error
 	// IsRunning reports whether the named jail is currently active according
 	// to jls(8).

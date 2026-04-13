@@ -1,0 +1,17 @@
+apiVersion: freebsd.nodemanager/v1
+kind: JailTemplate
+metadata:
+  labels:
+    app.kubernetes.io/name: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: standard
+spec:
+  interface: lo1
+  update:
+    schedule: "0 3 * * *"
+    delay: "24h"
+    group: jail-updates
+  postCreate:
+    - name: bootstrap
+      command: /usr/local/bin/nodemanager-agent
+      args: ["--runonce"]
