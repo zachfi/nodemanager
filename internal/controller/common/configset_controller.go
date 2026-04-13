@@ -41,16 +41,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/event"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
-	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/files"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -122,6 +118,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var configSet commonv1.ConfigSet
 	if err = r.Get(ctx, req.NamespacedName, &configSet); err != nil {
 		if client.IgnoreNotFound(err) == nil {
+			span.AddEvent("configset deleted, cleaning up status")
 			r.logger.Debug("configset deleted, cleaning up status", "configset", req.Name)
 			r.removeConfigSetStatus(ctx, req.Name)
 		} else {
@@ -130,6 +127,8 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	span.SetAttributes(attribute.String("configset", configSet.Name))
+
 	node, err := createOrGetNode(ctx, r.logger, r, r, req)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -137,6 +136,8 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
+		span.AddEvent("labels do not match, cleaning up status",
+			trace.WithAttributes(attribute.String("node", node.Name)))
 		r.logger.Debug("configset labels do not match node, cleaning up status", "configset", configSet.Name, "node", node.Name)
 		r.removeConfigSetStatus(ctx, configSet.Name)
 		err = nil // for the span defer
@@ -152,6 +153,10 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	if len(conflicts) > 0 {
+		span.AddEvent("resource conflicts detected",
+			trace.WithAttributes(
+				attribute.Int("count", len(conflicts)),
+				attribute.StringSlice("conflicts", conflicts)))
 		configSetConflictsTotal.WithLabelValues(nodeName, configSet.Name).Add(float64(len(conflicts)))
 		r.logger.Warn("configset has resource conflicts, skipping apply", "configset", configSet.Name, "conflicts", conflicts)
 		if statusErr := r.updateConfigSetStatus(ctx, node.Name, node.Namespace, configSet.Name, configSet.ResourceVersion, nil, conflicts); statusErr != nil {
@@ -196,6 +201,9 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		applyResult = "error"
 	}
+	span.SetAttributes(
+		attribute.String("result", applyResult),
+		attribute.String("resource_version", configSet.ResourceVersion))
 	configSetApplyTotal.WithLabelValues(nodeName, configSet.Name, applyResult).Inc()
 	configSetApplyDuration.WithLabelValues(nodeName, configSet.Name).Observe(time.Since(applyStart).Seconds())
 	if err == nil {
@@ -225,46 +233,15 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 	}
 
-	nodeLabels := labels.DefaultLabels(context.Background(), r.system.Node())
-
-	// Try to fetch the ManagedNode's full label set so the predicate accounts
-	// for role labels and other labels added after initial creation.
-	// DefaultLabels only has os/arch/hostname which causes ConfigSets that
-	// match on additional labels (e.g. role.nodemanager/workstation) to be
-	// incorrectly filtered out.
-	var node commonv1.ManagedNode
-	hostname, _ := os.Hostname()
-	if hostname != "" {
-		if err := mgr.GetAPIReader().Get(context.Background(), types.NamespacedName{
-			Name:      hostname,
-			Namespace: r.cfg.Namespace,
-		}, &node); err == nil && len(node.Labels) > 0 {
-			nodeLabels = node.Labels
-		}
-	}
-
-	labelPredicate := newNodeLabelMatchPredicate(nodeLabels)
-
+	// No watch-level predicate — the nodeLabelMatch guard inside Reconcile
+	// handles filtering using live ManagedNode labels from the API server.
+	// A static predicate cannot track label changes after startup and the
+	// API reader may not be available before the manager starts.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&commonv1.ConfigSet{}, builder.WithPredicates(labelPredicate)).
+		For(&commonv1.ConfigSet{}).
 		Watches(&corev1.Secret{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingSecret)).
 		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
 		Complete(r)
-}
-
-// newNodeLabelMatchPredicate returns a predicate that only admits ConfigSet
-// events whose labels are a non-empty subset of the local node's labels.
-// This prevents ConfigSets targeting other nodes from ever entering the workqueue.
-func newNodeLabelMatchPredicate(nodeLabels map[string]string) predicate.Predicate {
-	matches := func(obj client.Object) bool {
-		return matchAllLabels(nodeLabels, obj.GetLabels())
-	}
-	return predicate.Funcs{
-		CreateFunc:  func(e event.CreateEvent) bool { return matches(e.Object) },
-		UpdateFunc:  func(e event.UpdateEvent) bool { return matches(e.ObjectNew) },
-		DeleteFunc:  func(e event.DeleteEvent) bool { return matches(e.Object) },
-		GenericFunc: func(e event.GenericEvent) bool { return matches(e.Object) },
-	}
 }
 
 // runFileBucketGC runs the filebucket garbage collector on a durable schedule.
