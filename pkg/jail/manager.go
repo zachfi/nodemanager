@@ -62,6 +62,8 @@ type Manager interface {
 	// patch-level security updates within the current release.  The jail must
 	// be stopped before calling this.
 	UpdateJail(ctx context.Context, jailRoot string) error
+	// ExecInJail runs a command inside a running jail via jexec(8).
+	ExecInJail(ctx context.Context, jailName, command string, args ...string) error
 }
 
 var _ Manager = (*manager)(nil)
@@ -253,6 +255,11 @@ func (m *manager) IsRunning(ctx context.Context, name string) (bool, error) {
 
 func (m *manager) InstalledRelease(jailRoot string) (string, error) {
 	return installedRelease(jailRoot)
+}
+
+func (m *manager) ExecInJail(ctx context.Context, jailName, command string, args ...string) error {
+	cmdArgs := append([]string{jailName, command}, args...)
+	return m.exec.SimpleRunCommand(ctx, "jexec", cmdArgs...)
 }
 
 // UpdateJail runs freebsd-update(8) against the jail root to apply patch-level

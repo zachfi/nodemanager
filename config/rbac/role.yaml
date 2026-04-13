@@ -95,6 +95,14 @@ rules:
   - patch
   - update
 - apiGroups:
+  - freebsd.nodemanager
+  resources:
+  - jailtemplates
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - policy
   resources:
   - pods/eviction

@@ -22,3 +22,8 @@ const AnnotationUpgradeHold = "upgrade.nodemanager/hold"
 // AnnotationJailLastUpdate records the RFC3339 timestamp of the most recent
 // successful freebsd-update run on a Jail. Set by the controller; do not edit manually.
 const AnnotationJailLastUpdate = "update.freebsd.nodemanager/last"
+
+// AnnotationJailPostCreateDone records the RFC3339 timestamp when postCreate
+// hooks from the referenced JailTemplate completed successfully.  Set by the
+// controller after the first successful run; do not edit manually.
+const AnnotationJailPostCreateDone = "postcreate.freebsd.nodemanager/done"

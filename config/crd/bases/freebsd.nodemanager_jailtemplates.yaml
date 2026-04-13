@@ -1,0 +1,125 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: jailtemplates.freebsd.nodemanager
+spec:
+  group: freebsd.nodemanager
+  names:
+    kind: JailTemplate
+    listKind: JailTemplateList
+    plural: jailtemplates
+    singular: jailtemplate
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          JailTemplate is the Schema for the jailtemplates API.
+          It provides shared defaults that Jail resources can inherit.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              JailTemplateSpec defines shared defaults that Jails can inherit by
+              referencing this template via spec.templateRef.  Jail-level fields always
+              take precedence over template defaults.
+            properties:
+              interface:
+                description: Interface is the default network interface for jails
+                  using this template.
+                type: string
+              mounts:
+                description: Mounts defines default filesystem mounts made available
+                  inside the jail.
+                items:
+                  description: JailMount describes a single filesystem mount inside
+                    the jail.
+                  properties:
+                    hostPath:
+                      description: HostPath is the absolute path on the host to expose
+                        inside the jail.
+                      type: string
+                    jailPath:
+                      description: JailPath is the absolute path inside the jail root
+                        where HostPath is mounted.
+                      type: string
+                    readOnly:
+                      description: ReadOnly mounts the filesystem read-only.
+                      type: boolean
+                    type:
+                      description: Type is the filesystem type. Defaults to "nullfs".
+                      type: string
+                  required:
+                  - hostPath
+                  - jailPath
+                  type: object
+                type: array
+              postCreate:
+                description: |-
+                  PostCreate holds commands to run inside the jail after its first
+                  successful start.  Commands are executed sequentially; if any command
+                  fails the remaining commands are skipped and the jail is marked degraded.
+                items:
+                  description: |-
+                    PostCreateCommand describes a command to run inside a jail after its first
+                    successful start.  Commands are executed sequentially via jexec(8).
+                  properties:
+                    args:
+                      description: Args are arguments passed to the command.
+                      items:
+                        type: string
+                      type: array
+                    command:
+                      description: Command is the executable path inside the jail.
+                      type: string
+                    name:
+                      description: Name is a human-readable label for this hook (used
+                        in logs and conditions).
+                      type: string
+                  required:
+                  - command
+                  - name
+                  type: object
+                type: array
+              update:
+                description: Update defines default freebsd-update settings.
+                properties:
+                  delay:
+                    description: Delay is the minimum time between updates (e.g. "24h").
+                    type: string
+                  group:
+                    description: |-
+                      Group is a lease group name.  Only one jail in the group will run
+                      freebsd-update at a time, preventing concurrent disruption across hosts.
+                    type: string
+                  schedule:
+                    description: Schedule is a cron expression for when updates should
+                      run.
+                    type: string
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

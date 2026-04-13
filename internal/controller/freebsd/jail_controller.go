@@ -34,9 +34,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/jail"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -86,6 +89,7 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jails,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jails/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jails/finalizers,verbs=update
+// +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jailtemplates,verbs=get;list;watch
 
 func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = logf.FromContext(ctx)
@@ -125,6 +129,27 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, nil
 	}
 
+	// Resolve template defaults if templateRef is set.
+	mergedSpec := j.Spec
+	var postCreateCmds []freebsdv1.PostCreateCommand
+	if j.Spec.TemplateRef != "" {
+		tmpl := &freebsdv1.JailTemplate{}
+		tmplKey := types.NamespacedName{Name: j.Spec.TemplateRef, Namespace: j.Namespace}
+		if err := r.Get(ctx, tmplKey, tmpl); err != nil {
+			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+				r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "TemplateNotFound",
+					fmt.Sprintf("JailTemplate %q not found: %v", j.Spec.TemplateRef, err))
+			})
+			return ctrl.Result{}, err
+		}
+		mergedSpec = jail.MergeTemplateDefaults(j.Spec, tmpl.Spec)
+		postCreateCmds = tmpl.Spec.PostCreate
+	}
+
+	// Build a merged jail for provisioning.
+	mergedJail := j.DeepCopy()
+	mergedJail.Spec = mergedSpec
+
 	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
 		r.setCondition(fresh, "Progressing", metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
 	}); err != nil {
@@ -132,7 +157,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	provisionStart := time.Now()
-	if err := r.manager.EnsureJail(ctx, *j); err != nil {
+	if err := r.manager.EnsureJail(ctx, *mergedJail); err != nil {
 		jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "error").Inc()
 		r.logger.Error("failed to ensure jail", "jail", j.Name, "err", err)
@@ -171,6 +196,38 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	running, err = r.manager.IsRunning(ctx, j.Name)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Run postCreate hooks once after the first successful start.
+	if len(postCreateCmds) > 0 && running {
+		if _, done := j.Annotations[common.AnnotationJailPostCreateDone]; !done {
+			for _, cmd := range postCreateCmds {
+				r.logger.Info("running postCreate hook", "jail", j.Name, "hook", cmd.Name)
+				if err := r.manager.ExecInJail(ctx, j.Name, cmd.Command, cmd.Args...); err != nil {
+					jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "error").Inc()
+					_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+						r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "PostCreateFailed",
+							fmt.Sprintf("postCreate hook %q failed: %v", cmd.Name, err))
+					})
+					return ctrl.Result{}, err
+				}
+			}
+			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "success").Inc()
+
+			if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+				var fresh freebsdv1.Jail
+				if err := r.Get(ctx, req.NamespacedName, &fresh); err != nil {
+					return err
+				}
+				if fresh.Annotations == nil {
+					fresh.Annotations = make(map[string]string)
+				}
+				fresh.Annotations[common.AnnotationJailPostCreateDone] = time.Now().Format(time.RFC3339)
+				return r.Update(ctx, &fresh)
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	// Populate status.release from the jail root filesystem.
@@ -343,10 +400,37 @@ func (r *JailReconciler) updateStatusWithRetry(ctx context.Context, key types.Na
 	})
 }
 
+// jailsReferencingTemplate returns reconcile requests for all Jails in the
+// same namespace that reference the changed JailTemplate.
+func (r *JailReconciler) jailsReferencingTemplate(ctx context.Context, obj client.Object) []reconcile.Request {
+	tmpl, ok := obj.(*freebsdv1.JailTemplate)
+	if !ok {
+		return nil
+	}
+
+	var jailList freebsdv1.JailList
+	if err := r.List(ctx, &jailList, client.InNamespace(tmpl.Namespace)); err != nil {
+		r.logger.Error("failed to list jails for template watch", "err", err)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for _, j := range jailList.Items {
+		if j.Spec.TemplateRef == tmpl.Name {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: j.Name, Namespace: j.Namespace},
+			})
+		}
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *JailReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&freebsdv1.Jail{}).
+		Watches(&freebsdv1.JailTemplate{},
+			ctrlhandler.EnqueueRequestsFromMapFunc(r.jailsReferencingTemplate)).
 		Named("freebsd-jail").
 		Complete(r)
 }

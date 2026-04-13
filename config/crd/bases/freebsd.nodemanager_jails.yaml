@@ -89,6 +89,12 @@ spec:
               release:
                 description: Release is the FreeBSD release version to use (e.g. "14.2-RELEASE").
                 type: string
+              templateRef:
+                description: |-
+                  TemplateRef is the name of a JailTemplate in the same namespace.
+                  When set, the template's defaults are merged under this spec's values
+                  (jail-level fields take precedence over template defaults).
+                type: string
               update:
                 description: Update controls periodic freebsd-update(8) runs for this
                   jail.

@@ -36,6 +36,12 @@ type JailUpdate struct {
 
 // JailSpec defines the desired state of Jail.
 type JailSpec struct {
+	// TemplateRef is the name of a JailTemplate in the same namespace.
+	// When set, the template's defaults are merged under this spec's values
+	// (jail-level fields take precedence over template defaults).
+	// +optional
+	TemplateRef string `json:"templateRef,omitempty"`
+
 	// NodeName restricts reconciliation to the nodemanager instance running on
 	// the named host. If empty the jail is ignored by all nodes.
 	// +required
