@@ -179,12 +179,18 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 		return fmt.Errorf("copying host files into jail %s: %w", j.Name, err)
 	}
 
-	// 5. Write per-jail fstab if mounts are declared.
+	// 5. Write per-jail fstab and ensure mountpoint directories exist.
 	fstabPath := ""
 	if len(j.Spec.Mounts) > 0 {
 		fstabPath = filepath.Join(m.basePath, JailRootDir, j.Name, "fstab")
 		if err := writeFstab(fstabPath, jailRoot, j.Spec.Mounts); err != nil {
 			return fmt.Errorf("writing fstab for %s: %w", j.Name, err)
+		}
+		for _, mount := range j.Spec.Mounts {
+			mp := filepath.Join(jailRoot, mount.JailPath)
+			if err := os.MkdirAll(mp, 0o755); err != nil {
+				return fmt.Errorf("creating mountpoint %s for jail %s: %w", mp, j.Name, err)
+			}
 		}
 	}
 
