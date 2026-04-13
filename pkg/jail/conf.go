@@ -21,9 +21,12 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Parse(`{{ .Name }} {
 	exec.start = "/bin/sh /etc/rc";
 	exec.stop  = "/bin/sh /etc/rc.shutdown jail";
 	exec.clean;
+	exec.consolelog = "/var/log/jail_{{ .Name }}_console.log";
 
 	mount.devfs;
 	devfs_ruleset = 4;
+	enforce_statfs = 2;
+	securelevel = 2;
 
 	allow.raw_sockets;
 {{ if .Interface }}
@@ -34,6 +37,10 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Parse(`{{ .Name }} {
 {{ end -}}
 {{ if .Inet6 }}
 	ip6.addr = {{ .Inet6 }};
+	ip6 = new;
+{{ end -}}
+{{ if .Release }}
+	osrelease = "{{ .Release }}";
 {{ end -}}
 {{ if .FstabPath }}
 	mount.fstab = "{{ .FstabPath }}";
@@ -48,6 +55,7 @@ type jailConfData struct {
 	Interface string
 	Inet      string
 	Inet6     string
+	Release   string
 	// FstabPath is non-empty when the jail has extra mounts.
 	FstabPath string
 }
@@ -67,6 +75,7 @@ func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.Jai
 		Interface: spec.Interface,
 		Inet:      spec.Inet,
 		Inet6:     spec.Inet6,
+		Release:   spec.Release,
 		FstabPath: fstabPath,
 	}
 
