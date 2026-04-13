@@ -205,6 +205,20 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	jailRoot := filepath.Join(r.cfg.JailDataPath, jail.JailRootDir, j.Name, "root")
+
+	// Bootstrap pkg(8) if not already present — required for any package
+	// operations inside the jail.
+	if running {
+		if err := r.manager.BootstrapPkg(ctx, j.Name, jailRoot); err != nil {
+			r.logger.Error("failed to bootstrap pkg", "jail", j.Name, "err", err)
+			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "PkgBootstrapFailed", err.Error())
+			})
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Run postCreate hooks once after the first successful start.
 	if len(postCreateCmds) > 0 && running {
 		if _, done := j.Annotations[common.AnnotationJailPostCreateDone]; !done {
@@ -228,7 +242,6 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	// Populate status.release from the jail root filesystem.
-	jailRoot := filepath.Join(r.cfg.JailDataPath, jail.JailRootDir, j.Name, "root")
 	release := ""
 	if rel, err := r.manager.InstalledRelease(jailRoot); err != nil {
 		r.logger.Warn("could not read installed release", "jail", j.Name, "err", err)

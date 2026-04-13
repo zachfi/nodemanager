@@ -65,6 +65,9 @@ type Manager interface {
 	UpdateJail(ctx context.Context, jailRoot string) error
 	// ExecInJail runs a command inside a running jail via jexec(8).
 	ExecInJail(ctx context.Context, jailName, command string, args ...string) error
+	// BootstrapPkg installs the pkg(8) package manager inside the jail if
+	// it is not already present.  The jail must be running.
+	BootstrapPkg(ctx context.Context, jailName, jailRoot string) error
 }
 
 var _ Manager = (*manager)(nil)
@@ -279,6 +282,14 @@ func (m *manager) InstalledRelease(jailRoot string) (string, error) {
 func (m *manager) ExecInJail(ctx context.Context, jailName, command string, args ...string) error {
 	cmdArgs := append([]string{jailName, command}, args...)
 	return m.exec.SimpleRunCommand(ctx, "jexec", cmdArgs...)
+}
+
+func (m *manager) BootstrapPkg(ctx context.Context, jailName, jailRoot string) error {
+	pkgPath := filepath.Join(jailRoot, "usr/local/sbin/pkg")
+	if _, err := os.Stat(pkgPath); err == nil {
+		return nil
+	}
+	return m.ExecInJail(ctx, jailName, "env", "ASSUME_ALWAYS_YES=yes", "pkg", "bootstrap")
 }
 
 // UpdateJail runs freebsd-update(8) against the jail root to apply patch-level
