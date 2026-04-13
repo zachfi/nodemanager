@@ -990,6 +990,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 	cmd := exec.CommandContext(ctx, command, arg...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.WaitDelay = 10 * time.Second
 
 	in, err := cmd.StdinPipe()
 	if err != nil {
