@@ -238,15 +238,19 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 }
 
 func (m *manager) StartJail(ctx context.Context, name string) error {
-	return m.exec.SimpleRunCommand(ctx, "service", "jail", "start", name)
+	confPath := filepath.Join(m.confDir, name+".conf")
+	return m.exec.SimpleRunCommand(ctx, "jail", "-c", "-f", confPath, name)
 }
 
 func (m *manager) StopJail(ctx context.Context, name string) error {
-	return m.exec.SimpleRunCommand(ctx, "service", "jail", "stop", name)
+	return m.exec.SimpleRunCommand(ctx, "jail", "-r", name)
 }
 
 func (m *manager) RestartJail(ctx context.Context, name string) error {
-	return m.exec.SimpleRunCommand(ctx, "service", "jail", "restart", name)
+	if err := m.StopJail(ctx, name); err != nil {
+		return err
+	}
+	return m.StartJail(ctx, name)
 }
 
 func (m *manager) IsRunning(ctx context.Context, name string) (bool, error) {

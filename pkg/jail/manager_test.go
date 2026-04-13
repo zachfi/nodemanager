@@ -226,36 +226,28 @@ func TestDeleteJail(t *testing.T) {
 }
 
 func TestStartStopRestartJail(t *testing.T) {
-	cases := []struct {
-		name    string
-		op      func(context.Context, Manager, string) error
-		wantCmd []string
-	}{
-		{
-			name:    "start",
-			op:      func(ctx context.Context, m Manager, n string) error { return m.StartJail(ctx, n) },
-			wantCmd: []string{"jail", "start", "classic"},
-		},
-		{
-			name:    "stop",
-			op:      func(ctx context.Context, m Manager, n string) error { return m.StopJail(ctx, n) },
-			wantCmd: []string{"jail", "stop", "classic"},
-		},
-		{
-			name:    "restart",
-			op:      func(ctx context.Context, m Manager, n string) error { return m.RestartJail(ctx, n) },
-			wantCmd: []string{"jail", "restart", "classic"},
-		},
-	}
+	t.Run("start", func(t *testing.T) {
+		m, exec, _ := newTestManager(t, []int{0})
+		require.NoError(t, m.StartJail(context.Background(), "classic"))
+		confPath := filepath.Join(m.confDir, "classic.conf")
+		require.Equal(t, []string{"-c", "-f", confPath, "classic"}, exec.Recorder["jail"][0])
+	})
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			m, exec, _ := newTestManager(t, []int{0})
-			require.NoError(t, tc.op(context.Background(), m, "classic"))
-			// service is invoked via SimpleRunCommand → RunCommand
-			require.Equal(t, tc.wantCmd, exec.Recorder["service"][0])
-		})
-	}
+	t.Run("stop", func(t *testing.T) {
+		m, exec, _ := newTestManager(t, []int{0})
+		require.NoError(t, m.StopJail(context.Background(), "classic"))
+		require.Equal(t, []string{"-r", "classic"}, exec.Recorder["jail"][0])
+	})
+
+	t.Run("restart", func(t *testing.T) {
+		// Restart calls stop then start, so two jail invocations.
+		m, exec, _ := newTestManager(t, []int{0, 0})
+		require.NoError(t, m.RestartJail(context.Background(), "classic"))
+		require.Len(t, exec.Recorder["jail"], 2)
+		require.Equal(t, []string{"-r", "classic"}, exec.Recorder["jail"][0])
+		confPath := filepath.Join(m.confDir, "classic.conf")
+		require.Equal(t, []string{"-c", "-f", confPath, "classic"}, exec.Recorder["jail"][1])
+	})
 }
 
 func TestIsRunning(t *testing.T) {
@@ -293,15 +285,12 @@ func TestDeleteJailStopsFirst(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
 	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
 
-	// Provide empty jls output for the IsRunning call inside StopJail? No —
-	// StopJail does not check IsRunning first; it just runs the command.
-	// Supply a jls output for the call if needed. But StopJail just calls
-	// `service jail stop`; no jls call is made during stop.
+	// StopJail does not check IsRunning first; it just runs `jail -r`.
 	require.NoError(t, m.DeleteJail(context.Background(), j))
 
-	// First call to the "service" binary must be the stop command.
+	// First call to "jail" binary must be the stop command.
 	// The mock records args only (not the binary name itself).
-	require.Equal(t, []string{"jail", "stop", "gone"}, exec.Recorder["service"][0])
+	require.Equal(t, []string{"-r", "gone"}, exec.Recorder["jail"][0])
 }
 
 // helpers
