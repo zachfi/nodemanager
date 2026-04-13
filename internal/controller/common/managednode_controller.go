@@ -88,6 +88,7 @@ func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logg
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=managednodes/finalizers,verbs=update
+//+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets,verbs=list
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 //+kubebuilder:rbac:groups="policy",resources=pods/eviction,verbs=create
@@ -135,6 +136,10 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	err = r.updateNodeStatus(ctx, node)
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err = r.pruneStaleConfigSetStatus(ctx, node); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -810,4 +815,69 @@ func isDrainablePod(pod corev1.Pod) bool {
 		return false
 	}
 	return true
+}
+
+// pruneStaleConfigSetStatus removes Status.ConfigSets entries for ConfigSets
+// that no longer exist or whose labels no longer match this node.  This is a
+// consistency safety net — the primary cleanup happens in
+// ConfigSetReconciler.removeConfigSetStatus when a ConfigSet is deleted or its
+// labels change.
+func (r *ManagedNodeReconciler) pruneStaleConfigSetStatus(ctx context.Context, node *commonv1.ManagedNode) error {
+	if len(node.Status.ConfigSets) == 0 {
+		return nil
+	}
+
+	var allConfigSets commonv1.ConfigSetList
+	if err := r.List(ctx, &allConfigSets, client.InNamespace(node.Namespace)); err != nil {
+		return fmt.Errorf("failed to list configsets for status pruning: %w", err)
+	}
+
+	// Build the set of ConfigSet names that currently match this node.
+	matching := make(map[string]struct{}, len(allConfigSets.Items))
+	for _, cs := range allConfigSets.Items {
+		if nodeLabelMatch(*node, cs.Labels) == nil {
+			matching[cs.Name] = struct{}{}
+		}
+	}
+
+	var pruned []string
+	kept := make([]commonv1.ConfigSetApplyStatus, 0, len(node.Status.ConfigSets))
+	for _, cs := range node.Status.ConfigSets {
+		if _, ok := matching[cs.Name]; ok {
+			kept = append(kept, cs)
+		} else {
+			pruned = append(pruned, cs.Name)
+		}
+	}
+
+	if len(pruned) == 0 {
+		return nil
+	}
+
+	for _, name := range pruned {
+		r.logger.Info("pruning stale configset status", "configset", name, "node", node.Name)
+		// Clean up Prometheus metrics for the departed configset.
+		lastConfigSetApplyTimestamp.DeleteLabelValues(node.Name, name)
+		configSetConflictsTotal.DeleteLabelValues(node.Name, name)
+		configSetApplyDuration.DeleteLabelValues(node.Name, name)
+		configSetApplyTotal.DeleteLabelValues(node.Name, name, "success")
+		configSetApplyTotal.DeleteLabelValues(node.Name, name, "error")
+		fileChangesTotal.DeleteLabelValues(node.Name, name, "success")
+		fileChangesTotal.DeleteLabelValues(node.Name, name, "error")
+	}
+
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var n commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &n); err != nil {
+			return err
+		}
+		updated := make([]commonv1.ConfigSetApplyStatus, 0, len(n.Status.ConfigSets))
+		for _, cs := range n.Status.ConfigSets {
+			if _, ok := matching[cs.Name]; ok {
+				updated = append(updated, cs)
+			}
+		}
+		n.Status.ConfigSets = updated
+		return r.Status().Update(ctx, &n)
+	})
 }

@@ -111,8 +111,9 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		if controllerutil.ContainsFinalizer(j, jailFinalizer) {
 			if err := r.manager.DeleteJail(ctx, *j); err != nil {
 				jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "error").Inc()
-				r.setCondition(j, "Degraded", metav1.ConditionTrue, "DeleteFailed", err.Error())
-				_ = r.Status().Update(ctx, j)
+				_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+					r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "DeleteFailed", err.Error())
+				})
 				return ctrl.Result{}, err
 			}
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "success").Inc()
@@ -124,8 +125,9 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, nil
 	}
 
-	r.setCondition(j, "Progressing", metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
-	if err := r.Status().Update(ctx, j); err != nil {
+	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+		r.setCondition(fresh, "Progressing", metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -134,9 +136,10 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "error").Inc()
 		r.logger.Error("failed to ensure jail", "jail", j.Name, "err", err)
-		r.setCondition(j, "Degraded", metav1.ConditionTrue, "EnsureFailed", err.Error())
-		r.setCondition(j, "Progressing", metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
-		_ = r.Status().Update(ctx, j)
+		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+			r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "EnsureFailed", err.Error())
+			r.setCondition(fresh, "Progressing", metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
+		})
 		return ctrl.Result{}, err
 	}
 	jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
@@ -146,17 +149,19 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	running, err := r.manager.IsRunning(ctx, j.Name)
 	if err != nil {
 		r.logger.Error("failed to check jail state", "jail", j.Name, "err", err)
-		r.setCondition(j, "Degraded", metav1.ConditionTrue, "StatusCheckFailed", err.Error())
-		_ = r.Status().Update(ctx, j)
+		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+			r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "StatusCheckFailed", err.Error())
+		})
 		return ctrl.Result{}, err
 	}
 	if !running {
 		if err := r.manager.StartJail(ctx, j.Name); err != nil {
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
 			r.logger.Error("failed to start jail", "jail", j.Name, "err", err)
-			r.setCondition(j, "Degraded", metav1.ConditionTrue, "StartFailed", err.Error())
-			r.setCondition(j, "Progressing", metav1.ConditionFalse, "StartFailed", "jail failed to start")
-			_ = r.Status().Update(ctx, j)
+			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+				r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "StartFailed", err.Error())
+				r.setCondition(fresh, "Progressing", metav1.ConditionFalse, "StartFailed", "jail failed to start")
+			})
 			return ctrl.Result{}, err
 		}
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "success").Inc()
@@ -168,24 +173,28 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	r.setCondition(j, "Progressing", metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
-	if running {
-		r.setCondition(j, "Available", metav1.ConditionTrue, "Running", "jail is running")
-		r.setCondition(j, "Degraded", metav1.ConditionFalse, "Running", "")
-	} else {
-		r.setCondition(j, "Available", metav1.ConditionFalse, "NotRunning", "jail is not running after start")
-		r.setCondition(j, "Degraded", metav1.ConditionTrue, "NotRunning", "jail is not running after start attempt")
-	}
-
 	// Populate status.release from the jail root filesystem.
 	jailRoot := filepath.Join(r.cfg.JailDataPath, jail.JailRootDir, j.Name, "root")
+	release := ""
 	if rel, err := r.manager.InstalledRelease(jailRoot); err != nil {
 		r.logger.Warn("could not read installed release", "jail", j.Name, "err", err)
 	} else {
-		j.Status.Release = rel
+		release = rel
 	}
 
-	if err := r.Status().Update(ctx, j); err != nil {
+	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+		r.setCondition(fresh, "Progressing", metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
+		if running {
+			r.setCondition(fresh, "Available", metav1.ConditionTrue, "Running", "jail is running")
+			r.setCondition(fresh, "Degraded", metav1.ConditionFalse, "Running", "")
+		} else {
+			r.setCondition(fresh, "Available", metav1.ConditionFalse, "NotRunning", "jail is not running after start")
+			r.setCondition(fresh, "Degraded", metav1.ConditionTrue, "NotRunning", "jail is not running after start attempt")
+		}
+		if release != "" {
+			fresh.Status.Release = release
+		}
+	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -280,17 +289,30 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "update", "success").Inc()
 
-	now := metav1.Now()
-	j.Status.LastUpdate = &now
-	if j.Annotations == nil {
-		j.Annotations = make(map[string]string)
-	}
-	j.Annotations[jail.AnnotationLastUpdate] = time.Now().Format(time.RFC3339)
+	now := time.Now()
+	metaNow := metav1.NewTime(now)
+	key := types.NamespacedName{Name: j.Name, Namespace: j.Namespace}
 
+	// Record the last-update annotation on the metadata subresource.
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		return r.Update(ctx, j)
+		var fresh freebsdv1.Jail
+		if err := r.Get(ctx, key, &fresh); err != nil {
+			return err
+		}
+		if fresh.Annotations == nil {
+			fresh.Annotations = make(map[string]string)
+		}
+		fresh.Annotations[jail.AnnotationLastUpdate] = now.Format(time.RFC3339)
+		return r.Update(ctx, &fresh)
 	}); err != nil {
-		return time.Time{}, fmt.Errorf("recording last update time: %w", err)
+		return time.Time{}, fmt.Errorf("recording last update annotation: %w", err)
+	}
+
+	// Record the last-update timestamp on the status subresource.
+	if err := r.updateStatusWithRetry(ctx, key, func(fresh *freebsdv1.Jail) {
+		fresh.Status.LastUpdate = &metaNow
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("recording last update status: %w", err)
 	}
 
 	return next, nil
@@ -304,6 +326,20 @@ func (r *JailReconciler) setCondition(j *freebsdv1.Jail, condType string, status
 		Reason:             reason,
 		Message:            msg,
 		ObservedGeneration: j.Generation,
+	})
+}
+
+// updateStatusWithRetry re-fetches the Jail, applies the given mutation, and
+// updates the status subresource inside a RetryOnConflict loop so that stale
+// resourceVersions do not cause "object has been modified" errors.
+func (r *JailReconciler) updateStatusWithRetry(ctx context.Context, key types.NamespacedName, mutate func(*freebsdv1.Jail)) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var fresh freebsdv1.Jail
+		if err := r.Get(ctx, key, &fresh); err != nil {
+			return err
+		}
+		mutate(&fresh)
+		return r.Status().Update(ctx, &fresh)
 	})
 }
 
