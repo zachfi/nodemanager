@@ -2,20 +2,44 @@
 #
 # This role is applied automatically by `nodemanager bootstrap`. Keep it in
 # sync with nodeClusterRoleRules in cmd/bootstrap.go.
+#
+# Design: nodes never create or delete spec-bearing resources — those are
+# managed by admins or gitops. Nodes update labels on ManagedNodes (for
+# ConfigSet matching) and write status/finalizers. A validating webhook
+# enforces that node SAs cannot modify .spec.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: nodemanager-node
 rules:
-  # ConfigSets: read-only
+  # ConfigSets: read-only + status updates (for conflict conditions)
   - apiGroups: ["common.nodemanager"]
     resources: ["configsets"]
     verbs: ["get", "list", "watch"]
-
-  # ManagedNodes: write own node + status
   - apiGroups: ["common.nodemanager"]
-    resources: ["managednodes", "managednodes/status", "managednodes/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
+    resources: ["configsets/status"]
+    verbs: ["update", "patch"]
+
+  # ManagedNodes: read all, update own (labels + annotations), write status
+  - apiGroups: ["common.nodemanager"]
+    resources: ["managednodes"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["common.nodemanager"]
+    resources: ["managednodes/status"]
+    verbs: ["update", "patch"]
+
+  # JailTemplates: read-only (for template resolution)
+  - apiGroups: ["freebsd.nodemanager"]
+    resources: ["jailtemplates"]
+    verbs: ["get", "list", "watch"]
+
+  # Jails: read all, update own (finalizers), write status
+  - apiGroups: ["freebsd.nodemanager"]
+    resources: ["jails"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["freebsd.nodemanager"]
+    resources: ["jails/status"]
+    verbs: ["update", "patch"]
 
   # Secrets: read SecretRefs in ConfigSets; create WireGuard key secrets
   - apiGroups: [""]
@@ -30,9 +54,4 @@ rules:
   # Leases: distributed locking for upgrade groups and jail update groups
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-
-  # Jails: FreeBSD jail CRDs (no-op on Linux nodes — no controller runs)
-  - apiGroups: ["freebsd.nodemanager"]
-    resources: ["jails", "jails/status", "jails/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

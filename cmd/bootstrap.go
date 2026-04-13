@@ -30,18 +30,50 @@ const (
 // nodeClusterRoleRules defines the minimal permissions a bare-metal nodemanager
 // instance needs. Mirrored in config/rbac/node-role.yaml and printed by
 // `nodemanager rbac`.
+//
+// Nodes never create or delete spec-bearing resources — those are managed by
+// admins or gitops. Nodes update labels on ManagedNodes and write
+// status/finalizers. A validating webhook enforces that node SAs cannot
+// modify .spec.
 var nodeClusterRoleRules = []rbacv1.PolicyRule{
-	// ConfigSets: read-only
+	// ConfigSets: read-only + status updates (for conflict conditions)
 	{
 		APIGroups: []string{"common.nodemanager"},
 		Resources: []string{"configsets"},
 		Verbs:     []string{"get", "list", "watch"},
 	},
-	// ManagedNodes: write own node + status
 	{
 		APIGroups: []string{"common.nodemanager"},
-		Resources: []string{"managednodes", "managednodes/status", "managednodes/finalizers"},
-		Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
+		Resources: []string{"configsets/status"},
+		Verbs:     []string{"update", "patch"},
+	},
+	// ManagedNodes: read all, update own (labels + annotations), write status
+	{
+		APIGroups: []string{"common.nodemanager"},
+		Resources: []string{"managednodes"},
+		Verbs:     []string{"get", "list", "watch", "update", "patch"},
+	},
+	{
+		APIGroups: []string{"common.nodemanager"},
+		Resources: []string{"managednodes/status"},
+		Verbs:     []string{"update", "patch"},
+	},
+	// JailTemplates: read-only (for template resolution)
+	{
+		APIGroups: []string{"freebsd.nodemanager"},
+		Resources: []string{"jailtemplates"},
+		Verbs:     []string{"get", "list", "watch"},
+	},
+	// Jails: read all, update own (finalizers), write status
+	{
+		APIGroups: []string{"freebsd.nodemanager"},
+		Resources: []string{"jails"},
+		Verbs:     []string{"get", "list", "watch", "update", "patch"},
+	},
+	{
+		APIGroups: []string{"freebsd.nodemanager"},
+		Resources: []string{"jails/status"},
+		Verbs:     []string{"update", "patch"},
 	},
 	// Secrets: read SecretRefs in ConfigSets; create WireGuard key secrets
 	{
@@ -59,12 +91,6 @@ var nodeClusterRoleRules = []rbacv1.PolicyRule{
 	{
 		APIGroups: []string{"coordination.k8s.io"},
 		Resources: []string{"leases"},
-		Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
-	},
-	// Jails: FreeBSD jail CRDs (no-op on Linux nodes — no controller runs)
-	{
-		APIGroups: []string{"freebsd.nodemanager"},
-		Resources: []string{"jails", "jails/status", "jails/finalizers"},
 		Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 	},
 }
