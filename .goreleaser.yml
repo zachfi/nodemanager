@@ -59,6 +59,20 @@ builds:
       - arm
       - arm64
     main: './cmd/agent/'
+  - id: nodemanager-webhook
+    binary: nodemanager-webhook
+    ldflags:
+      - -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goamd64:
+      - 'v1'
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: './cmd/webhook/'
 checksum:
   name_template: 'checksums.txt'
 snapshot:
@@ -79,3 +93,7 @@ archives:
     builds:
       - nodemanager-agent
     name_template: "nodemanager-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+  - id: nodemanager-webhook
+    builds:
+      - nodemanager-webhook
+    name_template: "nodemanager-webhook_{{ .Version }}_{{ .Os }}_{{ .Arch }}"

@@ -105,6 +105,10 @@ build: manifests generate fmt vet ## Build manager and agent binaries.
 build-agent: proto-gen fmt vet ## Build agent binary only.
 	go build $(LD_FLAGS) -o bin/nodemanager-agent ./cmd/agent/
 
+.PHONY: build-webhook
+build-webhook: fmt vet ## Build webhook binary only.
+	go build $(LD_FLAGS) -o bin/nodemanager-webhook ./cmd/webhook/
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
