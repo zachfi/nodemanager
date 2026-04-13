@@ -121,7 +121,12 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	var configSet commonv1.ConfigSet
 	if err = r.Get(ctx, req.NamespacedName, &configSet); err != nil {
-		r.logger.Error("failed to get resource", "err", err)
+		if client.IgnoreNotFound(err) == nil {
+			r.logger.Debug("configset deleted, cleaning up status", "configset", req.Name)
+			r.removeConfigSetStatus(ctx, req.Name)
+		} else {
+			r.logger.Error("failed to get resource", "err", err)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -132,7 +137,8 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	err = nodeLabelMatch(node, configSet.Labels)
 	if err != nil {
-		r.logger.Debug("configset labels do not match node, skipping", "configset", configSet.Name, "node", node.Name)
+		r.logger.Debug("configset labels do not match node, cleaning up status", "configset", configSet.Name, "node", node.Name)
+		r.removeConfigSetStatus(ctx, configSet.Name)
 		err = nil // for the span defer
 		// Requeue so we retry after the ManagedNode reconciler sets labels.
 		return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
@@ -376,6 +382,69 @@ func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeNam
 
 		return r.Status().Update(ctx, &node)
 	})
+}
+
+// removeConfigSetStatus removes the ConfigSetApplyStatus entry for the named
+// ConfigSet from the local ManagedNode and cleans up associated Prometheus
+// metrics.  Called when a ConfigSet is deleted or its labels no longer match.
+func (r *ConfigSetReconciler) removeConfigSetStatus(ctx context.Context, configSetName string) {
+	node, err := r.getLocalManagedNode(ctx)
+	if err != nil {
+		r.logger.Debug("could not fetch local ManagedNode for status cleanup", "err", err)
+		return
+	}
+
+	nodeName := node.Name
+
+	// Remove from ManagedNode status.
+	found := false
+	filtered := make([]commonv1.ConfigSetApplyStatus, 0, len(node.Status.ConfigSets))
+	for _, cs := range node.Status.ConfigSets {
+		if cs.Name == configSetName {
+			found = true
+			continue
+		}
+		filtered = append(filtered, cs)
+	}
+	if found {
+		err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			var n commonv1.ManagedNode
+			if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &n); err != nil {
+				return err
+			}
+			updated := make([]commonv1.ConfigSetApplyStatus, 0, len(n.Status.ConfigSets))
+			for _, cs := range n.Status.ConfigSets {
+				if cs.Name != configSetName {
+					updated = append(updated, cs)
+				}
+			}
+			n.Status.ConfigSets = updated
+			return r.Status().Update(ctx, &n)
+		})
+		if err != nil {
+			r.logger.Error("failed to remove configset status from ManagedNode", "configset", configSetName, "err", err)
+		} else {
+			r.logger.Info("removed stale configset status", "configset", configSetName, "node", nodeName)
+		}
+	}
+
+	// Clean up Prometheus metrics for this configset.
+	lastConfigSetApplyTimestamp.DeleteLabelValues(nodeName, configSetName)
+	configSetConflictsTotal.DeleteLabelValues(nodeName, configSetName)
+	configSetApplyDuration.DeleteLabelValues(nodeName, configSetName)
+	configSetApplyTotal.DeleteLabelValues(nodeName, configSetName, "success")
+	configSetApplyTotal.DeleteLabelValues(nodeName, configSetName, "error")
+	fileChangesTotal.DeleteLabelValues(nodeName, configSetName, "success")
+	fileChangesTotal.DeleteLabelValues(nodeName, configSetName, "error")
+
+	r.lastResourceVersionMu.Lock()
+	key := nodeName + "/" + configSetName
+	prev := r.lastResourceVersion[key]
+	delete(r.lastResourceVersion, key)
+	r.lastResourceVersionMu.Unlock()
+	if prev != "" {
+		configSetAppliedResourceVersion.DeleteLabelValues(nodeName, configSetName, prev)
+	}
 }
 
 // updateConfigSetCondition sets or clears the Conflicted condition on the ConfigSet itself.
