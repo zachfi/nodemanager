@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
@@ -214,6 +215,14 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 		return err
 	}
 
+	// Unmount any remaining nullfs/devfs mounts under the jail root before
+	// destroying ZFS datasets.  jail -r normally handles this, but if the
+	// jail was never started or the stop failed, mounts may linger.
+	jailRoot := filepath.Join(m.basePath, JailRootDir, j.Name, "root")
+	if err := m.unmountAll(ctx, jailRoot); err != nil {
+		return fmt.Errorf("unmounting jail filesystems for %s: %w", j.Name, err)
+	}
+
 	// Recursively destroy jails/<name> and all child datasets (including root).
 	jailDataset := filepath.Join(m.dataset, JailRootDir, j.Name)
 	exists, err := m.zfs.Exists(ctx, jailDataset)
@@ -324,5 +333,47 @@ func (m *manager) copyHostFiles(jailRoot string) error {
 			return fmt.Errorf("writing %s: %w", dest, err)
 		}
 	}
+	return nil
+}
+
+// unmountAll finds and unmounts all filesystems mounted under jailRoot.
+// Mounts are unmounted deepest-first to avoid "device busy" errors.
+func (m *manager) unmountAll(ctx context.Context, jailRoot string) error {
+	output, _, err := m.exec.RunCommand(ctx, "mount", "-p")
+	if err != nil {
+		return fmt.Errorf("listing mounts: %w", err)
+	}
+
+	// Collect mountpoints under jailRoot.
+	prefix := jailRoot + "/"
+	var mounts []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		mp := fields[1]
+		if mp == jailRoot || strings.HasPrefix(mp, prefix) {
+			mounts = append(mounts, mp)
+		}
+	}
+
+	// Sort in reverse so deeper paths are unmounted first.
+	slices.SortFunc(mounts, func(a, b string) int {
+		if len(a) > len(b) {
+			return -1
+		}
+		if len(a) < len(b) {
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+
+	for _, mp := range mounts {
+		if err := m.exec.SimpleRunCommand(ctx, "umount", "-f", mp); err != nil {
+			return fmt.Errorf("unmounting %s: %w", mp, err)
+		}
+	}
+
 	return nil
 }
