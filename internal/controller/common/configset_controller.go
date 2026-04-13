@@ -134,7 +134,8 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	node, err := createOrGetNode(ctx, r.logger, r, r, req)
 	if err != nil {
-		return ctrl.Result{}, err
+		r.logger.Error("failed to create or get managed node", "err", err)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	err = nodeLabelMatch(node, configSet.Labels)
@@ -153,7 +154,8 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	var conflicts []string
 	conflicts, err = r.detectConflicts(ctx, &configSet, node)
 	if err != nil {
-		return ctrl.Result{}, err
+		r.logger.Error("failed to detect conflicts", "configset", configSet.Name, "err", err)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	if len(conflicts) > 0 {
 		span.AddEvent("resource conflicts detected",
@@ -220,7 +222,10 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if err != nil {
-		return ctrl.Result{}, err
+		// Use a fixed requeue instead of returning the error (which triggers
+		// exponential backoff and can delay retries up to 15 minutes).
+		r.logger.Error("configset apply failed, will retry", "configset", configSet.Name, "err", err)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
 }

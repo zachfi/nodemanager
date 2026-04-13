@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/grafana/dskit/backoff"
@@ -24,8 +23,6 @@ type leaseLocker struct {
 	id        string
 
 	cfg Config
-
-	mtx sync.Mutex
 }
 
 func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg Config, clientset kubernetes.Interface, namespace, id string) Locker {
@@ -42,9 +39,6 @@ func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-
-	l.mtx.Lock()
-	defer l.mtx.Unlock()
 
 	var (
 		b                    = backoff.New(ctx, l.cfg.Backoff)
@@ -122,9 +116,6 @@ func (l *leaseLocker) Unlock(ctx context.Context, req types.NamespacedName) erro
 		return ctx.Err()
 	}
 
-	l.mtx.Lock()
-	defer l.mtx.Unlock()
-
 	var (
 		b              = backoff.New(ctx, l.cfg.Backoff)
 		leaseInterface = l.clientset.CoordinationV1().Leases(req.Namespace)
@@ -176,9 +167,6 @@ func (l *leaseLocker) Unlock(ctx context.Context, req types.NamespacedName) erro
 }
 
 func (l *leaseLocker) Locked(ctx context.Context, req types.NamespacedName) bool {
-	l.mtx.Lock()
-	defer l.mtx.Unlock()
-
 	leaseInterface := l.clientset.CoordinationV1().Leases(req.Namespace)
 
 	existingLease, err := leaseInterface.Get(ctx, req.Name, metav1.GetOptions{})
