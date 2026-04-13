@@ -252,8 +252,15 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 
 	node.Status.WireGuard = liveWG
 
+	// Detect FreeBSD jail environment.
+	oldJailed := node.Status.Jailed
+	if info.OS.ID == "freebsd" {
+		node.Status.Jailed = isJailed(ctx, r.system.Exec())
+	}
+
 	if node.Status.AgentVersion == oldAgentVersion &&
 		node.Status.Release == oldRelease &&
+		node.Status.Jailed == oldJailed &&
 		reflect.DeepEqual(node.Status.Interfaces, oldInterfaces) &&
 		reflect.DeepEqual(node.Status.SSHHostKeys, oldSSHHostKeys) &&
 		reflect.DeepEqual(node.Status.WireGuard, oldWireGuard) {
@@ -312,6 +319,16 @@ func (r *ManagedNodeReconciler) ensureWireGuardKeySecret(ctx context.Context, na
 	}
 
 	return pubKey, nil
+}
+
+// isJailed checks whether we are running inside a FreeBSD jail by querying
+// sysctl security.jail.jailed.  Returns false on error or non-FreeBSD systems.
+func isJailed(ctx context.Context, exec handler.ExecHandler) bool {
+	output, _, err := exec.RunCommand(ctx, "sysctl", "-n", "security.jail.jailed")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(output) == "1"
 }
 
 // collectNetworkInterfaces enumerates non-loopback, up interfaces and returns
@@ -555,21 +572,19 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
 	upgradeTotal.WithLabelValues(node.Name, "success").Inc()
 
-	// Set the upgrade time
-
-	if node.Annotations == nil {
-		node.Annotations = make(map[string]string)
-	}
-
+	// Record the upgrade time on the status subresource.
 	now := time.Now()
-	node.Annotations[common.AnnotationLastUpgrade] = now.Format(time.RFC3339)
+	metaNow := metav1.NewTime(now)
 	lastUpgradeTimestamp.WithLabelValues(node.Name).Set(float64(now.Unix()))
 
-	f := func() error {
-		return r.Update(ctx, node)
-	}
-
-	if err = retry.RetryOnConflict(retry.DefaultBackoff, f); err != nil {
+	if err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var fresh commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &fresh); err != nil {
+			return err
+		}
+		fresh.Status.LastUpgrade = &metaNow
+		return r.Status().Update(ctx, &fresh)
+	}); err != nil {
 		return time.Time{}, fmt.Errorf("failed to set last upgrade time: %w", err)
 	}
 
@@ -641,15 +656,9 @@ func (r *ManagedNodeReconciler) requestUpgradeApproval(ctx context.Context, node
 }
 
 func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (time.Time, error) {
-	if last, ok := node.Annotations[common.AnnotationLastUpgrade]; ok {
-		r.logger.Info("last upgrade time found", "lastUpgrade", last)
-
-		lastUpgrade, err := time.Parse(time.RFC3339, last)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("failed to parse LastUpgrade annotation: %w", err)
-		}
-
-		return lastUpgrade, nil
+	if node.Status.LastUpgrade != nil {
+		r.logger.Info("last upgrade time found", "lastUpgrade", node.Status.LastUpgrade.Time)
+		return node.Status.LastUpgrade.Time, nil
 	}
 
 	return time.Time{}, nil
@@ -685,15 +694,16 @@ func (r *ManagedNodeReconciler) cordonNode(ctx context.Context, managedNode *com
 	}
 	r.logger.Info("cordoned kubernetes node", "node", k8sNode.Name)
 
-	if managedNode.Annotations == nil {
-		managedNode.Annotations = make(map[string]string)
-	}
-	managedNode.Annotations[common.AnnotationKubernetesNodeCordoned] = time.Now().Format(time.RFC3339)
-
+	cordonTime := metav1.NewTime(time.Now())
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		return r.Update(ctx, managedNode)
+		var fresh commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: managedNode.Name, Namespace: managedNode.Namespace}, &fresh); err != nil {
+			return err
+		}
+		fresh.Status.KubernetesNodeCordoned = &cordonTime
+		return r.Status().Update(ctx, &fresh)
 	}); err != nil {
-		return fmt.Errorf("failed to set cordon annotation on ManagedNode: %w", err)
+		return fmt.Errorf("failed to set cordon status on ManagedNode: %w", err)
 	}
 	return nil
 }
@@ -777,22 +787,22 @@ func (r *ManagedNodeReconciler) uncordonNode(ctx context.Context, managedNode *c
 		r.logger.Info("uncordoned kubernetes node", "node", k8sNode.Name)
 	}
 
-	delete(managedNode.Annotations, common.AnnotationKubernetesNodeCordoned)
-
 	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		return r.Update(ctx, managedNode)
+		var fresh commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: managedNode.Name, Namespace: managedNode.Namespace}, &fresh); err != nil {
+			return err
+		}
+		fresh.Status.KubernetesNodeCordoned = nil
+		return r.Status().Update(ctx, &fresh)
 	}); err != nil {
-		return fmt.Errorf("failed to remove cordon annotation from ManagedNode: %w", err)
+		return fmt.Errorf("failed to clear cordon status on ManagedNode: %w", err)
 	}
 	return nil
 }
 
 // maybeUncordon uncordons the Kubernetes node if this controller previously cordoned it.
 func (r *ManagedNodeReconciler) maybeUncordon(ctx context.Context, managedNode *commonv1.ManagedNode) error {
-	if managedNode.Annotations == nil {
-		return nil
-	}
-	if _, ok := managedNode.Annotations[common.AnnotationKubernetesNodeCordoned]; !ok {
+	if managedNode.Status.KubernetesNodeCordoned == nil {
 		return nil
 	}
 	return r.uncordonNode(ctx, managedNode)

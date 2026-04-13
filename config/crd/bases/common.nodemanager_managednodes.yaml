@@ -126,11 +126,25 @@ spec:
                       type: array
                   type: object
                 type: object
+              jailed:
+                description: Jailed indicates whether this node is running inside
+                  a FreeBSD jail.
+                type: boolean
+              kubernetesNodeCordoned:
+                description: |-
+                  KubernetesNodeCordoned records when nodemanager cordoned the k8s node
+                  for an upgrade. Nil when not cordoned by nodemanager.
+                format: date-time
+                type: string
               lastFileBucketGC:
                 description: |-
                   LastFileBucketGC records when the filebucket GC last ran successfully on
                   this node.  Persisted so the GC interval is honoured across controller
                   restarts and crash loops.
+                format: date-time
+                type: string
+              lastUpgrade:
+                description: LastUpgrade is the time of the last successful OS upgrade.
                 format: date-time
                 type: string
               release:

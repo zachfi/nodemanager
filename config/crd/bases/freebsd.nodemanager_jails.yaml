@@ -190,6 +190,12 @@ spec:
                   run.
                 format: date-time
                 type: string
+              postCreateDone:
+                description: |-
+                  PostCreateDone records when postCreate hooks from the referenced
+                  JailTemplate completed successfully.
+                format: date-time
+                type: string
               release:
                 description: |-
                   Release is the FreeBSD release string reported by the jail root

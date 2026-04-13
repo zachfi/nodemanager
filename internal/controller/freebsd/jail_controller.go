@@ -39,7 +39,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
-	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/jail"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -221,7 +220,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 
 	// Run postCreate hooks once after the first successful start.
 	if len(postCreateCmds) > 0 && running {
-		if _, done := j.Annotations[common.AnnotationJailPostCreateDone]; !done {
+		if j.Status.PostCreateDone == nil {
 			for _, cmd := range postCreateCmds {
 				r.logger.Info("running postCreate hook", "jail", j.Name, "hook", cmd.Name)
 				if err := r.manager.ExecInJail(ctx, j.Name, cmd.Command, cmd.Args...); err != nil {
@@ -235,7 +234,10 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			}
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "success").Inc()
 
-			if err := r.setAnnotation(ctx, req.NamespacedName, common.AnnotationJailPostCreateDone, time.Now().Format(time.RFC3339)); err != nil {
+			postCreateNow := metav1.Now()
+			if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+				fresh.Status.PostCreateDone = &postCreateNow
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -310,12 +312,9 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 		}
 	}
 
-	// Check last update time from annotation.
-	if last, ok := j.Annotations[common.AnnotationJailLastUpdate]; ok {
-		t, err := time.Parse(time.RFC3339, last)
-		if err == nil && time.Since(t) < delay {
-			return next, nil
-		}
+	// Check last update time from status.
+	if j.Status.LastUpdate != nil && time.Since(j.Status.LastUpdate.Time) < delay {
+		return next, nil
 	}
 
 	// Outside forgiveness window — requeue without running.
@@ -356,14 +355,8 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "update", "success").Inc()
 
-	now := time.Now()
-	metaNow := metav1.NewTime(now)
+	metaNow := metav1.Now()
 	key := types.NamespacedName{Name: j.Name, Namespace: j.Namespace}
-
-	// Record the last-update annotation on the metadata subresource.
-	if err := r.setAnnotation(ctx, key, common.AnnotationJailLastUpdate, now.Format(time.RFC3339)); err != nil {
-		return time.Time{}, fmt.Errorf("recording last update annotation: %w", err)
-	}
 
 	// Record the last-update timestamp on the status subresource.
 	if err := r.updateStatusWithRetry(ctx, key, func(fresh *freebsdv1.Jail) {
@@ -373,22 +366,6 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 
 	return next, nil
-}
-
-// setAnnotation sets a single annotation on the Jail metadata inside a
-// RetryOnConflict loop so that stale resourceVersions do not cause errors.
-func (r *JailReconciler) setAnnotation(ctx context.Context, key types.NamespacedName, annotKey, annotValue string) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		var fresh freebsdv1.Jail
-		if err := r.Get(ctx, key, &fresh); err != nil {
-			return err
-		}
-		if fresh.Annotations == nil {
-			fresh.Annotations = make(map[string]string)
-		}
-		fresh.Annotations[annotKey] = annotValue
-		return r.Update(ctx, &fresh)
-	})
 }
 
 // setCondition upserts a named condition on the jail's status.

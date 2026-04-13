@@ -117,6 +117,11 @@ type JailStatus struct {
 	// LastUpdate is the time of the last successful freebsd-update run.
 	// +optional
 	LastUpdate *metav1.Time `json:"lastUpdate,omitempty"`
+
+	// PostCreateDone records when postCreate hooks from the referenced
+	// JailTemplate completed successfully.
+	// +optional
+	PostCreateDone *metav1.Time `json:"postCreateDone,omitempty"`
 }
 
 // +kubebuilder:object:root=true

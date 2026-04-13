@@ -169,10 +169,10 @@ var _ = Describe("ManagedNode Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("checking ManagedNode has the cordon annotation")
+			By("checking ManagedNode has the cordon status")
 			mn := &commonv1.ManagedNode{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
-			Expect(mn.Annotations).To(HaveKey(common.AnnotationKubernetesNodeCordoned))
+			Expect(mn.Status.KubernetesNodeCordoned).NotTo(BeNil())
 
 			By("checking the Kubernetes node is unschedulable")
 			k8sNode, err := clientset.CoreV1().Nodes().Get(ctx, resourceName, metav1.GetOptions{})
@@ -191,18 +191,14 @@ var _ = Describe("ManagedNode Controller", func() {
 		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
 
 		BeforeEach(func() {
-			By("creating the ManagedNode with cordon annotation and recent upgrade")
+			By("creating the ManagedNode with cordon status and recent upgrade")
 			mn := &commonv1.ManagedNode{}
 			err := k8sClient.Get(ctx, typeNamespacedName, mn)
 			if err != nil && errors.IsNotFound(err) {
-				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+				mn = &commonv1.ManagedNode{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
-						Annotations: map[string]string{
-							common.AnnotationKubernetesNodeCordoned: "true",
-							common.AnnotationLastUpgrade:            time.Now().Format(time.RFC3339),
-						},
 					},
 					Spec: commonv1.ManagedNodeSpec{
 						Domain: "example.com",
@@ -212,7 +208,13 @@ var _ = Describe("ManagedNode Controller", func() {
 							Delay:    "1h",
 						},
 					},
-				})).To(Succeed())
+				}
+				Expect(k8sClient.Create(ctx, mn)).To(Succeed())
+
+				now := metav1.Now()
+				mn.Status.KubernetesNodeCordoned = &now
+				mn.Status.LastUpgrade = &now
+				Expect(k8sClient.Status().Update(ctx, mn)).To(Succeed())
 			}
 
 			By("creating a cordoned Kubernetes Node")
@@ -249,10 +251,10 @@ var _ = Describe("ManagedNode Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("checking ManagedNode no longer has the cordon annotation")
+			By("checking ManagedNode no longer has the cordon status")
 			mn := &commonv1.ManagedNode{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
-			Expect(mn.Annotations).NotTo(HaveKey(common.AnnotationKubernetesNodeCordoned))
+			Expect(mn.Status.KubernetesNodeCordoned).To(BeNil())
 
 			By("checking the Kubernetes node is schedulable again")
 			k8sNode, err := clientset.CoreV1().Nodes().Get(ctx, resourceName, metav1.GetOptions{})
@@ -335,8 +337,8 @@ var _ = Describe("ManagedNode Controller", func() {
 
 			k8sClient.Get(ctx, typeNamespacedName, managednode)
 
-			// The node should have the lock annotation set
-			Expect(managednode.Annotations).To(HaveKey(common.AnnotationLastUpgrade), "Expected the upgrade lock annotation to be set after reconciliation.")
+			// The node should have the last upgrade status set
+			Expect(managednode.Status.LastUpgrade).NotTo(BeNil(), "Expected the last upgrade status to be set after reconciliation.")
 
 			leaseName := types.NamespacedName{
 				Name:      managednode.Spec.Upgrade.Group,
@@ -371,11 +373,9 @@ var _ = Describe("ManagedNode Controller", func() {
 			Expect(lease.Spec.HolderIdentity).To(BeNil())
 			Expect(controllerReconciler.locker.Locked(ctx, leaseName)).To(Equal(false))
 
-			lastUpgrade, err := time.Parse(time.RFC3339, managednode.Annotations[common.AnnotationLastUpgrade])
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(lastUpgrade).ToNot(BeZero(), "Expected LastUpgrade to be set after reconciliation.")
-			Expect(lastUpgrade).To(BeTemporally("~", metav1.Now().Time, 5*time.Second), "Expected LastUpgrade to be close to the current time after reconciliation.")
+			Expect(managednode.Status.LastUpgrade).NotTo(BeNil(), "Expected LastUpgrade to be set after reconciliation.")
+			Expect(managednode.Status.LastUpgrade.Time).NotTo(BeZero(), "Expected LastUpgrade time to be non-zero.")
+			Expect(managednode.Status.LastUpgrade.Time).To(BeTemporally("~", metav1.Now().Time, 5*time.Second), "Expected LastUpgrade to be close to the current time after reconciliation.")
 		})
 	})
 

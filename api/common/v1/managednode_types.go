@@ -106,6 +106,13 @@ type ManagedNodeStatus struct {
 	// this node.  Persisted so the GC interval is honoured across controller
 	// restarts and crash loops.
 	LastFileBucketGC *metav1.Time `json:"lastFileBucketGC,omitempty"`
+	// LastUpgrade is the time of the last successful OS upgrade.
+	LastUpgrade *metav1.Time `json:"lastUpgrade,omitempty"`
+	// KubernetesNodeCordoned records when nodemanager cordoned the k8s node
+	// for an upgrade. Nil when not cordoned by nodemanager.
+	KubernetesNodeCordoned *metav1.Time `json:"kubernetesNodeCordoned,omitempty"`
+	// Jailed indicates whether this node is running inside a FreeBSD jail.
+	Jailed bool `json:"jailed,omitempty"`
 }
 
 //+kubebuilder:object:root=true
