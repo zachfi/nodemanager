@@ -26,7 +26,6 @@ import (
 	"maps"
 	"os"
 	"os/exec"
-	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -352,7 +351,7 @@ func (r *ConfigSetReconciler) updateConfigSetStatus(ctx context.Context, nodeNam
 				// on every ConfigSet reconcile.
 				if cs.ResourceVersion == entry.ResourceVersion &&
 					cs.Error == entry.Error &&
-					reflect.DeepEqual(cs.Conflicts, entry.Conflicts) {
+					slicesEqual(cs.Conflicts, entry.Conflicts) {
 					return nil
 				}
 				node.Status.ConfigSets[i] = entry
@@ -485,6 +484,21 @@ func (r *ConfigSetReconciler) updateConfigSetCondition(ctx context.Context, req 
 // detectConflicts returns a human-readable description of every file path or
 // service name that is claimed by both cs and another ConfigSet matching this
 // node. A non-empty result means cs must not be applied this reconcile cycle.
+// slicesEqual compares two string slices, treating nil and empty as equivalent.
+// This avoids spurious status writes from nil vs []string{} differences after
+// Kubernetes JSON round-tripping.
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *ConfigSetReconciler) detectConflicts(ctx context.Context, cs *commonv1.ConfigSet, node commonv1.ManagedNode) ([]string, error) {
 	var all commonv1.ConfigSetList
 	if err := r.List(ctx, &all, client.InNamespace(cs.Namespace)); err != nil {
