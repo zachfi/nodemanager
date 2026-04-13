@@ -621,9 +621,10 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 
 	for _, svc := range serviceSet {
 		svcCtx := serviceContext(ctx, svc.User)
+		svcHandler := withUserContext(handler, svcCtx)
 
 		if svc.Enable {
-			enableErr := handler.Enable(svcCtx, svc.Name)
+			enableErr := svcHandler.Enable(svcCtx, svc.Name)
 			result := "success"
 			if enableErr != nil {
 				result = "error"
@@ -631,7 +632,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 			}
 			serviceOperationsTotal.WithLabelValues(nodeName, "enable", result).Inc()
 		} else {
-			disableErr := handler.Disable(svcCtx, svc.Name)
+			disableErr := svcHandler.Disable(svcCtx, svc.Name)
 			result := "success"
 			if disableErr != nil {
 				result = "error"
@@ -641,18 +642,18 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		}
 
 		if svc.Arguments != "" {
-			if argsErr := handler.SetArguments(svcCtx, svc.Name, svc.Arguments); argsErr != nil {
+			if argsErr := svcHandler.SetArguments(svcCtx, svc.Name, svc.Arguments); argsErr != nil {
 				errs = append(errs, fmt.Errorf("failed to set service arguments for %q: %w", svc.Name, argsErr))
 			}
 		}
 
-		status, _ := handler.Status(svcCtx, svc.Name)
+		status, _ := svcHandler.Status(svcCtx, svc.Name)
 		span.SetAttributes(attribute.String("status", status.String()))
 
 		switch services.ServiceStatusFromString(svc.Ensure) {
 		case services.Running:
 			if status != services.Running {
-				startErr := handler.Start(svcCtx, svc.Name)
+				startErr := svcHandler.Start(svcCtx, svc.Name)
 				result := "success"
 				if startErr != nil {
 					result = "error"
@@ -662,7 +663,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 			}
 		case services.Stopped:
 			if status != services.Stopped {
-				stopErr := handler.Stop(svcCtx, svc.Name)
+				stopErr := svcHandler.Stop(svcCtx, svc.Name)
 				result := "success"
 				if stopErr != nil {
 					result = "error"
@@ -698,7 +699,8 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		}
 
 		r.logger.Info("restarting service", "name", restart)
-		err = handler.Restart(restartSvc.Context, restart)
+		restartHandler := withUserContext(handler, restartSvc.Context)
+		err = restartHandler.Restart(restartSvc.Context, restart)
 		result := "success"
 		if err != nil {
 			result = "error"
@@ -726,6 +728,15 @@ func serviceContext(ctx context.Context, user string) context.Context {
 		ctx = context.WithValue(ctx, systemd.UserContextKey, user)
 	}
 	return ctx
+}
+
+// withUserContext returns a service handler that is aware of the user set on
+// the context. For systemd, this causes systemctl to use --user -M <user>@.
+func withUserContext(h handler.ServiceHandler, ctx context.Context) handler.ServiceHandler {
+	if s, ok := h.(*systemd.Systemd); ok {
+		return s.WithContext(ctx)
+	}
+	return h
 }
 
 // handleFileSet
