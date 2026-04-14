@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/zachfi/nodemanager/pkg/common/info"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -74,6 +75,15 @@ func (h *FreeBSD) Upgrade(ctx context.Context) error {
 
 func (h *FreeBSD) Hostname() (string, error) {
 	return os.Hostname()
+}
+
+// IsJailed reports whether the current process is running inside a FreeBSD
+// jail by reading security.jail.jailed via sysctl(8).  Returns false on any
+// error so that callers fail open (i.e. assume host context) rather than
+// silently disabling controllers on non-FreeBSD builds or misconfigured hosts.
+func IsJailed(ctx context.Context, exec handler.ExecHandler) bool {
+	out, _, err := exec.RunCommand(ctx, "sysctl", "-n", "security.jail.jailed")
+	return err == nil && strings.TrimSpace(out) == "1"
 }
 
 func (h *FreeBSD) Info(ctx context.Context) *handler.SysInfo {

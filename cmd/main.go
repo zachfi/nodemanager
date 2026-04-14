@@ -49,6 +49,7 @@ import (
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/locker"
+	freebsdnode "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
 	"github.com/zachfi/nodemanager/pkg/system"
 
 	// "github.com/zachfi/nodemanager/pkg/nodes/freebsd"
@@ -265,6 +266,16 @@ func main() {
 
 	switch id {
 	case system.FreeBSD:
+		// Skip host-only controllers when running inside a jail unless the operator
+		// has explicitly opted in via freebsd.allow-in-jail.  Jail and Poudriere
+		// controllers require ZFS access and the ability to create nested jails —
+		// neither is available in a standard jail.  A privileged jail with ZFS
+		// dataset delegation and allow.mount.zfs can opt in to run poudriere.
+		if freebsdnode.IsJailed(ctx, sys.Exec()) && !cfg.ControllerConfig.FreeBSD.AllowInJail {
+			setupLog.Info("running inside a FreeBSD jail; jail and poudriere controllers disabled (set freebsd.allow-in-jail=true to enable in a privileged jail)")
+			break
+		}
+
 		poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys)
 		if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
