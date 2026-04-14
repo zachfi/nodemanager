@@ -97,6 +97,9 @@ TEST_VERSION_NO_V="9.9.9"
 FAKE_SHA_AMD64="aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"
 FAKE_SHA_ARM64="bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
 FAKE_SHA_ARMV7="cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333"
+FAKE_AGENT_SHA_AMD64="dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444"
+FAKE_AGENT_SHA_ARM64="eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555"
+FAKE_AGENT_SHA_ARMV7="ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666"
 
 echo "==> Setting up test fixtures in ${TMP}"
 
@@ -108,6 +111,9 @@ ${FAKE_SHA_AMD64}  nodemanager_${TEST_VERSION_NO_V}_linux_amd64.tar.gz
 ${FAKE_SHA_ARM64}  nodemanager_${TEST_VERSION_NO_V}_linux_arm64.tar.gz
 ${FAKE_SHA_ARMV7}  nodemanager_${TEST_VERSION_NO_V}_linux_armv7.tar.gz
 deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  nodemanager_${TEST_VERSION_NO_V}_freebsd_amd64.tar.gz
+${FAKE_AGENT_SHA_AMD64}  nodemanager-agent_${TEST_VERSION_NO_V}_linux_amd64.tar.gz
+${FAKE_AGENT_SHA_ARM64}  nodemanager-agent_${TEST_VERSION_NO_V}_linux_arm64.tar.gz
+${FAKE_AGENT_SHA_ARMV7}  nodemanager-agent_${TEST_VERSION_NO_V}_linux_armv7.tar.gz
 EOF
 
 # ── Fake port distfiles (stand-ins for Go proxy + GitHub) ────────────────────
@@ -149,9 +155,9 @@ arch=(aarch64 armv7h x86_64)
 source_x86_64=("https://example.com/nodemanager_${pkgver}_linux_amd64.tar.gz")
 source_aarch64=("https://example.com/nodemanager_${pkgver}_linux_arm64.tar.gz")
 source_armv7h=("https://example.com/nodemanager_${pkgver}_linux_armv7.tar.gz")
-sha256sums_x86_64=('PLACEHOLDER')
-sha256sums_aarch64=('PLACEHOLDER')
-sha256sums_armv7h=('PLACEHOLDER')
+sha256sums_x86_64=('SKIP' 'SKIP')
+sha256sums_aarch64=('SKIP' 'SKIP')
+sha256sums_armv7h=('SKIP' 'SKIP')
 TMPL
 fi
 
@@ -293,9 +299,9 @@ VERIFY_WORK="${SCRIPT_WORK_DIR}/nodemanager-bin"
 assert_contains "${VERIFY_WORK}/PKGBUILD" "pkgver=${TEST_VERSION_NO_V}" "PKGBUILD: pkgver updated"
 
 # Checksums
-assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_x86_64=('${FAKE_SHA_AMD64}')" "PKGBUILD: sha256sums_x86_64 correct"
-assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_aarch64=('${FAKE_SHA_ARM64}')" "PKGBUILD: sha256sums_aarch64 correct"
-assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_armv7h=('${FAKE_SHA_ARMV7}')" "PKGBUILD: sha256sums_armv7h correct"
+assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_x86_64=('${FAKE_SHA_AMD64}' '${FAKE_AGENT_SHA_AMD64}')" "PKGBUILD: sha256sums_x86_64 correct"
+assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_aarch64=('${FAKE_SHA_ARM64}' '${FAKE_AGENT_SHA_ARM64}')" "PKGBUILD: sha256sums_aarch64 correct"
+assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_armv7h=('${FAKE_SHA_ARMV7}' '${FAKE_AGENT_SHA_ARMV7}')" "PKGBUILD: sha256sums_armv7h correct"
 
 # Template placeholder should be gone
 assert_not_contains "${VERIFY_WORK}/PKGBUILD" "{{ version }}" "PKGBUILD: no leftover template tokens"
