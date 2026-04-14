@@ -260,8 +260,8 @@ else
   ZIP_FILE="${WORK_DIR}/v${VERSION_NO_V}.zip"
   TGZ_FILE="${WORK_DIR}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz"
 
-  PORT_MOD_URL="${PORT_MOD_URL:-https://raw.githubusercontent.com/${GH_ACCOUNT}/nodemanager/v${VERSION_NO_V}/go.mod}"
-  PORT_ZIP_URL="${PORT_ZIP_URL:-https://github.com/${GH_ACCOUNT}/nodemanager/archive/refs/tags/v${VERSION_NO_V}.zip}"
+  PORT_MOD_URL="${PORT_MOD_URL:-https://proxy.golang.org/github.com/${GH_ACCOUNT}/nodemanager/@v/v${VERSION_NO_V}.mod}"
+  PORT_ZIP_URL="${PORT_ZIP_URL:-https://proxy.golang.org/github.com/${GH_ACCOUNT}/nodemanager/@v/v${VERSION_NO_V}.zip}"
   PORT_TGZ_URL="${PORT_TGZ_URL:-https://github.com/${GH_ACCOUNT}/nodemanager/archive/refs/tags/v${VERSION_NO_V}.tar.gz}"
 
   curl -fsSL "${PORT_MOD_URL}" -o "${MOD_FILE}"
