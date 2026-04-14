@@ -25,6 +25,9 @@ go.work
 *.swp
 *.swo
 *~
+
+# local tool configuration
+.mcp.json
 cover.cov
 dist/
 site/
