@@ -25,10 +25,10 @@ import (
 	. "github.com/onsi/gomega"
 	"go.opentelemetry.io/otel/trace/noop"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -201,6 +201,62 @@ var _ = Describe("ConfigSet Controller", func() {
 					return
 				}
 			}
+		})
+	})
+
+	Context("When updateConfigSetCondition is called repeatedly with the same state", func() {
+		const csIdempotent = "condition-idempotent"
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			cs := &commonv1.ConfigSet{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: csIdempotent, Namespace: "default"}, cs)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ConfigSet{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      csIdempotent,
+						Namespace: "default",
+					},
+				})).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			cs := &commonv1.ConfigSet{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: csIdempotent, Namespace: "default"}, cs); err == nil {
+				Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+			}
+		})
+
+		It("should not update LastTransitionTime when the condition is unchanged", func() {
+			r := &ConfigSetReconciler{
+				Client:              k8sClient,
+				Scheme:              k8sClient.Scheme(),
+				tracer:              noop.NewTracerProvider().Tracer("test"),
+				logger:              slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				lastResourceVersion: make(map[string]string),
+			}
+			req := reconcile.Request{NamespacedName: types.NamespacedName{Name: csIdempotent, Namespace: "default"}}
+			conflicts := []string{"file:/etc/foo.conf (also in configset \"other\")"}
+
+			// First call — creates the Conflicted condition.
+			Expect(r.updateConfigSetCondition(ctx, req, conflicts)).To(Succeed())
+
+			cs := &commonv1.ConfigSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: csIdempotent, Namespace: "default"}, cs)).To(Succeed())
+			first := meta.FindStatusCondition(cs.Status.Conditions, "Conflicted")
+			Expect(first).NotTo(BeNil())
+			Expect(first.Status).To(Equal(metav1.ConditionTrue))
+			firstTransition := first.LastTransitionTime
+
+			// Second call — same conflicts, must be a no-op (no API write).
+			Expect(r.updateConfigSetCondition(ctx, req, conflicts)).To(Succeed())
+
+			cs2 := &commonv1.ConfigSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: csIdempotent, Namespace: "default"}, cs2)).To(Succeed())
+			second := meta.FindStatusCondition(cs2.Status.Conditions, "Conflicted")
+			Expect(second).NotTo(BeNil())
+			Expect(second.LastTransitionTime).To(Equal(firstTransition), "LastTransitionTime must not change when conflict is unchanged")
 		})
 	})
 

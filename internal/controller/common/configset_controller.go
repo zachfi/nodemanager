@@ -35,6 +35,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -194,19 +195,24 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		svcErr            error
 		execErr           error
 		fileBackupUpdates map[string]string
+		phaseStart        time.Time
 	)
 
+	phaseStart = time.Now()
 	pkgErr = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
-	r.logger.Debug("packages handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "err", pkgErr)
+	r.logger.Debug("packages handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "err", pkgErr)
 
+	phaseStart = time.Now()
 	changedFiles, fileBackupUpdates, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
-	r.logger.Debug("files handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "changed", len(changedFiles), "err", fileErr)
+	r.logger.Debug("files handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "changed", len(changedFiles), "err", fileErr)
 
+	phaseStart = time.Now()
 	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
-	r.logger.Debug("services handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "err", svcErr)
+	r.logger.Debug("services handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "err", svcErr)
 
+	phaseStart = time.Now()
 	execErr = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
-	r.logger.Debug("executions handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "err", execErr)
+	r.logger.Debug("executions handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "err", execErr)
 
 	err = errors.Join(pkgErr, fileErr, svcErr, execErr)
 
@@ -479,30 +485,16 @@ func (r *ConfigSetReconciler) updateConfigSetCondition(ctx context.Context, req 
 			}
 		}
 
-		// Update or append the condition.
-		found := false
-		for i, c := range cs.Status.Conditions {
-			if c.Type == condition.Type {
-				// Only update LastTransitionTime if Status actually changed.
-				if c.Status == condition.Status {
-					condition.LastTransitionTime = c.LastTransitionTime
-				}
-				// Skip the write if nothing meaningful changed.
-				if c.Status == condition.Status &&
-					c.Reason == condition.Reason &&
-					c.Message == condition.Message &&
-					c.ObservedGeneration == condition.ObservedGeneration {
-					return nil
-				}
-				cs.Status.Conditions[i] = condition
-				found = true
-				break
-			}
-		}
-		if !found {
-			cs.Status.Conditions = append(cs.Status.Conditions, condition)
+		existing := meta.FindStatusCondition(cs.Status.Conditions, condition.Type)
+		if existing != nil &&
+			existing.Status == condition.Status &&
+			existing.Reason == condition.Reason &&
+			existing.Message == condition.Message &&
+			existing.ObservedGeneration == condition.ObservedGeneration {
+			return nil
 		}
 
+		meta.SetStatusCondition(&cs.Status.Conditions, condition)
 		return r.Status().Update(ctx, &cs)
 	})
 }
