@@ -742,7 +742,7 @@ func (r *ManagedNodeReconciler) migrateUpgradeAnnotation(ctx context.Context, no
 
 func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (time.Time, error) {
 	if node.Status.LastUpgrade != nil {
-		r.logger.Info("last upgrade time found", "lastUpgrade", node.Status.LastUpgrade.Time)
+		r.logger.Debug("last upgrade time found", "lastUpgrade", node.Status.LastUpgrade.Time)
 		return node.Status.LastUpgrade.Time, nil
 	}
 

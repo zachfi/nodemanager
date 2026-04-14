@@ -179,6 +179,12 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.logger.Error("failed to clear conflict condition on configset", "err", statusErr)
 	}
 
+	r.logger.Debug("applying configset", "configset", configSet.Name,
+		"packages", len(configSet.Spec.Packages),
+		"files", len(configSet.Spec.Files),
+		"services", len(configSet.Spec.Services),
+		"executions", len(configSet.Spec.Executions))
+
 	applyStart := time.Now()
 
 	var (
@@ -191,9 +197,17 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	)
 
 	pkgErr = r.handlePackageSet(ctx, nodeName, configSet.Spec.Packages)
+	r.logger.Debug("packages handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "err", pkgErr)
+
 	changedFiles, fileBackupUpdates, fileErr = r.handleFileSet(ctx, nodeName, configSet.Name, req.Namespace, configSet.Spec.Files, node)
+	r.logger.Debug("files handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "changed", len(changedFiles), "err", fileErr)
+
 	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
+	r.logger.Debug("services handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "err", svcErr)
+
 	execErr = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
+	r.logger.Debug("executions handled", "configset", configSet.Name, "elapsed", time.Since(applyStart), "err", execErr)
+
 	err = errors.Join(pkgErr, fileErr, svcErr, execErr)
 
 	if len(fileBackupUpdates) > 0 {
@@ -472,6 +486,13 @@ func (r *ConfigSetReconciler) updateConfigSetCondition(ctx context.Context, req 
 				// Only update LastTransitionTime if Status actually changed.
 				if c.Status == condition.Status {
 					condition.LastTransitionTime = c.LastTransitionTime
+				}
+				// Skip the write if nothing meaningful changed.
+				if c.Status == condition.Status &&
+					c.Reason == condition.Reason &&
+					c.Message == condition.Message &&
+					c.ObservedGeneration == condition.ObservedGeneration {
+					return nil
 				}
 				cs.Status.Conditions[i] = condition
 				found = true
@@ -1009,22 +1030,8 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 	cmd := exec.CommandContext(ctx, command, arg...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.Stdin = bytes.NewReader(b)
 	cmd.WaitDelay = 10 * time.Second
-
-	in, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = in.Write(b)
-	if err != nil {
-		return nil, err
-	}
-
-	err = in.Close()
-	if err != nil {
-		return nil, err
-	}
 
 	err = cmd.Run()
 	if err != nil {
