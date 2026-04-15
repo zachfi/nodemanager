@@ -82,6 +82,27 @@ type JailSpec struct {
 	// against accidental kubectl delete.
 	// +optional
 	DeletionProtection bool `json:"deletionProtection,omitempty"`
+
+	// PF configures a PF anchor for this jail. When set, the controller loads
+	// the declared rules into a per-jail anchor on every reconcile and flushes
+	// the anchor when the jail is deleted.
+	// +optional
+	PF *JailPF `json:"pf,omitempty"`
+}
+
+// JailPF holds PF firewall rules loaded into a per-jail anchor.
+// The host pf.conf must contain `anchor "jails/*"` for the anchor to take effect;
+// the controller manages only the named anchor and never modifies pf.conf.
+type JailPF struct {
+	// AnchorName is the PF anchor to manage. Defaults to "jails/<jailname>".
+	// +optional
+	AnchorName string `json:"anchorName,omitempty"`
+
+	// Rules is the ordered list of PF rule strings loaded into the anchor.
+	// Rules are passed verbatim to pfctl; the anchor is fully replaced on each
+	// reconcile. An empty list flushes the anchor.
+	// +optional
+	Rules []string `json:"rules,omitempty"`
 }
 
 // JailMount describes a single filesystem mount inside the jail.

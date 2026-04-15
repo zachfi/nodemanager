@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -42,4 +43,24 @@ func (h *ExecHandlerCommon) SimpleRunCommand(ctx context.Context, command string
 		return errors.Wrap(err, out)
 	}
 	return err
+}
+
+func (h *ExecHandlerCommon) RunCommandWithInput(ctx context.Context, stdin string, command string, arg ...string) (string, int, error) {
+	_, span := tracer.Start(ctx, "RunCommandWithInput")
+	defer span.End()
+
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd := exec.CommandContext(ctx, command, arg...)
+	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return stderr.String(), cmd.ProcessState.ExitCode(), fmt.Errorf("failed to execute %q %s: %w", command, arg, err)
+	}
+
+	return out.String(), cmd.ProcessState.ExitCode(), nil
 }

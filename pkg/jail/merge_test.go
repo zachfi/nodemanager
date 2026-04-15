@@ -150,6 +150,86 @@ func TestMergeTemplateDefaults(t *testing.T) {
 				Inet6:     "2001:db8::5",
 			},
 		},
+		{
+			name: "pf — template provides base rules, jail extends",
+			spec: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+				PF: &freebsdv1.JailPF{
+					Rules: []string{"pass in proto tcp to port 80"},
+				},
+			},
+			tmpl: freebsdv1.JailTemplateSpec{
+				PF: &freebsdv1.JailPF{
+					Rules: []string{"block all"},
+				},
+			},
+			want: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+				PF: &freebsdv1.JailPF{
+					Rules: []string{"block all", "pass in proto tcp to port 80"},
+				},
+			},
+		},
+		{
+			name: "pf — only template rules, no jail pf",
+			spec: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+			},
+			tmpl: freebsdv1.JailTemplateSpec{
+				PF: &freebsdv1.JailPF{
+					AnchorName: "jails/template",
+					Rules:      []string{"block all"},
+				},
+			},
+			want: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+				PF: &freebsdv1.JailPF{
+					AnchorName: "jails/template",
+					Rules:      []string{"block all"},
+				},
+			},
+		},
+		{
+			name: "pf — jail anchor name overrides template anchor name",
+			spec: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+				PF: &freebsdv1.JailPF{
+					AnchorName: "custom/web01",
+					Rules:      []string{"pass in proto tcp to port 443"},
+				},
+			},
+			tmpl: freebsdv1.JailTemplateSpec{
+				PF: &freebsdv1.JailPF{
+					AnchorName: "jails/template",
+					Rules:      []string{"block all"},
+				},
+			},
+			want: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+				PF: &freebsdv1.JailPF{
+					AnchorName: "custom/web01",
+					Rules:      []string{"block all", "pass in proto tcp to port 443"},
+				},
+			},
+		},
+		{
+			name: "pf — nil on both sides produces nil",
+			spec: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+			},
+			tmpl: freebsdv1.JailTemplateSpec{},
+			want: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+			},
+		},
 	}
 
 	for _, tc := range cases {

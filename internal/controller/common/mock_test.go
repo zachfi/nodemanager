@@ -312,3 +312,7 @@ func (m *mockExecHandler) SimpleRunCommand(ctx context.Context, command string, 
 	_, _, err := m.RunCommand(ctx, command, arg...)
 	return err
 }
+
+func (m *mockExecHandler) RunCommandWithInput(ctx context.Context, stdin string, command string, arg ...string) (string, int, error) {
+	return m.RunCommand(ctx, command, arg...)
+}

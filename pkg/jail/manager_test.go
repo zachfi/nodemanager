@@ -293,6 +293,72 @@ func TestDeleteJailStopsFirst(t *testing.T) {
 	require.Equal(t, []string{"-r", "gone"}, exec.Recorder["jail"][0])
 }
 
+func TestEnsureJail_WithPF(t *testing.T) {
+	statuses := []int{1, 0, 1, 0, 0, 0} // ZFS ops + pfctl success
+	m, exec, _ := newTestManager(t, statuses)
+
+	j := testJail("web", "14.2-RELEASE")
+	j.Spec.PF = &freebsdv1.JailPF{
+		Rules: []string{"block all", "pass in proto tcp to port 80"},
+	}
+
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// pfctl must have been called with the anchor and stdin flag.
+	pfctlArgs := exec.Recorder["pfctl"]
+	require.Len(t, pfctlArgs, 1)
+	require.Equal(t, []string{"-a", "jails/web", "-f", "-"}, pfctlArgs[0])
+
+	// The rules must have been passed via stdin.
+	pfctlInputs := exec.InputRecorder["pfctl"]
+	require.Len(t, pfctlInputs, 1)
+	require.Contains(t, pfctlInputs[0], "block all")
+	require.Contains(t, pfctlInputs[0], "pass in proto tcp to port 80")
+}
+
+func TestEnsureJail_NoPF(t *testing.T) {
+	statuses := []int{1, 0, 1, 0, 0}
+	m, exec, _ := newTestManager(t, statuses)
+
+	j := testJail("plain", "14.2-RELEASE")
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// pfctl must not have been called when PF is not configured.
+	require.Empty(t, exec.Recorder["pfctl"])
+}
+
+func TestDeleteJail_FlushesAnchor(t *testing.T) {
+	// stop (0) + pfctl flush (0) + Exists(jailDataset) (0) + DestroyRecursive (0) + DestroySnapshot (0)
+	statuses := []int{0, 0, 0, 0, 0}
+	m, exec, _ := newTestManager(t, statuses)
+
+	j := testJail("gone", "14.2-RELEASE")
+	confPath := filepath.Join(m.confDir, "gone.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
+	fstabPath := filepath.Join(m.basePath, JailRootDir, "gone", "fstab")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
+	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
+
+	require.NoError(t, m.DeleteJail(context.Background(), j))
+
+	// pfctl -F rules must have been called for the default anchor.
+	pfctlArgs := exec.Recorder["pfctl"]
+	require.Len(t, pfctlArgs, 1)
+	require.Equal(t, []string{"-a", "jails/gone", "-F", "rules"}, pfctlArgs[0])
+}
+
+func TestJailAnchorName(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		require.Equal(t, "jails/web01", jailAnchorName("web01", nil))
+	})
+	t.Run("default from empty spec", func(t *testing.T) {
+		require.Equal(t, "jails/web01", jailAnchorName("web01", &freebsdv1.JailPF{}))
+	})
+	t.Run("custom anchor name", func(t *testing.T) {
+		require.Equal(t, "custom/web01", jailAnchorName("web01", &freebsdv1.JailPF{AnchorName: "custom/web01"}))
+	})
+}
+
 // helpers
 
 func containsArg(args []string, needle string) bool {

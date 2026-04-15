@@ -12,6 +12,8 @@ import (
 //   - Slice fields (Mounts): template used when spec slice is nil/empty;
 //     no deep merge of individual entries.
 //   - Struct fields (Update): merged field-by-field within the struct.
+//   - PF: template rules are prepended to jail rules so the template can
+//     establish a base policy that jails extend with service-specific rules.
 func MergeTemplateDefaults(spec freebsdv1.JailSpec, tmpl freebsdv1.JailTemplateSpec) freebsdv1.JailSpec {
 	out := spec
 
@@ -24,6 +26,7 @@ func MergeTemplateDefaults(spec freebsdv1.JailSpec, tmpl freebsdv1.JailTemplateS
 	}
 
 	out.Update = mergeUpdate(out.Update, tmpl.Update)
+	out.PF = mergePF(out.PF, tmpl.PF)
 
 	return out
 }
@@ -40,4 +43,26 @@ func mergeUpdate(spec, tmpl freebsdv1.JailUpdate) freebsdv1.JailUpdate {
 		out.Group = tmpl.Group
 	}
 	return out
+}
+
+// mergePF merges template PF rules (base policy) with jail PF rules
+// (service-specific extensions). Template rules are prepended so they form a
+// base that the jail can build on. AnchorName from the jail takes precedence;
+// if only the template sets one, it is inherited.
+func mergePF(spec, tmpl *freebsdv1.JailPF) *freebsdv1.JailPF {
+	if tmpl == nil {
+		return spec
+	}
+	if spec == nil {
+		out := *tmpl
+		return &out
+	}
+	out := freebsdv1.JailPF{
+		AnchorName: spec.AnchorName,
+		Rules:      append(append([]string{}, tmpl.Rules...), spec.Rules...),
+	}
+	if out.AnchorName == "" {
+		out.AnchorName = tmpl.AnchorName
+	}
+	return &out
 }

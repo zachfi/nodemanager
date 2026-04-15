@@ -57,6 +57,13 @@ type JailTemplateSpec struct {
 	// fails the remaining commands are skipped and the jail is marked degraded.
 	// +optional
 	PostCreate []PostCreateCommand `json:"postCreate,omitempty"`
+
+	// PF provides default PF anchor rules for jails using this template.
+	// Template rules are prepended to any jail-level rules, allowing the
+	// template to establish a base policy (e.g. default-deny) that individual
+	// jails extend with service-specific passes.
+	// +optional
+	PF *JailPF `json:"pf,omitempty"`
 }
 
 // +kubebuilder:object:root=true

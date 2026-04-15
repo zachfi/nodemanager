@@ -63,6 +63,13 @@ type Manager interface {
 	// BootstrapPkg installs the pkg(8) package manager inside the jail if
 	// it is not already present.  The jail must be running.
 	BootstrapPkg(ctx context.Context, jailName, jailRoot string) error
+	// EnsureAnchor loads rules into a named PF anchor, fully replacing any
+	// existing rules. An empty rules slice flushes the anchor instead.
+	// The host pf.conf must contain `anchor "jails/*"` (or equivalent) for
+	// the anchor to take effect; this method manages only the anchor itself.
+	EnsureAnchor(ctx context.Context, anchorName string, rules []string) error
+	// FlushAnchor removes all rules from a named PF anchor.
+	FlushAnchor(ctx context.Context, anchorName string) error
 }
 
 var _ Manager = (*manager)(nil)
@@ -197,6 +204,14 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 		return fmt.Errorf("writing jail.conf for %s: %w", j.Name, err)
 	}
 
+	// 7. Sync PF anchor when rules are declared.
+	if j.Spec.PF != nil {
+		anchor := jailAnchorName(j.Name, j.Spec.PF)
+		if err := m.EnsureAnchor(ctx, anchor, j.Spec.PF.Rules); err != nil {
+			return fmt.Errorf("syncing PF anchor %s for jail %s: %w", anchor, j.Name, err)
+		}
+	}
+
 	return nil
 }
 
@@ -207,6 +222,12 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	// Stop the jail gracefully before tearing down its filesystem. Ignore
 	// errors here — the jail may already be stopped.
 	_ = m.StopJail(ctx, j.Name)
+
+	// Flush the PF anchor regardless of whether PF is currently configured in
+	// the spec — the user may have removed the field before deleting. This is
+	// a best-effort cleanup; errors are logged but do not block deletion.
+	anchor := jailAnchorName(j.Name, j.Spec.PF)
+	_ = m.FlushAnchor(ctx, anchor)
 
 	// Remove config files so the jail cannot be started accidentally
 	// during teardown.
@@ -292,6 +313,33 @@ func (m *manager) BootstrapPkg(ctx context.Context, jailName, jailRoot string) e
 func (m *manager) UpdateJail(ctx context.Context, jailRoot string) error {
 	return m.exec.SimpleRunCommand(ctx, "env", "PAGER=cat",
 		"/usr/sbin/freebsd-update", "-b", jailRoot, "--not-running-from-cron", "fetch", "install")
+}
+
+// jailAnchorName returns the PF anchor name for a jail. It uses the
+// AnchorName from the PF spec when set, otherwise defaults to "jails/<name>".
+func jailAnchorName(jailName string, pf *freebsdv1.JailPF) string {
+	if pf != nil && pf.AnchorName != "" {
+		return pf.AnchorName
+	}
+	return "jails/" + jailName
+}
+
+// EnsureAnchor loads rules into a named PF anchor via pfctl, replacing any
+// existing rules atomically. Rules are written to pfctl's stdin to avoid
+// temporary files, which matters on write-limited media such as SD cards.
+// If rules is empty the anchor is flushed instead.
+func (m *manager) EnsureAnchor(ctx context.Context, anchorName string, rules []string) error {
+	if len(rules) == 0 {
+		return m.FlushAnchor(ctx, anchorName)
+	}
+	input := strings.Join(rules, "\n") + "\n"
+	_, _, err := m.exec.RunCommandWithInput(ctx, input, "pfctl", "-a", anchorName, "-f", "-")
+	return err
+}
+
+// FlushAnchor removes all rules from a named PF anchor.
+func (m *manager) FlushAnchor(ctx context.Context, anchorName string) error {
+	return m.exec.SimpleRunCommand(ctx, "pfctl", "-a", anchorName, "-F", "rules")
 }
 
 // releaseFromOrigin extracts the FreeBSD release component from a ZFS clone
