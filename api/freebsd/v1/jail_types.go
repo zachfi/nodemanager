@@ -75,6 +75,13 @@ type JailSpec struct {
 	// Update controls periodic freebsd-update(8) runs for this jail.
 	// +optional
 	Update JailUpdate `json:"update,omitempty"`
+
+	// DeletionProtection prevents the jail from being deleted when set to true.
+	// The controller will block deletion by holding the finalizer until this
+	// field is explicitly set to false.  Use this to guard important jails
+	// against accidental kubectl delete.
+	// +optional
+	DeletionProtection bool `json:"deletionProtection,omitempty"`
 }
 
 // JailMount describes a single filesystem mount inside the jail.

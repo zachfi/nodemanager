@@ -119,6 +119,14 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 	} else {
 		if controllerutil.ContainsFinalizer(j, jailFinalizer) {
+			if j.Spec.DeletionProtection {
+				r.logger.Warn("deletion blocked by deletionProtection; set spec.deletionProtection=false to allow", "jail", j.Name)
+				_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+					r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "DeletionProtected",
+						"deletion blocked: set spec.deletionProtection=false to allow removal")
+				})
+				return ctrl.Result{}, nil
+			}
 			if err := r.manager.DeleteJail(ctx, *j); err != nil {
 				jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "error").Inc()
 				_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {

@@ -39,6 +39,13 @@ spec:
           spec:
             description: JailSpec defines the desired state of Jail.
             properties:
+              deletionProtection:
+                description: |-
+                  DeletionProtection prevents the jail from being deleted when set to true.
+                  The controller will block deletion by holding the finalizer until this
+                  field is explicitly set to false.  Use this to guard important jails
+                  against accidental kubectl delete.
+                type: boolean
               hostname:
                 description: Hostname is the jail's internal hostname. Defaults to
                   the resource name.
