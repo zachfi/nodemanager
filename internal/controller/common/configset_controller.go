@@ -247,7 +247,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.logger.Error("configset apply failed, will retry", "configset", configSet.Name, "err", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-	return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -261,14 +261,18 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}
 	}
 
-	// No watch-level predicate — the nodeLabelMatch guard inside Reconcile
-	// handles filtering using live ManagedNode labels from the API server.
-	// A static predicate cannot track label changes after startup and the
-	// API reader may not be available before the manager starts.
+	hostname, err := r.system.Node().Hostname()
+	if err != nil {
+		return fmt.Errorf("failed to get hostname for ManagedNode watch: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&commonv1.ConfigSet{}).
 		Watches(&corev1.Secret{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingSecret)).
 		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
+		// Watch the local ManagedNode so label changes (e.g. role labels set after
+		// startup) immediately re-trigger ConfigSet reconciliation without polling.
+		Watches(&commonv1.ManagedNode{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsOnNodeChange(hostname))).
 		Complete(r)
 }
 
@@ -304,6 +308,29 @@ func (r *ConfigSetReconciler) runFileBucketGC(ctx context.Context) {
 		case <-ticker.C:
 			maybeRunGC()
 		}
+	}
+}
+
+// configSetsOnNodeChange returns a mapper that enqueues all ConfigSets in the
+// controller namespace when the local ManagedNode changes. This ensures that
+// label changes on the node (e.g. role labels applied after startup) are
+// reflected in ConfigSet label-match evaluation without polling.
+func (r *ConfigSetReconciler) configSetsOnNodeChange(hostname string) ctrlhandler.MapFunc {
+	return func(ctx context.Context, obj client.Object) []reconcile.Request {
+		if obj.GetName() != hostname {
+			return nil
+		}
+		var list commonv1.ConfigSetList
+		if err := r.List(ctx, &list, client.InNamespace(r.cfg.Namespace)); err != nil {
+			return nil
+		}
+		reqs := make([]reconcile.Request, len(list.Items))
+		for i, cs := range list.Items {
+			reqs[i] = reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cs.Name, Namespace: cs.Namespace},
+			}
+		}
+		return reqs
 	}
 }
 

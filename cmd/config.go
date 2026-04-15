@@ -10,7 +10,6 @@ import (
 	"github.com/drone/envsubst"
 	"github.com/grafana/dskit/flagext"
 	"github.com/zachfi/nodemanager/internal/controller/common"
-	"github.com/zachfi/zkit/pkg/tracing"
 	"sigs.k8s.io/yaml"
 )
 
@@ -25,13 +24,11 @@ type Config struct {
 	LogLevel string
 
 	ControllerConfig common.ControllerConfig
-	Tracing          tracing.Config
 }
 
 func (c *Config) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	f.StringVar(&c.LogLevel, "log-level", "INFO", "The level to set on the logger")
 
-	c.Tracing.RegisterFlagsAndApplyDefaults("tracing", f)
 	c.ControllerConfig.RegisterFlagsAndApplyDefaults("controller", f)
 }
 
