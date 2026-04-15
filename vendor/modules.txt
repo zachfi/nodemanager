@@ -208,10 +208,6 @@ github.com/stretchr/testify/require
 # github.com/x448/float16 v0.8.4
 ## explicit; go 1.11
 github.com/x448/float16
-# github.com/zachfi/zkit v0.1.2
-## explicit; go 1.22
-github.com/zachfi/zkit/pkg/tracing
-github.com/zachfi/zkit/pkg/util
 # go.opentelemetry.io/auto/sdk v1.1.0
 ## explicit; go 1.22.0
 go.opentelemetry.io/auto/sdk
