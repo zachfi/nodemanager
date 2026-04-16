@@ -74,6 +74,26 @@ spec:
                   - jailPath
                   type: object
                 type: array
+              pf:
+                description: |-
+                  PF provides default PF anchor rules for jails using this template.
+                  Template rules are prepended to any jail-level rules, allowing the
+                  template to establish a base policy (e.g. default-deny) that individual
+                  jails extend with service-specific passes.
+                properties:
+                  anchorName:
+                    description: AnchorName is the PF anchor to manage. Defaults to
+                      "jails/<jailname>".
+                    type: string
+                  rules:
+                    description: |-
+                      Rules is the ordered list of PF rule strings loaded into the anchor.
+                      Rules are passed verbatim to pfctl; the anchor is fully replaced on each
+                      reconcile. An empty list flushes the anchor.
+                    items:
+                      type: string
+                    type: array
+                type: object
               postCreate:
                 description: |-
                   PostCreate holds commands to run inside the jail after its first

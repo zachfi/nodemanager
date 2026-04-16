@@ -93,6 +93,25 @@ spec:
                   NodeName restricts reconciliation to the nodemanager instance running on
                   the named host. If empty the jail is ignored by all nodes.
                 type: string
+              pf:
+                description: |-
+                  PF configures a PF anchor for this jail. When set, the controller loads
+                  the declared rules into a per-jail anchor on every reconcile and flushes
+                  the anchor when the jail is deleted.
+                properties:
+                  anchorName:
+                    description: AnchorName is the PF anchor to manage. Defaults to
+                      "jails/<jailname>".
+                    type: string
+                  rules:
+                    description: |-
+                      Rules is the ordered list of PF rule strings loaded into the anchor.
+                      Rules are passed verbatim to pfctl; the anchor is fully replaced on each
+                      reconcile. An empty list flushes the anchor.
+                    items:
+                      type: string
+                    type: array
+                type: object
               release:
                 description: Release is the FreeBSD release version to use (e.g. "14.2-RELEASE").
                 type: string
