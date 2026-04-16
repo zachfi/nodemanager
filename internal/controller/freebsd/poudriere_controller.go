@@ -73,6 +73,10 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	if node == nil {
+		return ctrl.Result{}, nil
+	}
+
 	// Bail if this node is disabled
 	gate := labels.LabelGate(labels.NoneMatch, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"})
 	if gate {
