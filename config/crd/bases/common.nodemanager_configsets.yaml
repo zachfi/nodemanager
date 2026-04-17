@@ -89,6 +89,37 @@ spec:
                       type: string
                   type: object
                 type: array
+              notifies:
+                description: Notifies lists resources to reconcile after this ConfigSet
+                  is applied.
+                items:
+                  description: |-
+                    NotifyRef identifies a Kubernetes resource that should be enqueued for
+                    reconciliation after this ConfigSet is successfully applied. The controller
+                    touches a generation-scoped annotation on the target, which triggers that
+                    resource's own controller without causing a reconcile loop.
+                  properties:
+                    apiVersion:
+                      description: APIVersion is the group/version of the resource,
+                        e.g. "freebsd.nodemanager/v1".
+                      type: string
+                    kind:
+                      description: Kind is the kind of the resource, e.g. "Jail".
+                      type: string
+                    name:
+                      description: |-
+                        Name is the specific resource to notify. When empty, all resources of
+                        this kind in the namespace are notified.
+                      type: string
+                    namespace:
+                      description: Namespace defaults to the ConfigSet's own namespace
+                        when omitted.
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  type: object
+                type: array
               packages:
                 items:
                   properties:

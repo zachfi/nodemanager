@@ -37,6 +37,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -249,7 +250,65 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.logger.Error("configset apply failed, will retry", "configset", configSet.Name, "err", err)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
+
+	r.notifyResources(ctx, &configSet)
+
 	return ctrl.Result{}, nil
+}
+
+// notifyResources touches a generation-scoped annotation on each resource
+// listed in spec.notifies, triggering that resource's controller to reconcile.
+// The annotation value encodes the ConfigSet name and generation so the touch
+// is a no-op when the spec hasn't changed, preventing spurious reconcile loops.
+func (r *ConfigSetReconciler) notifyResources(ctx context.Context, cs *commonv1.ConfigSet) {
+	annotationKey := fmt.Sprintf("nodemanager.io/notify-%s", cs.Name)
+	annotationValue := fmt.Sprintf("%d", cs.Generation)
+
+	for _, ref := range cs.Spec.Notifies {
+		ns := ref.Namespace
+		if ns == "" {
+			ns = cs.Namespace
+		}
+
+		if ref.Name != "" {
+			r.touchNotifyTarget(ctx, ref.APIVersion, ref.Kind, ref.Name, ns, annotationKey, annotationValue)
+			continue
+		}
+
+		// No name specified — notify all resources of this kind in the namespace.
+		list := &unstructured.UnstructuredList{}
+		list.SetAPIVersion(ref.APIVersion)
+		list.SetKind(ref.Kind + "List")
+		if err := r.List(ctx, list, client.InNamespace(ns)); err != nil {
+			r.logger.Warn("failed to list resources for notification", "apiVersion", ref.APIVersion, "kind", ref.Kind, "err", err)
+			continue
+		}
+		for _, item := range list.Items {
+			r.touchNotifyTarget(ctx, ref.APIVersion, ref.Kind, item.GetName(), item.GetNamespace(), annotationKey, annotationValue)
+		}
+	}
+}
+
+func (r *ConfigSetReconciler) touchNotifyTarget(ctx context.Context, apiVersion, kind, name, namespace, annotationKey, annotationValue string) {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion(apiVersion)
+	u.SetKind(kind)
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, u); err != nil {
+		r.logger.Warn("failed to get notify target", "kind", kind, "name", name, "err", err)
+		return
+	}
+	annotations := u.GetAnnotations()
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	if annotations[annotationKey] == annotationValue {
+		return // already notified for this generation
+	}
+	annotations[annotationKey] = annotationValue
+	u.SetAnnotations(annotations)
+	if err := r.Update(ctx, u); err != nil {
+		r.logger.Warn("failed to notify target", "kind", kind, "name", name, "err", err)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

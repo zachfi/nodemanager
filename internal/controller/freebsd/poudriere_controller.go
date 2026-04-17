@@ -23,16 +23,18 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/poudriere"
-	"github.com/zachfi/nodemanager/pkg/util"
-
-	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 )
 
 // PoudriereReconciler reconciles a Poudriere object
@@ -68,25 +70,24 @@ func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger
 func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
-	node, err := util.GetNode(ctx, r, req, r.system.Node())
+	hostname, err := r.system.Node().Hostname()
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	var node commonv1.ManagedNode
+	if err := r.Get(ctx, types.NamespacedName{Name: hostname, Namespace: req.Namespace}, &node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if node == nil {
+	// Bail if this node is disabled
+	if labels.LabelGate(labels.NoneMatch, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"}) {
 		return ctrl.Result{}, nil
 	}
 
-	// Bail if this node is disabled
-	gate := labels.LabelGate(labels.NoneMatch, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"})
-	if gate {
-		return ctrl.Result{}, err
-	}
-
 	// Match only the key
-	gate = labels.LabelGate(labels.AnyKey, node.Labels, map[string]string{labels.PoudriereBuild: ""})
-	if !gate {
-		return ctrl.Result{}, err
+	if !labels.LabelGate(labels.AnyKey, node.Labels, map[string]string{labels.PoudriereBuild: ""}) {
+		return ctrl.Result{}, nil
 	}
 
 	exec := r.system.Exec()
@@ -129,7 +130,24 @@ func (r *PoudriereReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&freebsdv1.PoudriereBulk{}).
 		Named("Poudriere").
+		Watches(&freebsdv1.PoudriereJail{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.bulksOnChange)).
+		Watches(&freebsdv1.PoudrierePorts{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.bulksOnChange)).
 		Complete(r)
+}
+
+// bulksOnChange enqueues all PoudriereBulk objects in the same namespace as
+// the changed object. This ensures that creating or updating a PoudriereJail
+// or PoudrierePorts triggers the reconciler, which processes all of them.
+func (r *PoudriereReconciler) bulksOnChange(ctx context.Context, obj client.Object) []reconcile.Request {
+	var list freebsdv1.PoudriereBulkList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	reqs := make([]reconcile.Request, len(list.Items))
+	for i, b := range list.Items {
+		reqs[i] = reconcile.Request{NamespacedName: types.NamespacedName{Name: b.Name, Namespace: b.Namespace}}
+	}
+	return reqs
 }
 
 func (r *PoudriereReconciler) ensureAllTrees(ctx context.Context, p *poudriere.PoudrierePorts) error {

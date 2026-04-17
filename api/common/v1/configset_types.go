@@ -20,12 +20,33 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// NotifyRef identifies a Kubernetes resource that should be enqueued for
+// reconciliation after this ConfigSet is successfully applied. The controller
+// touches a generation-scoped annotation on the target, which triggers that
+// resource's own controller without causing a reconcile loop.
+type NotifyRef struct {
+	// APIVersion is the group/version of the resource, e.g. "freebsd.nodemanager/v1".
+	APIVersion string `json:"apiVersion"`
+	// Kind is the kind of the resource, e.g. "Jail".
+	Kind string `json:"kind"`
+	// Name is the specific resource to notify. When empty, all resources of
+	// this kind in the namespace are notified.
+	// +optional
+	Name string `json:"name,omitempty"`
+	// Namespace defaults to the ConfigSet's own namespace when omitted.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+}
+
 // ConfigSetSpec defines the desired state of ConfigSet
 type ConfigSetSpec struct {
 	Files      []File    `json:"files,omitempty"`
 	Packages   []Package `json:"packages,omitempty"`
 	Services   []Service `json:"services,omitempty"`
 	Executions []Exec    `json:"executions,omitempty"`
+	// Notifies lists resources to reconcile after this ConfigSet is applied.
+	// +optional
+	Notifies []NotifyRef `json:"notifies,omitempty"`
 }
 
 type Package struct {
