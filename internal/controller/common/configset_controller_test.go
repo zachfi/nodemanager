@@ -260,6 +260,58 @@ var _ = Describe("ConfigSet Controller", func() {
 		})
 	})
 
+	Context("When the local ManagedNode changes", func() {
+		const csWatch1 = "watch-cs-one"
+		const csWatch2 = "watch-cs-two"
+		ctx := context.Background()
+
+		BeforeEach(func() {
+			for _, name := range []string{csWatch1, csWatch2} {
+				cs := &commonv1.ConfigSet{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cs)
+				if err != nil && errors.IsNotFound(err) {
+					Expect(k8sClient.Create(ctx, &commonv1.ConfigSet{
+						ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+					})).To(Succeed())
+				}
+			}
+		})
+
+		AfterEach(func() {
+			for _, name := range []string{csWatch1, csWatch2} {
+				cs := &commonv1.ConfigSet{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "default"}, cs); err == nil {
+					Expect(k8sClient.Delete(ctx, cs)).To(Succeed())
+				}
+			}
+		})
+
+		It("configSetsOnNodeChange returns requests only for the matching hostname", func() {
+			r := &ConfigSetReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				cfg:    ConfigSetConfig{Namespace: "default"},
+			}
+			mapper := r.configSetsOnNodeChange(hostname)
+
+			By("returning nil for a ManagedNode with a different name")
+			other := &commonv1.ManagedNode{ObjectMeta: metav1.ObjectMeta{Name: "other-node", Namespace: "default"}}
+			Expect(mapper(ctx, other)).To(BeNil())
+
+			By("returning one request per ConfigSet for the matching hostname")
+			local := &commonv1.ManagedNode{ObjectMeta: metav1.ObjectMeta{Name: hostname, Namespace: "default"}}
+			reqs := mapper(ctx, local)
+			Expect(reqs).NotTo(BeEmpty())
+			names := make([]string, len(reqs))
+			for i, r := range reqs {
+				names[i] = r.Name
+			}
+			Expect(names).To(ContainElements(csWatch1, csWatch2))
+		})
+	})
+
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 

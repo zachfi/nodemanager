@@ -41,9 +41,11 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
@@ -272,7 +274,10 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
 		// Watch the local ManagedNode so label changes (e.g. role labels set after
 		// startup) immediately re-trigger ConfigSet reconciliation without polling.
-		Watches(&commonv1.ManagedNode{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsOnNodeChange(hostname))).
+		// Use LabelChangedPredicate so status-only updates (SSH keys, interfaces,
+		// WireGuard, configset apply results) don't cause a flood of reconciles.
+		Watches(&commonv1.ManagedNode{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsOnNodeChange(hostname)),
+			builder.WithPredicates(predicate.LabelChangedPredicate{})).
 		Complete(r)
 }
 
