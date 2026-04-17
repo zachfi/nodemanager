@@ -996,7 +996,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 					entryPath := file.Path + "/" + entry.Name()
 					if _, ok := managed[entryPath]; !ok {
 						r.logger.Info("purging unmanaged file", "path", entryPath, "directory", file.Path)
-						if _, removeErr := handler.Remove(ctx, entryPath); removeErr != nil {
+						if removeErr := os.Remove(entryPath); removeErr != nil {
 							errs = append(errs, fmt.Errorf("purge: failed to remove %q: %w", entryPath, removeErr))
 						} else {
 							changedFiles = append(changedFiles, entryPath)
