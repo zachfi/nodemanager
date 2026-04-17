@@ -79,6 +79,12 @@ spec:
                       type: string
                     path:
                       type: string
+                    purge:
+                      description: |-
+                        Purge removes files beneath this path that are not declared in any
+                        ConfigSet matching this node. Only meaningful when ensure is "directory".
+                        Subdirectories are never removed, only plain files.
+                      type: boolean
                     secretRefs:
                       items:
                         type: string
