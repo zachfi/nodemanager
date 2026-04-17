@@ -1,3 +1,4 @@
+// Package zfs implements the ability to create and destroy ZFS datasets.
 package zfs
 
 import (
