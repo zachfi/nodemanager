@@ -41,6 +41,8 @@ var _ = Describe("ConfigSet Controller", func() {
 		ctx := context.Background()
 
 		BeforeEach(func() {
+			ensureLocalNodeLabel(ctx, "nodemanager.test/enabled", "true")
+
 			By("creating two ConfigSets with overlapping file paths")
 			for _, name := range []string{csA, csB} {
 				cs := &commonv1.ConfigSet{}
@@ -50,6 +52,7 @@ var _ = Describe("ConfigSet Controller", func() {
 						ObjectMeta: metav1.ObjectMeta{
 							Name:      name,
 							Namespace: "default",
+							Labels:    map[string]string{"nodemanager.test/enabled": "true"},
 						},
 						Spec: commonv1.ConfigSetSpec{
 							Files: []commonv1.File{
@@ -131,6 +134,8 @@ var _ = Describe("ConfigSet Controller", func() {
 		ctx := context.Background()
 
 		BeforeEach(func() {
+			ensureLocalNodeLabel(ctx, "nodemanager.test/enabled", "true")
+
 			By("creating a matching ConfigSet and a non-matching ConfigSet with the same file path")
 			cs := &commonv1.ConfigSet{}
 			err := k8sClient.Get(ctx, types.NamespacedName{Name: csMatch, Namespace: "default"}, cs)
@@ -139,6 +144,7 @@ var _ = Describe("ConfigSet Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      csMatch,
 						Namespace: "default",
+						Labels:    map[string]string{"nodemanager.test/enabled": "true"},
 					},
 					Spec: commonv1.ConfigSetSpec{
 						Files: []commonv1.File{
@@ -324,6 +330,8 @@ var _ = Describe("ConfigSet Controller", func() {
 		configset := &commonv1.ConfigSet{}
 
 		BeforeEach(func() {
+			ensureLocalNodeLabel(ctx, "nodemanager.test/enabled", "true")
+
 			By("creating the custom resource for the Kind ConfigSet")
 			err := k8sClient.Get(ctx, typeNamespacedName, configset)
 			if err != nil && errors.IsNotFound(err) {
@@ -331,6 +339,7 @@ var _ = Describe("ConfigSet Controller", func() {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
+						Labels:    map[string]string{"nodemanager.test/enabled": "true"},
 					},
 					Spec: commonv1.ConfigSetSpec{
 						Packages: []commonv1.Package{

@@ -151,6 +151,11 @@ var _ = Describe("ManagedNode Controller", func() {
 				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
 			}
 			_ = clientset.CoreV1().Nodes().Delete(ctx, resourceName, metav1.DeleteOptions{})
+			// Clean up the upgrade-group lease so subsequent tests start with a clean lock state.
+			lease := &coordinationv1.Lease{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: "stable", Namespace: "default"}, lease); err == nil {
+				_ = k8sClient.Delete(ctx, lease)
+			}
 		})
 
 		It("should cordon the Kubernetes node before upgrading", func() {

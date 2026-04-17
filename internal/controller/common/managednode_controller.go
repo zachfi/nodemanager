@@ -211,14 +211,23 @@ func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *comm
 	}
 
 	if updateLabels {
-		node.SetLabels(nodeLabels)
 		r.logger.Info("updating labels", "labels", nodeLabels)
 
-		f := func() error {
-			return r.Update(ctx, node)
-		}
-
-		if err := retry.RetryOnConflict(retry.DefaultBackoff, f); err != nil {
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			var fresh commonv1.ManagedNode
+			if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &fresh); err != nil {
+				return err
+			}
+			freshLabels := fresh.GetLabels()
+			if freshLabels == nil {
+				freshLabels = make(map[string]string)
+			}
+			for k, v := range nodeLabels {
+				freshLabels[k] = v
+			}
+			fresh.SetLabels(freshLabels)
+			return r.Update(ctx, &fresh)
+		}); err != nil {
 			return fmt.Errorf("failed to update ManagedNode: %w", err)
 		}
 	}
@@ -227,19 +236,12 @@ func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *comm
 }
 
 func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *commonv1.ManagedNode) error {
-	// Snapshot the fields we manage so we can skip the write if nothing changed.
-	oldAgentVersion := node.Status.AgentVersion
-	oldRelease := node.Status.Release
-	oldInterfaces := node.Status.Interfaces
-	oldSSHHostKeys := node.Status.SSHHostKeys
-	oldWireGuard := node.Status.WireGuard
-
-	node.Status.AgentVersion = r.agentVersion
+	// Compute new status values before entering the retry loop.
+	newAgentVersion := r.agentVersion
 	info := r.system.Node().Info(ctx)
-	node.Status.Release = info.OS.Release
-	node.Status.Interfaces = collectNetworkInterfaces()
-	node.Status.SSHHostKeys = collectSSHHostKeys(ctx, r.system.Exec(), node.Name)
-
+	newRelease := info.OS.Release
+	newInterfaces := collectNetworkInterfaces()
+	newSSHHostKeys := collectSSHHostKeys(ctx, r.system.Exec(), node.Name)
 	liveWG := collectWireGuardInterfaces(ctx, r.system.Exec())
 
 	if node.Spec.WireGuard.Enabled {
@@ -255,30 +257,36 @@ func (r *ManagedNodeReconciler) updateNodeStatus(ctx context.Context, node *comm
 		}
 	}
 
-	node.Status.WireGuard = liveWG
-
-	// Detect FreeBSD jail environment.
-	oldJailed := node.Status.Jailed
+	var newJailed bool
 	if info.OS.ID == "freebsd" {
-		node.Status.Jailed = isJailed(ctx, r.system.Exec())
+		newJailed = isJailed(ctx, r.system.Exec())
 	}
 
-	if node.Status.AgentVersion == oldAgentVersion &&
-		node.Status.Release == oldRelease &&
-		node.Status.Jailed == oldJailed &&
-		reflect.DeepEqual(node.Status.Interfaces, oldInterfaces) &&
-		reflect.DeepEqual(node.Status.SSHHostKeys, oldSSHHostKeys) &&
-		reflect.DeepEqual(node.Status.WireGuard, oldWireGuard) {
+	// Skip the write if nothing changed.
+	if node.Status.AgentVersion == newAgentVersion &&
+		node.Status.Release == newRelease &&
+		node.Status.Jailed == newJailed &&
+		reflect.DeepEqual(node.Status.Interfaces, newInterfaces) &&
+		reflect.DeepEqual(node.Status.SSHHostKeys, newSSHHostKeys) &&
+		reflect.DeepEqual(node.Status.WireGuard, liveWG) {
 		return nil
 	}
 
-	r.logger.Info("updating node status", "node", node.Name, "release", node.Status.Release)
+	r.logger.Info("updating node status", "node", node.Name, "release", newRelease)
 
-	f := func() error {
-		return r.Status().Update(ctx, node)
-	}
-
-	if err := retry.RetryOnConflict(retry.DefaultBackoff, f); err != nil {
+	if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var fresh commonv1.ManagedNode
+		if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &fresh); err != nil {
+			return err
+		}
+		fresh.Status.AgentVersion = newAgentVersion
+		fresh.Status.Release = newRelease
+		fresh.Status.Interfaces = newInterfaces
+		fresh.Status.SSHHostKeys = newSSHHostKeys
+		fresh.Status.WireGuard = liveWG
+		fresh.Status.Jailed = newJailed
+		return r.Status().Update(ctx, &fresh)
+	}); err != nil {
 		return fmt.Errorf("failed to update ManagedNode status: %w", err)
 	}
 

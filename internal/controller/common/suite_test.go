@@ -17,12 +17,15 @@ limitations under the License.
 package common
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -77,6 +80,29 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
 })
+
+// ensureLocalNodeLabel creates (or patches) the ManagedNode for the local
+// hostname so that it carries the given label.  ConfigSet tests need the node
+// to have matching labels so nodeLabelMatch passes.
+func ensureLocalNodeLabel(ctx context.Context, key, value string) {
+	osHostname, _ := os.Hostname()
+	mn := &commonv1.ManagedNode{}
+	err := k8sClient.Get(ctx, client.ObjectKey{Name: osHostname, Namespace: "default"}, mn)
+	if err != nil {
+		mn = &commonv1.ManagedNode{ObjectMeta: metav1.ObjectMeta{
+			Name:      osHostname,
+			Namespace: "default",
+			Labels:    map[string]string{key: value},
+		}}
+		Expect(k8sClient.Create(ctx, mn)).To(Succeed())
+		return
+	}
+	if mn.Labels == nil {
+		mn.Labels = make(map[string]string)
+	}
+	mn.Labels[key] = value
+	Expect(k8sClient.Update(ctx, mn)).To(Succeed())
+}
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")

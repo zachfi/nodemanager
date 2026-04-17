@@ -46,6 +46,8 @@ var _ = Describe("FileBucket reconcile integration", func() {
 	)
 
 	BeforeEach(func() {
+		ensureLocalNodeLabel(ctx, "nodemanager.test/enabled", "true")
+
 		var err error
 		bucketDir, err = os.MkdirTemp("", "filebucket-bucket-*")
 		Expect(err).NotTo(HaveOccurred())
@@ -60,6 +62,7 @@ var _ = Describe("FileBucket reconcile integration", func() {
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      csName,
 					Namespace: "default",
+					Labels:    map[string]string{"nodemanager.test/enabled": "true"},
 				},
 				Spec: commonv1.ConfigSetSpec{
 					Files: []commonv1.File{
