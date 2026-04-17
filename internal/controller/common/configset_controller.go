@@ -95,7 +95,7 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to handle changes to a ConfigSet object.
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	r.logger.Info("reconciling configset", "configset", req.Name)
+	r.logger.Debug("reconciling configset", "configset", req.Name)
 
 	// Prevent a single stuck reconcile from blocking the worker indefinitely.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -145,7 +145,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		span.AddEvent("labels do not match, cleaning up status",
 			trace.WithAttributes(attribute.String("node", node.Name)))
-		r.logger.Info("configset labels do not match node, skipping", "configset", configSet.Name, "node", node.Name)
+		r.logger.Debug("configset labels do not match node, skipping", "configset", configSet.Name, "node", node.Name)
 		r.removeConfigSetStatus(ctx, configSet.Name)
 		err = nil // for the span defer
 		// Requeue so we retry after the ManagedNode reconciler sets labels.
