@@ -80,6 +80,10 @@ type File struct {
 	// Useful for seed/skeleton files (e.g. ~/.zshrc) that nodemanager should
 	// create on first boot but never overwrite afterward.
 	CreateOnly bool `json:"createOnly,omitempty"`
+	// Purge removes files beneath this path that are not declared in any
+	// ConfigSet matching this node. Only meaningful when ensure is "directory".
+	// Subdirectories are never removed, only plain files.
+	Purge bool `json:"purge,omitempty"`
 }
 
 type Exec struct {

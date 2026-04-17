@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -866,6 +867,33 @@ func withUserContext(h handler.ServiceHandler, ctx context.Context) handler.Serv
 	return h
 }
 
+// managedPathsUnder returns the set of file paths declared by all ConfigSets
+// that match node across all configsets in namespace, filtered to those whose
+// cleaned path starts with dirPath.
+func (r *ConfigSetReconciler) managedPathsUnder(ctx context.Context, namespace string, node commonv1.ManagedNode, dirPath string) map[string]struct{} {
+	managed := make(map[string]struct{})
+	var list commonv1.ConfigSetList
+	if err := r.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+		r.logger.Warn("purge: failed to list configsets", "err", err)
+		return managed
+	}
+	prefix := dirPath
+	if prefix[len(prefix)-1] != '/' {
+		prefix += "/"
+	}
+	for _, cs := range list.Items {
+		if nodeLabelMatch(node, cs.Labels) != nil {
+			continue // this configset does not apply to this node
+		}
+		for _, f := range cs.Spec.Files {
+			if f.Path == dirPath || strings.HasPrefix(f.Path, prefix) {
+				managed[f.Path] = struct{}{}
+			}
+		}
+	}
+	return managed
+}
+
 // handleFileSet
 func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string, configSetName string, namespace string, fileSet []commonv1.File, node commonv1.ManagedNode) ([]string, map[string]string, error) {
 	ctx, span := r.tracer.Start(ctx, "handleFileSet")
@@ -950,6 +978,29 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 					}
 					if changed {
 						changedFiles = append(changedFiles, file.Path)
+					}
+				}
+			}
+
+			if file.Purge {
+				managed := r.managedPathsUnder(ctx, namespace, node, file.Path)
+				dirEntries, readErr := os.ReadDir(file.Path)
+				if readErr != nil {
+					errs = append(errs, fmt.Errorf("purge: failed to read directory %q: %w", file.Path, readErr))
+					continue
+				}
+				for _, entry := range dirEntries {
+					if entry.IsDir() {
+						continue // never remove subdirectories
+					}
+					entryPath := file.Path + "/" + entry.Name()
+					if _, ok := managed[entryPath]; !ok {
+						r.logger.Info("purging unmanaged file", "path", entryPath, "directory", file.Path)
+						if _, removeErr := handler.Remove(ctx, entryPath); removeErr != nil {
+							errs = append(errs, fmt.Errorf("purge: failed to remove %q: %w", entryPath, removeErr))
+						} else {
+							changedFiles = append(changedFiles, entryPath)
+						}
 					}
 				}
 			}
