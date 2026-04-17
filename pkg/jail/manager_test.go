@@ -341,10 +341,10 @@ func TestDeleteJail_FlushesAnchor(t *testing.T) {
 
 	require.NoError(t, m.DeleteJail(context.Background(), j))
 
-	// pfctl -F rules must have been called for the default anchor.
+	// pfctl -F all must have been called for the default anchor.
 	pfctlArgs := exec.Recorder["pfctl"]
 	require.Len(t, pfctlArgs, 1)
-	require.Equal(t, []string{"-a", "jails/gone", "-F", "rules"}, pfctlArgs[0])
+	require.Equal(t, []string{"-a", "jails/gone", "-F", "all"}, pfctlArgs[0])
 }
 
 func TestJailAnchorName(t *testing.T) {

@@ -337,9 +337,9 @@ func (m *manager) EnsureAnchor(ctx context.Context, anchorName string, rules []s
 	return err
 }
 
-// FlushAnchor removes all rules from a named PF anchor.
+// FlushAnchor removes all rules, NAT rules, and tables from a named PF anchor.
 func (m *manager) FlushAnchor(ctx context.Context, anchorName string) error {
-	return m.exec.SimpleRunCommand(ctx, "pfctl", "-a", anchorName, "-F", "rules")
+	return m.exec.SimpleRunCommand(ctx, "pfctl", "-a", anchorName, "-F", "all")
 }
 
 // releaseFromOrigin extracts the FreeBSD release component from a ZFS clone
