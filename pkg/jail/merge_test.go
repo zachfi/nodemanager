@@ -230,6 +230,76 @@ func TestMergeTemplateDefaults(t *testing.T) {
 				Release:  "14.2-RELEASE",
 			},
 		},
+		{
+			name: "parameters — template fills missing keys",
+			spec: freebsdv1.JailSpec{
+				NodeName:   "host01",
+				Release:    "14.2-RELEASE",
+				Parameters: map[string]string{"children.max": "5"},
+			},
+			tmpl: freebsdv1.JailTemplateSpec{
+				Parameters: map[string]string{
+					"allow.mount.zfs":   "",
+					"allow.mount.tmpfs": "",
+					"enforce_statfs":    "1",
+				},
+			},
+			want: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+				Parameters: map[string]string{
+					"children.max":      "5",
+					"allow.mount.zfs":   "",
+					"allow.mount.tmpfs": "",
+					"enforce_statfs":    "1",
+				},
+			},
+		},
+		{
+			name: "parameters — jail overrides template key",
+			spec: freebsdv1.JailSpec{
+				NodeName:   "host01",
+				Release:    "14.2-RELEASE",
+				Parameters: map[string]string{"enforce_statfs": "2"},
+			},
+			tmpl: freebsdv1.JailTemplateSpec{
+				Parameters: map[string]string{"enforce_statfs": "1"},
+			},
+			want: freebsdv1.JailSpec{
+				NodeName:   "host01",
+				Release:    "14.2-RELEASE",
+				Parameters: map[string]string{"enforce_statfs": "2"},
+			},
+		},
+		{
+			name: "parameters — nil template leaves spec unchanged",
+			spec: freebsdv1.JailSpec{
+				NodeName:   "host01",
+				Release:    "14.2-RELEASE",
+				Parameters: map[string]string{"children.max": "10"},
+			},
+			tmpl: freebsdv1.JailTemplateSpec{},
+			want: freebsdv1.JailSpec{
+				NodeName:   "host01",
+				Release:    "14.2-RELEASE",
+				Parameters: map[string]string{"children.max": "10"},
+			},
+		},
+		{
+			name: "parameters — nil spec inherits template",
+			spec: freebsdv1.JailSpec{
+				NodeName: "host01",
+				Release:  "14.2-RELEASE",
+			},
+			tmpl: freebsdv1.JailTemplateSpec{
+				Parameters: map[string]string{"allow.mount.zfs": ""},
+			},
+			want: freebsdv1.JailSpec{
+				NodeName:   "host01",
+				Release:    "14.2-RELEASE",
+				Parameters: map[string]string{"allow.mount.zfs": ""},
+			},
+		},
 	}
 
 	for _, tc := range cases {

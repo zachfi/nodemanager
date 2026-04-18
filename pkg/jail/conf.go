@@ -45,19 +45,24 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Parse(`{{ .Name }} {
 {{ if .FstabPath }}
 	mount.fstab = "{{ .FstabPath }}";
 {{ end -}}
+{{ range $k, $v := .Parameters }}
+{{ if $v }}	{{ $k }} = {{ $v }};
+{{ else }}	{{ $k }};
+{{ end -}}
+{{ end -}}
 }
 `))
 
 type jailConfData struct {
-	Name      string
-	Hostname  string
-	Path      string
-	Interface string
-	Inet      string
-	Inet6     string
-	Release   string
-	// FstabPath is non-empty when the jail has extra mounts.
-	FstabPath string
+	Name       string
+	Hostname   string
+	Path       string
+	Interface  string
+	Inet       string
+	Inet6      string
+	Release    string
+	FstabPath  string
+	Parameters map[string]string
 }
 
 // writeJailConf renders and writes <confDir>/<name>.conf.
@@ -69,14 +74,15 @@ func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.Jai
 	}
 
 	data := jailConfData{
-		Name:      name,
-		Hostname:  hostname,
-		Path:      jailRoot,
-		Interface: spec.Interface,
-		Inet:      spec.Inet,
-		Inet6:     spec.Inet6,
-		Release:   spec.Release,
-		FstabPath: fstabPath,
+		Name:       name,
+		Hostname:   hostname,
+		Path:       jailRoot,
+		Interface:  spec.Interface,
+		Inet:       spec.Inet,
+		Inet6:      spec.Inet6,
+		Release:    spec.Release,
+		FstabPath:  fstabPath,
+		Parameters: spec.Parameters,
 	}
 
 	var buf bytes.Buffer

@@ -93,6 +93,15 @@ spec:
                   NodeName restricts reconciliation to the nodemanager instance running on
                   the named host. If empty the jail is ignored by all nodes.
                 type: string
+              parameters:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Parameters holds additional jail(8) parameters written into the
+                  jail.conf fragment. An empty string value emits a bare flag (e.g.
+                  allow.mount.zfs;); a non-empty value emits key = value; (e.g.
+                  children.max = 5;).
+                type: object
               pf:
                 description: |-
                   PF configures a PF anchor for this jail. When set, the controller loads

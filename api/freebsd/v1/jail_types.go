@@ -88,6 +88,13 @@ type JailSpec struct {
 	// the anchor when the jail is deleted.
 	// +optional
 	PF *JailPF `json:"pf,omitempty"`
+
+	// Parameters holds additional jail(8) parameters written into the
+	// jail.conf fragment. An empty string value emits a bare flag (e.g.
+	// allow.mount.zfs;); a non-empty value emits key = value; (e.g.
+	// children.max = 5;).
+	// +optional
+	Parameters map[string]string `json:"parameters,omitempty"`
 }
 
 // JailPF holds PF firewall rules loaded into a per-jail anchor.

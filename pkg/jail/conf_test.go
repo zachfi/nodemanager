@@ -93,6 +93,26 @@ func TestWriteJailConf(t *testing.T) {
 			},
 		},
 		{
+			name:     "with extra parameters — poudriere jail",
+			jailName: "poud1",
+			jailRoot: "/usr/local/nodemanager/jails/poud1/root",
+			spec: freebsdv1.JailSpec{
+				Release: "14.2-RELEASE",
+				Parameters: map[string]string{
+					"children.max":    "10",
+					"enforce_statfs":  "1",
+					"allow.mount.zfs": "",
+					"allow.mount.tmpfs": "",
+				},
+			},
+			want: []string{
+				`children.max = 10;`,
+				`enforce_statfs = 1;`,
+				`allow.mount.zfs;`,
+				`allow.mount.tmpfs;`,
+			},
+		},
+		{
 			name:      "with fstab",
 			jailName:  "storage",
 			jailRoot:  "/usr/local/nodemanager/jails/storage/root",

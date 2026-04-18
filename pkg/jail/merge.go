@@ -1,6 +1,8 @@
 package jail
 
 import (
+	"maps"
+
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 )
 
@@ -27,6 +29,7 @@ func MergeTemplateDefaults(spec freebsdv1.JailSpec, tmpl freebsdv1.JailTemplateS
 
 	out.Update = mergeUpdate(out.Update, tmpl.Update)
 	out.PF = mergePF(out.PF, tmpl.PF)
+	out.Parameters = mergeParameters(out.Parameters, tmpl.Parameters)
 
 	return out
 }
@@ -42,6 +45,18 @@ func mergeUpdate(spec, tmpl freebsdv1.JailUpdate) freebsdv1.JailUpdate {
 	if out.Group == "" {
 		out.Group = tmpl.Group
 	}
+	return out
+}
+
+// mergeParameters merges template parameters under jail parameters.
+// Jail-level keys take precedence; template fills in any missing keys.
+func mergeParameters(spec, tmpl map[string]string) map[string]string {
+	if len(tmpl) == 0 {
+		return spec
+	}
+	out := make(map[string]string, len(tmpl)+len(spec))
+	maps.Copy(out, tmpl)
+	maps.Copy(out, spec)
 	return out
 }
 

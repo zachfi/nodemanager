@@ -74,6 +74,13 @@ spec:
                   - jailPath
                   type: object
                 type: array
+              parameters:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Parameters holds default jail(8) parameters. Jail-level parameters take
+                  precedence; template parameters fill in keys not set by the jail.
+                type: object
               pf:
                 description: |-
                   PF provides default PF anchor rules for jails using this template.

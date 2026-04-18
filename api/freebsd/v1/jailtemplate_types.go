@@ -64,6 +64,11 @@ type JailTemplateSpec struct {
 	// jails extend with service-specific passes.
 	// +optional
 	PF *JailPF `json:"pf,omitempty"`
+
+	// Parameters holds default jail(8) parameters. Jail-level parameters take
+	// precedence; template parameters fill in keys not set by the jail.
+	// +optional
+	Parameters map[string]string `json:"parameters,omitempty"`
 }
 
 // +kubebuilder:object:root=true
