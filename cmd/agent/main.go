@@ -92,13 +92,13 @@ func runSubscribe() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := subscribe(ctx, logger, socketPath, user); err != nil {
-		logger.Error("agent exited with error", "err", err)
-		os.Exit(1)
-	}
+	runTray(ctx, cancel, logger, subscribeConfig{
+		socketPath: socketPath,
+		user:       user,
+	})
 }
 
-func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string) error {
+func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string, onStatus func(bool)) error {
 	// Connect to D-Bus for desktop notifications.
 	desk, err := newDesktop(logger)
 	if err != nil {
@@ -129,6 +129,10 @@ func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string
 	}
 
 	logger.Info("subscribed", "user", user, "session", sessionID)
+
+	if onStatus != nil {
+		onStatus(true)
+	}
 
 	for {
 		event, err := stream.Recv()

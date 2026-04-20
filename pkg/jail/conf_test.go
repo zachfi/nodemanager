@@ -99,9 +99,9 @@ func TestWriteJailConf(t *testing.T) {
 			spec: freebsdv1.JailSpec{
 				Release: "14.2-RELEASE",
 				Parameters: map[string]string{
-					"children.max":    "10",
-					"enforce_statfs":  "1",
-					"allow.mount.zfs": "",
+					"children.max":      "10",
+					"enforce_statfs":    "1",
+					"allow.mount.zfs":   "",
 					"allow.mount.tmpfs": "",
 				},
 			},
