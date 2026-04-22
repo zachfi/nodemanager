@@ -62,9 +62,9 @@ func TestSighupTrigger_Trigger(t *testing.T) {
 	require.NoError(t, trig.trigger(context.Background()))
 
 	ann := fp.annotations()
-	require.Contains(t, ann, "nodemanager.io/reconcile-trigger")
+	require.Contains(t, ann, reconcileTriggerAnnotation)
 
-	ts, err := time.Parse(time.RFC3339, ann["nodemanager.io/reconcile-trigger"])
+	ts, err := time.Parse(time.RFC3339, ann[reconcileTriggerAnnotation])
 	require.NoError(t, err)
 	require.WithinDuration(t, time.Now().UTC(), ts, 5*time.Second)
 }
@@ -84,16 +84,18 @@ func TestSighupTrigger_Trigger_PreservesExistingAnnotations(t *testing.T) {
 
 	ann := fp.annotations()
 	require.Equal(t, "existing-value", ann["existing-key"], "existing annotations must be preserved")
-	require.Contains(t, ann, "nodemanager.io/reconcile-trigger")
+	require.Contains(t, ann, reconcileTriggerAnnotation)
 }
 
 func TestSighupTrigger_Start_RespondsToSIGHUP(t *testing.T) {
 	fp := newFakePatcher()
+	ready := make(chan struct{})
 	trig := &sighupTrigger{
 		client:    fp,
 		logger:    slog.New(slog.NewTextHandler(os.Stdout, nil)),
 		hostname:  "test-node",
 		namespace: "default",
+		ready:     ready,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,15 +107,14 @@ func TestSighupTrigger_Start_RespondsToSIGHUP(t *testing.T) {
 		_ = trig.Start(ctx)
 	}()
 
-	// Give the goroutine time to register the signal handler.
-	time.Sleep(20 * time.Millisecond)
+	<-ready // wait until signal.Notify has been called
 
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(t, err)
 	require.NoError(t, p.Signal(syscall.SIGHUP))
 
 	require.Eventually(t, func() bool {
-		_, ok := fp.annotations()["nodemanager.io/reconcile-trigger"]
+		_, ok := fp.annotations()[reconcileTriggerAnnotation]
 		return ok
 	}, 2*time.Second, 20*time.Millisecond, "annotation must appear after SIGHUP")
 

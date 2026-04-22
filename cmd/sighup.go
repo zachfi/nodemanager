@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const reconcileTriggerAnnotation = "nodemanager.io/reconcile-trigger"
+
 // nodePatcher is the subset of client.Client used by sighupTrigger.
 type nodePatcher interface {
 	Get(ctx context.Context, key types.NamespacedName, obj client.Object, opts ...client.GetOption) error
@@ -29,12 +31,19 @@ type sighupTrigger struct {
 	logger    *slog.Logger
 	hostname  string
 	namespace string
+	// ready is closed after signal.Notify returns, giving tests a deterministic
+	// synchronisation point before sending SIGHUP. Leave nil in production.
+	ready chan struct{}
 }
 
 func (s *sighupTrigger) Start(ctx context.Context) error {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGHUP)
 	defer signal.Stop(ch)
+
+	if s.ready != nil {
+		close(s.ready)
+	}
 
 	for {
 		select {
@@ -58,6 +67,6 @@ func (s *sighupTrigger) trigger(ctx context.Context) error {
 	if node.Annotations == nil {
 		node.Annotations = make(map[string]string)
 	}
-	node.Annotations["nodemanager.io/reconcile-trigger"] = time.Now().UTC().Format(time.RFC3339)
+	node.Annotations[reconcileTriggerAnnotation] = time.Now().UTC().Format(time.RFC3339)
 	return s.client.Patch(ctx, &node, patch)
 }
