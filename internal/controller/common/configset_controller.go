@@ -211,7 +211,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	r.logger.Debug("files handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "changed", len(changedFiles), "err", fileErr)
 
 	phaseStart = time.Now()
-	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, changedFiles)
+	svcErr = r.handleServiceSet(ctx, nodeName, req.Namespace, configSet.Spec.Services, configSet.Spec.Files, changedFiles)
 	r.logger.Debug("services handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "err", svcErr)
 
 	phaseStart = time.Now()
@@ -715,7 +715,7 @@ func (r *ConfigSetReconciler) WithSystem(system handler.System) {
 	r.system = system
 }
 
-func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName string, namespace string, serviceSet []commonv1.Service, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName string, namespace string, serviceSet []commonv1.Service, fileSet []commonv1.File, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleServiceSet")
 	defer span.End()
 
@@ -751,27 +751,36 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		svcCtx := serviceContext(ctx, svc.User)
 		svcHandler := withUserContext(handler, svcCtx)
 
-		if svc.Enable {
-			enableErr := svcHandler.Enable(svcCtx, svc.Name)
-			result := "success"
-			if enableErr != nil {
-				result = "error"
-				errs = append(errs, fmt.Errorf("failed to enable service %q: %w", svc.Name, enableErr))
-			}
-			serviceOperationsTotal.WithLabelValues(nodeName, "enable", result).Inc()
-		} else {
-			disableErr := svcHandler.Disable(svcCtx, svc.Name)
-			result := "success"
-			if disableErr != nil {
-				result = "error"
-				errs = append(errs, fmt.Errorf("failed to disable service %q: %w", svc.Name, disableErr))
-			}
-			serviceOperationsTotal.WithLabelValues(nodeName, "disable", result).Inc()
-		}
+		rcConfPath := fmt.Sprintf("/etc/rc.conf.d/%s", svc.Name)
+		rcFileManaged := slices.ContainsFunc(fileSet, func(f commonv1.File) bool {
+			return f.Path == rcConfPath
+		})
 
-		if svc.Arguments != "" {
-			if argsErr := svcHandler.SetArguments(svcCtx, svc.Name, svc.Arguments); argsErr != nil {
-				errs = append(errs, fmt.Errorf("failed to set service arguments for %q: %w", svc.Name, argsErr))
+		if rcFileManaged {
+			r.logger.Debug("skipping sysrc calls for service with managed rc.conf.d file", "service", svc.Name, "path", rcConfPath)
+		} else {
+			if svc.Enable {
+				enableErr := svcHandler.Enable(svcCtx, svc.Name)
+				result := "success"
+				if enableErr != nil {
+					result = "error"
+					errs = append(errs, fmt.Errorf("failed to enable service %q: %w", svc.Name, enableErr))
+				}
+				serviceOperationsTotal.WithLabelValues(nodeName, "enable", result).Inc()
+			} else {
+				disableErr := svcHandler.Disable(svcCtx, svc.Name)
+				result := "success"
+				if disableErr != nil {
+					result = "error"
+					errs = append(errs, fmt.Errorf("failed to disable service %q: %w", svc.Name, disableErr))
+				}
+				serviceOperationsTotal.WithLabelValues(nodeName, "disable", result).Inc()
+			}
+
+			if svc.Arguments != "" {
+				if argsErr := svcHandler.SetArguments(svcCtx, svc.Name, svc.Arguments); argsErr != nil {
+					errs = append(errs, fmt.Errorf("failed to set service arguments for %q: %w", svc.Name, argsErr))
+				}
 			}
 		}
 

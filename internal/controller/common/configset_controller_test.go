@@ -403,4 +403,74 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(systemHandler.Service().(*mockServiceHandler).restartCalls).ToNot(HaveKey("chronyd"))
 		})
 	})
+
+	Context("When a service has a managed rc.conf.d file", func() {
+		ctx := context.Background()
+
+		It("should skip Enable/Disable/SetArguments when the rc.conf.d file is managed", func() {
+			sys := &mockSystemHandler{}
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			services := []commonv1.Service{
+				{Name: "unbound_exporter", Enable: true, Ensure: "running", Arguments: "some-args"},
+			}
+			files := []commonv1.File{
+				{Path: "/etc/rc.conf.d/unbound_exporter", Ensure: "file", Content: "unbound_exporter_host=localhost"},
+			}
+
+			err := r.handleServiceSet(ctx, "test-node", "default", services, files, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			svcMock := sys.Service().(*mockServiceHandler)
+			Expect(svcMock.enableCalls).NotTo(HaveKey("unbound_exporter"), "Enable must not be called when rc.conf.d file is managed")
+			Expect(svcMock.disableCalls).NotTo(HaveKey("unbound_exporter"), "Disable must not be called when rc.conf.d file is managed")
+			Expect(svcMock.setArgsCalls).NotTo(HaveKey("unbound_exporter"), "SetArguments must not be called when rc.conf.d file is managed")
+		})
+
+		It("should call Enable/Disable/SetArguments when the rc.conf.d file is not managed", func() {
+			sys := &mockSystemHandler{}
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			services := []commonv1.Service{
+				{Name: "unbound_exporter", Enable: true, Ensure: "running", Arguments: "some-args"},
+			}
+
+			err := r.handleServiceSet(ctx, "test-node", "default", services, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			svcMock := sys.Service().(*mockServiceHandler)
+			Expect(svcMock.enableCalls).To(HaveKey("unbound_exporter"), "Enable must be called when rc.conf.d file is not managed")
+			Expect(svcMock.setArgsCalls).To(HaveKey("unbound_exporter"), "SetArguments must be called when rc.conf.d file is not managed")
+		})
+
+		It("should skip Disable when the rc.conf.d file is managed and enable is false", func() {
+			sys := &mockSystemHandler{}
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			services := []commonv1.Service{
+				{Name: "myservice", Enable: false, Ensure: "stopped"},
+			}
+			files := []commonv1.File{
+				{Path: "/etc/rc.conf.d/myservice", Ensure: "file", Content: "myservice_enable=NO"},
+			}
+
+			err := r.handleServiceSet(ctx, "test-node", "default", services, files, nil)
+			Expect(err).NotTo(HaveOccurred())
+
+			svcMock := sys.Service().(*mockServiceHandler)
+			Expect(svcMock.disableCalls).NotTo(HaveKey("myservice"), "Disable must not be called when rc.conf.d file is managed")
+		})
+	})
 })
