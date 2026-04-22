@@ -300,6 +300,16 @@ func main() {
 		}
 	}
 
+	if err = mgr.Add(&sighupTrigger{
+		client:    client,
+		logger:    logger,
+		hostname:  hostname,
+		namespace: cfg.ControllerConfig.Namespace,
+	}); err != nil {
+		setupLog.Error(err, "unable to add SIGHUP trigger")
+		os.Exit(1)
+	}
+
 	//+kubebuilder:scaffold:builder
 
 	if err = mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
