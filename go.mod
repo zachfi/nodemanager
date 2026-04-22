@@ -3,6 +3,7 @@ module github.com/zachfi/nodemanager
 go 1.25.0
 
 require (
+	fyne.io/systray v1.12.0
 	github.com/drone/envsubst v1.0.3
 	github.com/go-ini/ini v1.67.0
 	github.com/go-logr/logr v1.4.3
@@ -29,7 +30,6 @@ require (
 )
 
 require (
-	fyne.io/systray v1.12.0 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
