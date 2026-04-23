@@ -31,7 +31,8 @@ type fstabEntry struct {
 // writeFstab renders the per-jail fstab to fstabPath.
 // jailRoot is the absolute path to the jail's root filesystem so that
 // JailPath values are resolved to their host-side mountpoints.
-func writeFstab(fstabPath, jailRoot string, mounts []freebsdv1.JailMount) error {
+// Returns true when the file pre-existed with different content (jail restart needed).
+func writeFstab(fstabPath, jailRoot string, mounts []freebsdv1.JailMount) (bool, error) {
 	entries := make([]fstabEntry, 0, len(mounts))
 	for _, m := range mounts {
 		fsType := m.Type
@@ -52,16 +53,19 @@ func writeFstab(fstabPath, jailRoot string, mounts []freebsdv1.JailMount) error 
 
 	var buf bytes.Buffer
 	if err := fstabTmpl.Execute(&buf, fstabData{Entries: entries}); err != nil {
-		return fmt.Errorf("rendering fstab: %w", err)
+		return false, fmt.Errorf("rendering fstab: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(fstabPath), 0o755); err != nil {
-		return fmt.Errorf("creating fstab directory: %w", err)
+		return false, fmt.Errorf("creating fstab directory: %w", err)
 	}
+
+	existing, readErr := os.ReadFile(fstabPath)
+
 	if err := os.WriteFile(fstabPath, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("writing fstab %s: %w", fstabPath, err)
+		return false, fmt.Errorf("writing fstab %s: %w", fstabPath, err)
 	}
-	return nil
+	return readErr == nil && !bytes.Equal(existing, buf.Bytes()), nil
 }
 
 // removeFstab deletes the per-jail fstab file if it exists.

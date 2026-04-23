@@ -365,6 +365,58 @@ func TestJailAnchorName(t *testing.T) {
 	})
 }
 
+func TestEnsureJail_ConfChangeCyclesJail(t *testing.T) {
+	// Jail is running; jail.conf exists with different content.
+	// EnsureJail must stop the jail so the controller restarts it with the
+	// updated configuration.
+	//
+	// IP matches the running jail, so cycleJailIfNetworkChanged won't stop it —
+	// the conf-change path must be the trigger.
+	jlsOut := `{"__version":"2","jail-information":{"jail":[` +
+		`{"jid":1,"hostname":"myjail","path":"/p","name":"myjail","state":"ACTIVE",` +
+		`"cpusetid":1,"ipv4_addrs":["192.0.2.1"],"ipv6_addrs":[]}` +
+		`]}}`
+
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@myjail", jlsOut}
+
+	j := testJail("myjail", "14.2-RELEASE")
+	j.Spec.Interface = "lo0"
+	j.Spec.Inet = "192.0.2.1" // matches running — no IP-based cycle
+
+	// Pre-write a stale conf so writeJailConf detects a change.
+	confPath := filepath.Join(m.confDir, "myjail.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("stale content"), 0o644))
+
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// jail -r must have been called due to the conf change.
+	jailCalls := exec.Recorder["jail"]
+	require.NotEmpty(t, jailCalls, "jail -r must be called when conf changes")
+	require.Equal(t, []string{"-r", "myjail"}, jailCalls[0])
+}
+
+func TestEnsureJail_ConfUnchangedNoExtraStop(t *testing.T) {
+	// Jail is running; jail.conf already matches the desired spec.
+	// No stop should be triggered by the conf-change path.
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+
+	j := testJail("stable", "14.2-RELEASE")
+	// Write the exact conf that EnsureJail would produce so it detects no change.
+	confPath := filepath.Join(m.confDir, "stable.conf")
+	_, err := writeJailConf(m.confDir, "stable",
+		filepath.Join(m.basePath, JailRootDir, "stable", "root"), "", j.Spec)
+	require.NoError(t, err)
+	_ = confPath
+
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@stable"}
+
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// jail -r must NOT have been called (conf unchanged, no IP to check).
+	require.Empty(t, exec.Recorder["jail"])
+}
+
 func TestDeleteJail_RemovesIPAliases(t *testing.T) {
 	// When spec has Interface + Inet/Inet6, DeleteJail must explicitly remove
 	// the IP aliases via ifconfig in case jail -r failed to clean them up.

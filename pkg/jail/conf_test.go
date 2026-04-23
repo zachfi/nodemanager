@@ -130,7 +130,7 @@ func TestWriteJailConf(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			err := writeJailConf(dir, tc.jailName, tc.jailRoot, tc.fstabPath, tc.spec)
+			_, err := writeJailConf(dir, tc.jailName, tc.jailRoot, tc.fstabPath, tc.spec)
 			require.NoError(t, err)
 
 			data, err := os.ReadFile(filepath.Join(dir, tc.jailName+".conf"))
@@ -154,7 +154,8 @@ func TestRemoveJailConf(t *testing.T) {
 	name := "todelete"
 
 	// Write a conf file then remove it.
-	require.NoError(t, writeJailConf(dir, name, "/jail/root", "", freebsdv1.JailSpec{Release: "14.2-RELEASE"}))
+	_, err := writeJailConf(dir, name, "/jail/root", "", freebsdv1.JailSpec{Release: "14.2-RELEASE"})
+	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(dir, name+".conf"))
 
 	require.NoError(t, removeJailConf(dir, name))

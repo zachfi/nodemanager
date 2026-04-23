@@ -56,7 +56,7 @@ func TestWriteFstab(t *testing.T) {
 			dir := t.TempDir()
 			fstabPath := filepath.Join(dir, "fstab")
 
-			err := writeFstab(fstabPath, tc.jailRoot, tc.mounts)
+			_, err := writeFstab(fstabPath, tc.jailRoot, tc.mounts)
 			require.NoError(t, err)
 
 			data, err := os.ReadFile(fstabPath)
@@ -76,7 +76,8 @@ func TestRemoveFstab(t *testing.T) {
 	path := filepath.Join(dir, "fstab")
 
 	mounts := []freebsdv1.JailMount{{HostPath: "/data", JailPath: "/mnt/data"}}
-	require.NoError(t, writeFstab(path, "/jail/root", mounts))
+	_, err := writeFstab(path, "/jail/root", mounts)
+	require.NoError(t, err)
 	require.FileExists(t, path)
 
 	require.NoError(t, removeFstab(path))

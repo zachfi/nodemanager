@@ -43,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
@@ -341,6 +342,9 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// WireGuard, configset apply results) don't cause a flood of reconciles.
 		Watches(&commonv1.ManagedNode{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsOnNodeChange(hostname)),
 			builder.WithPredicates(predicate.LabelChangedPredicate{})).
+		// Serialize ConfigSet reconciles so concurrent package installs from
+		// multiple ConfigSets matching the same node are not possible.
+		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
 }
 

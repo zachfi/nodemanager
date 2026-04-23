@@ -66,8 +66,10 @@ type jailConfData struct {
 }
 
 // writeJailConf renders and writes <confDir>/<name>.conf.
-// It creates the directory if necessary and overwrites any existing file.
-func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.JailSpec) error {
+// It returns true when the file already existed on disk with different content,
+// indicating that a running jail must be restarted to pick up the change.
+// A new file (first write) returns false — the jail hasn't started yet.
+func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.JailSpec) (bool, error) {
 	hostname := spec.Hostname
 	if hostname == "" {
 		hostname = name
@@ -87,18 +89,23 @@ func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.Jai
 
 	var buf bytes.Buffer
 	if err := jailConfTmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("rendering jail.conf for %s: %w", name, err)
+		return false, fmt.Errorf("rendering jail.conf for %s: %w", name, err)
 	}
 
 	if err := os.MkdirAll(confDir, 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", confDir, err)
+		return false, fmt.Errorf("creating %s: %w", confDir, err)
 	}
 
 	confPath := filepath.Join(confDir, name+".conf")
+	existing, readErr := os.ReadFile(confPath)
+
 	if err := os.WriteFile(confPath, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", confPath, err)
+		return false, fmt.Errorf("writing %s: %w", confPath, err)
 	}
-	return nil
+
+	// Only signal a restart-needed change when the file pre-existed with
+	// different content.  A brand-new file means the jail hasn't started yet.
+	return readErr == nil && !bytes.Equal(existing, buf.Bytes()), nil
 }
 
 // removeJailConf deletes <confDir>/<name>.conf if it exists.

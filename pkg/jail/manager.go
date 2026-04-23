@@ -191,10 +191,13 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 	}
 
 	// 5. Write per-jail fstab and ensure mountpoint directories exist.
+	var fstabChanged bool
 	fstabPath := ""
 	if len(j.Spec.Mounts) > 0 {
 		fstabPath = filepath.Join(m.basePath, JailRootDir, j.Name, "fstab")
-		if err := writeFstab(fstabPath, jailRoot, j.Spec.Mounts); err != nil {
+		var err error
+		fstabChanged, err = writeFstab(fstabPath, jailRoot, j.Spec.Mounts)
+		if err != nil {
 			return fmt.Errorf("writing fstab for %s: %w", j.Name, err)
 		}
 		for _, mount := range j.Spec.Mounts {
@@ -206,7 +209,8 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 	}
 
 	// 6. Write <confDir>/<name>.conf.
-	if err := writeJailConf(m.confDir, j.Name, jailRoot, fstabPath, j.Spec); err != nil {
+	confChanged, err := writeJailConf(m.confDir, j.Name, jailRoot, fstabPath, j.Spec)
+	if err != nil {
 		return fmt.Errorf("writing jail.conf for %s: %w", j.Name, err)
 	}
 
@@ -216,6 +220,13 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 		if err := m.EnsureAnchor(ctx, anchor, j.Spec.PF.Rules); err != nil {
 			return fmt.Errorf("syncing PF anchor %s for jail %s: %w", anchor, j.Name, err)
 		}
+	}
+
+	// Stop the jail when jail.conf or fstab changed so the controller restarts
+	// it with the new configuration.  A running jail reads both files only at
+	// start time.  Errors are ignored — the jail may not be running.
+	if confChanged || fstabChanged {
+		_ = m.StopJail(ctx, j.Name)
 	}
 
 	// 8. Stop the jail if it is running with stale network config.  A running
