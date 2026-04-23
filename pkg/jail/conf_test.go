@@ -67,11 +67,11 @@ func TestWriteJailConf(t *testing.T) {
 			spec: freebsdv1.JailSpec{
 				Release:   "14.2-RELEASE",
 				Interface: "em0",
-				Inet:      "192.168.1.10",
+				Inet:      "192.0.2.10",
 			},
 			want: []string{
 				`interface = "em0";`,
-				`ip4.addr = 192.168.1.10;`,
+				`ip4.addr = 192.0.2.10;`,
 			},
 			notWant: []string{"ip6.addr"},
 		},
@@ -82,12 +82,12 @@ func TestWriteJailConf(t *testing.T) {
 			spec: freebsdv1.JailSpec{
 				Release:   "14.2-RELEASE",
 				Interface: "vtnet0",
-				Inet:      "10.0.0.5",
+				Inet:      "192.0.2.5",
 				Inet6:     "2001:db8::5",
 			},
 			want: []string{
 				`interface = "vtnet0";`,
-				`ip4.addr = 10.0.0.5;`,
+				`ip4.addr = 192.0.2.5;`,
 				`ip6.addr = 2001:db8::5;`,
 				`ip6 = new;`,
 			},

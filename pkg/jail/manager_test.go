@@ -372,8 +372,8 @@ func TestDeleteJail_RemovesIPAliases(t *testing.T) {
 
 	j := testJail("gone", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "10.0.1.5/24"
-	j.Spec.Inet6 = "fd00::1/64"
+	j.Spec.Inet = "192.0.2.5/24"
+	j.Spec.Inet6 = "2001:db8::1/64"
 
 	confPath := filepath.Join(m.confDir, "gone.conf")
 	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
@@ -386,18 +386,18 @@ func TestDeleteJail_RemovesIPAliases(t *testing.T) {
 	// CIDR suffix must be stripped; both inet and inet6 must be removed.
 	ifcfgArgs := exec.Recorder["ifconfig"]
 	require.Len(t, ifcfgArgs, 2)
-	require.Equal(t, []string{"lo0", "inet", "10.0.1.5", "-alias"}, ifcfgArgs[0])
-	require.Equal(t, []string{"lo0", "inet6", "fd00::1", "-alias"}, ifcfgArgs[1])
+	require.Equal(t, []string{"lo0", "inet", "192.0.2.5", "-alias"}, ifcfgArgs[0])
+	require.Equal(t, []string{"lo0", "inet6", "2001:db8::1", "-alias"}, ifcfgArgs[1])
 }
 
 func TestEnsureJail_NetworkChangeCyclesJail(t *testing.T) {
 	// Jail is running with an old IP; spec has a new one.  EnsureJail must
 	// stop the jail so the controller will restart it with the updated conf.
 	//
-	// jls output shows the jail running with 10.0.0.5; spec says 10.0.0.6.
+	// jls output shows the jail running with 192.0.2.5; spec says 192.0.2.6.
 	jlsOut := `{"__version":"2","jail-information":{"jail":[` +
 		`{"jid":3,"hostname":"netjail","path":"/p","name":"netjail","state":"ACTIVE",` +
-		`"cpusetid":1,"ipv4_addrs":["10.0.0.5"],"ipv6_addrs":[]}` +
+		`"cpusetid":1,"ipv4_addrs":["192.0.2.5"],"ipv6_addrs":[]}` +
 		`]}}`
 
 	// Status sequence: Exists(jail)=found, Exists(root)=found, GetProperty=match.
@@ -407,7 +407,7 @@ func TestEnsureJail_NetworkChangeCyclesJail(t *testing.T) {
 
 	j := testJail("netjail", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "10.0.0.6"
+	j.Spec.Inet = "192.0.2.6"
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 
@@ -452,7 +452,7 @@ func TestEnsureJail_NetworkUnchangedNoRestart(t *testing.T) {
 	// Running jail already has the spec IP — no restart should be triggered.
 	jlsOut := `{"__version":"2","jail-information":{"jail":[` +
 		`{"jid":4,"hostname":"stable","path":"/p","name":"stable","state":"ACTIVE",` +
-		`"cpusetid":1,"ipv4_addrs":["10.0.0.5"],"ipv6_addrs":[]}` +
+		`"cpusetid":1,"ipv4_addrs":["192.0.2.5"],"ipv6_addrs":[]}` +
 		`]}}`
 
 	m, exec, _ := newTestManager(t, []int{0, 0, 0})
@@ -460,7 +460,7 @@ func TestEnsureJail_NetworkUnchangedNoRestart(t *testing.T) {
 
 	j := testJail("stable", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "10.0.0.5" // same as running
+	j.Spec.Inet = "192.0.2.5" // same as running
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 

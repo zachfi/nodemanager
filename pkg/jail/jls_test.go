@@ -10,8 +10,8 @@ import (
 
 // canned jls -v --libxo=json output with two running jails.
 const jlsTwo = `{"__version":"2","jail-information":{"jail":[` +
-	`{"jid":2,"hostname":"web01","path":"/usr/local/nodemanager/jails/web01/root","name":"web01","state":"ACTIVE","cpusetid":3,"ipv4_addrs":["10.0.0.10"],"ipv6_addrs":[]},` +
-	`{"jid":5,"hostname":"db01","path":"/usr/local/nodemanager/jails/db01/root","name":"db01","state":"ACTIVE","cpusetid":4,"ipv4_addrs":["10.0.0.20"],"ipv6_addrs":["2001:db8::20"]}` +
+	`{"jid":2,"hostname":"web01","path":"/usr/local/nodemanager/jails/web01/root","name":"web01","state":"ACTIVE","cpusetid":3,"ipv4_addrs":["192.0.2.10"],"ipv6_addrs":[]},` +
+	`{"jid":5,"hostname":"db01","path":"/usr/local/nodemanager/jails/db01/root","name":"db01","state":"ACTIVE","cpusetid":4,"ipv4_addrs":["192.0.2.20"],"ipv6_addrs":["2001:db8::20"]}` +
 	`]}}`
 
 // canned output with no jails running (empty array).
@@ -77,7 +77,7 @@ func TestListRunningJails_ParsedFields(t *testing.T) {
 	require.Equal(t, "web01", web.Hostname)
 	require.Equal(t, "/usr/local/nodemanager/jails/web01/root", web.Path)
 	require.Equal(t, "ACTIVE", web.State)
-	require.Equal(t, []string{"10.0.0.10"}, web.IPv4Addrs)
+	require.Equal(t, []string{"192.0.2.10"}, web.IPv4Addrs)
 	require.Empty(t, web.IPv6Addrs)
 
 	db := jails[1]
