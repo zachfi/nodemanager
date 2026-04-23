@@ -423,19 +423,22 @@ func TestEnsureJail_OrphanedIPAliasCleanedBeforeStart(t *testing.T) {
 	// jls returns no jails — nothing running.
 	jlsOut := `{"__version":"2","jail-information":{"jail":[]}}`
 
+	// Statuses 0,0,0 cover Exists(jailDataset), Exists(jailRootDataset), and
+	// GetProperty(origin) — the only calls where the exit code matters.
+	// jls and ifconfig draw from the empty queue (→ 0) and are best-effort.
 	m, exec, _ := newTestManager(t, []int{0, 0, 0})
 	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@gone", jlsOut}
 
 	j := testJail("gone", "14.2-RELEASE")
 	j.Spec.Interface = "lo1"
-	j.Spec.Inet6 = "fc20::301/128"
+	j.Spec.Inet6 = "2001:db8::1/128" // RFC 3849 documentation range
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 
 	// ifconfig must have been called to clear the (potentially orphaned) alias.
 	found := false
 	for _, args := range exec.Recorder["ifconfig"] {
-		if containsArg(args, "fc20::301") && containsArg(args, "-alias") {
+		if containsArg(args, "2001:db8::1") && containsArg(args, "-alias") {
 			found = true
 		}
 	}
