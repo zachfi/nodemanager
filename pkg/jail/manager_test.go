@@ -365,6 +365,76 @@ func TestJailAnchorName(t *testing.T) {
 	})
 }
 
+func TestDeleteJail_RemovesIPAliases(t *testing.T) {
+	// When spec has Interface + Inet/Inet6, DeleteJail must explicitly remove
+	// the IP aliases via ifconfig in case jail -r failed to clean them up.
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+
+	j := testJail("gone", "14.2-RELEASE")
+	j.Spec.Interface = "lo0"
+	j.Spec.Inet = "10.0.1.5/24"
+	j.Spec.Inet6 = "fd00::1/64"
+
+	confPath := filepath.Join(m.confDir, "gone.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
+	fstabPath := filepath.Join(m.basePath, JailRootDir, "gone", "fstab")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
+	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
+
+	require.NoError(t, m.DeleteJail(context.Background(), j))
+
+	// CIDR suffix must be stripped; both inet and inet6 must be removed.
+	ifcfgArgs := exec.Recorder["ifconfig"]
+	require.Len(t, ifcfgArgs, 2)
+	require.Equal(t, []string{"lo0", "inet", "10.0.1.5", "-alias"}, ifcfgArgs[0])
+	require.Equal(t, []string{"lo0", "inet6", "fd00::1", "-alias"}, ifcfgArgs[1])
+}
+
+func TestEnsureJail_NetworkChangeCyclesJail(t *testing.T) {
+	// Jail is running with an old IP; spec has a new one.  EnsureJail must
+	// stop the jail so the controller will restart it with the updated conf.
+	//
+	// jls output shows the jail running with 10.0.0.5; spec says 10.0.0.6.
+	jlsOut := `{"__version":"2","jail-information":{"jail":[` +
+		`{"jid":3,"hostname":"netjail","path":"/p","name":"netjail","state":"ACTIVE",` +
+		`"cpusetid":1,"ipv4_addrs":["10.0.0.5"],"ipv6_addrs":[]}` +
+		`]}}`
+
+	// Status sequence: Exists(jail)=found, Exists(root)=found, GetProperty=match.
+	// jls and StopJail draw from the empty queue (→ 0, success).
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@netjail", jlsOut}
+
+	j := testJail("netjail", "14.2-RELEASE")
+	j.Spec.Interface = "lo0"
+	j.Spec.Inet = "10.0.0.6"
+
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// jail -r must have been called to cycle the jail.
+	require.Equal(t, []string{"-r", "netjail"}, exec.Recorder["jail"][0])
+}
+
+func TestEnsureJail_NetworkUnchangedNoRestart(t *testing.T) {
+	// Running jail already has the spec IP — no restart should be triggered.
+	jlsOut := `{"__version":"2","jail-information":{"jail":[` +
+		`{"jid":4,"hostname":"stable","path":"/p","name":"stable","state":"ACTIVE",` +
+		`"cpusetid":1,"ipv4_addrs":["10.0.0.5"],"ipv6_addrs":[]}` +
+		`]}}`
+
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@stable", jlsOut}
+
+	j := testJail("stable", "14.2-RELEASE")
+	j.Spec.Interface = "lo0"
+	j.Spec.Inet = "10.0.0.5" // same as running
+
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// jail -r must NOT have been called.
+	require.Empty(t, exec.Recorder["jail"])
+}
+
 func TestDeleteJail_ExplicitDevfsUnmount(t *testing.T) {
 	// devfs at <jailRoot>/dev must always be explicitly umounted, independent
 	// of what mount -p reports.

@@ -218,6 +218,13 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 		}
 	}
 
+	// 8. Stop the jail if it is running with stale network config.  A running
+	// jail ignores jail.conf changes; it must be cycled for the new IP to take
+	// effect.  The controller's StartJail call will restart it on the next pass.
+	if err := m.cycleJailIfNetworkChanged(ctx, j); err != nil {
+		return fmt.Errorf("checking network change for %s: %w", j.Name, err)
+	}
+
 	return nil
 }
 
@@ -228,6 +235,20 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	// Stop the jail gracefully before tearing down its filesystem. Ignore
 	// errors here — the jail may already be stopped.
 	_ = m.StopJail(ctx, j.Name)
+
+	// Remove IP aliases from the interface.  jail(8) removes these on a
+	// clean stop; we repeat explicitly in case StopJail failed or the jail
+	// was never fully started.  Errors are intentionally ignored.
+	if j.Spec.Interface != "" {
+		if j.Spec.Inet != "" {
+			_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
+				"inet", stripCIDR(j.Spec.Inet), "-alias")
+		}
+		if j.Spec.Inet6 != "" {
+			_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
+				"inet6", stripCIDR(j.Spec.Inet6), "-alias")
+		}
+	}
 
 	// Flush the PF anchor regardless of whether PF is currently configured in
 	// the spec — the user may have removed the field before deleting. This is
@@ -459,4 +480,49 @@ func (m *manager) unmountAll(ctx context.Context, jailRoot string) {
 	for _, mp := range mounts {
 		_ = m.exec.SimpleRunCommand(ctx, "umount", "-f", mp)
 	}
+}
+
+// cycleJailIfNetworkChanged stops the jail when its running IPv4/IPv6
+// addresses differ from spec.  A running jail ignores jail.conf rewrites; it
+// must be stopped so the controller's StartJail call picks up the new config.
+// The function is a no-op when no network address is declared in spec.
+func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jail) error {
+	if j.Spec.Inet == "" && j.Spec.Inet6 == "" {
+		return nil
+	}
+
+	jails, err := listRunningJails(ctx, m.exec)
+	if err != nil {
+		return fmt.Errorf("listing running jails: %w", err)
+	}
+
+	for _, running := range jails {
+		if running.Name != j.Name {
+			continue
+		}
+
+		wantV4 := stripCIDR(j.Spec.Inet)
+		wantV6 := stripCIDR(j.Spec.Inet6)
+
+		gotV4 := ""
+		if len(running.IPv4Addrs) > 0 {
+			gotV4 = running.IPv4Addrs[0]
+		}
+		gotV6 := ""
+		if len(running.IPv6Addrs) > 0 {
+			gotV6 = running.IPv6Addrs[0]
+		}
+
+		if wantV4 != gotV4 || wantV6 != gotV6 {
+			_ = m.StopJail(ctx, j.Name)
+		}
+		return nil
+	}
+	return nil
+}
+
+// stripCIDR removes the prefix length from an IP address string, returning
+// the bare IP.  Returns the input unchanged if no "/" is present.
+func stripCIDR(addr string) string {
+	return strings.SplitN(addr, "/", 2)[0]
 }
