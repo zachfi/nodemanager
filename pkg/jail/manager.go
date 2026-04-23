@@ -238,17 +238,8 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 
 	// Remove IP aliases from the interface.  jail(8) removes these on a
 	// clean stop; we repeat explicitly in case StopJail failed or the jail
-	// was never fully started.  Errors are intentionally ignored.
-	if j.Spec.Interface != "" {
-		if j.Spec.Inet != "" {
-			_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
-				"inet", stripCIDR(j.Spec.Inet), "-alias")
-		}
-		if j.Spec.Inet6 != "" {
-			_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
-				"inet6", stripCIDR(j.Spec.Inet6), "-alias")
-		}
-	}
+	// was never fully started.
+	m.removeIPAliases(ctx, j)
 
 	// Flush the PF anchor regardless of whether PF is currently configured in
 	// the spec — the user may have removed the field before deleting. This is
@@ -483,8 +474,10 @@ func (m *manager) unmountAll(ctx context.Context, jailRoot string) {
 }
 
 // cycleJailIfNetworkChanged stops the jail when its running IPv4/IPv6
-// addresses differ from spec.  A running jail ignores jail.conf rewrites; it
-// must be stopped so the controller's StartJail call picks up the new config.
+// addresses differ from spec, then removes any lingering IP aliases so
+// jail -c can add them cleanly.  It also removes aliases when the jail is
+// not running — aliases can be stranded after a crash or kill, causing
+// jail -c to fail with "File exists".
 // The function is a no-op when no network address is declared in spec.
 func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jail) error {
 	if j.Spec.Inet == "" && j.Spec.Inet6 == "" {
@@ -513,12 +506,36 @@ func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jai
 			gotV6 = running.IPv6Addrs[0]
 		}
 
-		if wantV4 != gotV4 || wantV6 != gotV6 {
-			_ = m.StopJail(ctx, j.Name)
+		if wantV4 == gotV4 && wantV6 == gotV6 {
+			// Running with the correct config — nothing to do.
+			return nil
 		}
-		return nil
+
+		// Config changed: stop so the controller restarts with the new conf.
+		_ = m.StopJail(ctx, j.Name)
+		break
 	}
+
+	// Jail is not running (never started, crashed, or we just stopped it).
+	// Remove any orphaned IP aliases so jail -c can add them without error.
+	m.removeIPAliases(ctx, j)
 	return nil
+}
+
+// removeIPAliases removes the IPv4 and IPv6 aliases declared in spec from the
+// interface.  Errors are intentionally ignored — the alias may not exist.
+func (m *manager) removeIPAliases(ctx context.Context, j freebsdv1.Jail) {
+	if j.Spec.Interface == "" {
+		return
+	}
+	if j.Spec.Inet != "" {
+		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
+			"inet", stripCIDR(j.Spec.Inet), "-alias")
+	}
+	if j.Spec.Inet6 != "" {
+		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
+			"inet6", stripCIDR(j.Spec.Inet6), "-alias")
+	}
 }
 
 // stripCIDR removes the prefix length from an IP address string, returning

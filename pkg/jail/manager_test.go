@@ -415,6 +415,36 @@ func TestEnsureJail_NetworkChangeCyclesJail(t *testing.T) {
 	require.Equal(t, []string{"-r", "netjail"}, exec.Recorder["jail"][0])
 }
 
+func TestEnsureJail_OrphanedIPAliasCleanedBeforeStart(t *testing.T) {
+	// Jail is NOT running (e.g. crashed) but its IP alias is still on the
+	// interface.  EnsureJail must remove the alias so jail -c does not fail
+	// with "ifconfig: ioctl (SIOCAIFADDR): File exists".
+	//
+	// jls returns no jails — nothing running.
+	jlsOut := `{"__version":"2","jail-information":{"jail":[]}}`
+
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@gone", jlsOut}
+
+	j := testJail("gone", "14.2-RELEASE")
+	j.Spec.Interface = "lo1"
+	j.Spec.Inet6 = "fc20::301/128"
+
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	// ifconfig must have been called to clear the (potentially orphaned) alias.
+	found := false
+	for _, args := range exec.Recorder["ifconfig"] {
+		if containsArg(args, "fc20::301") && containsArg(args, "-alias") {
+			found = true
+		}
+	}
+	require.True(t, found, "orphaned inet6 alias must be removed before jail -c")
+
+	// jail -r must NOT have been called (jail was not running).
+	require.Empty(t, exec.Recorder["jail"])
+}
+
 func TestEnsureJail_NetworkUnchangedNoRestart(t *testing.T) {
 	// Running jail already has the spec IP — no restart should be triggered.
 	jlsOut := `{"__version":"2","jail-information":{"jail":[` +
