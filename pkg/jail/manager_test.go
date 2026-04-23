@@ -223,9 +223,9 @@ func TestDeleteJail(t *testing.T) {
 
 	// Force-unmount of the jail root ZFS dataset before destroy.
 	require.Equal(t, []string{"umount", "-f", "zroot/nodemanager/jails/gone/root"}, calls[0])
-	// Existence check then recursive destroy of the jail container and its children.
+	// Existence check then recursive force-destroy of the jail container and its children.
 	require.Equal(t, []string{"list", "zroot/nodemanager/jails/gone"}, calls[1])
-	require.Equal(t, []string{"destroy", "-r", "zroot/nodemanager/jails/gone"}, calls[2])
+	require.Equal(t, []string{"destroy", "-r", "-f", "zroot/nodemanager/jails/gone"}, calls[2])
 	// Existence check then snapshot cleanup on the release.
 	require.Equal(t, []string{"list", "zroot/nodemanager/releases/14.2-RELEASE@gone"}, calls[3])
 	require.Equal(t, []string{"destroy", "zroot/nodemanager/releases/14.2-RELEASE@gone"}, calls[4])
@@ -365,6 +365,56 @@ func TestJailAnchorName(t *testing.T) {
 	})
 }
 
+func TestDeleteJail_ExplicitDevfsUnmount(t *testing.T) {
+	// devfs at <jailRoot>/dev must always be explicitly umounted, independent
+	// of what mount -p reports.
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+
+	j := testJail("gone", "14.2-RELEASE")
+	confPath := filepath.Join(m.confDir, "gone.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
+	fstabPath := filepath.Join(m.basePath, JailRootDir, "gone", "fstab")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
+	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
+
+	require.NoError(t, m.DeleteJail(context.Background(), j))
+
+	devfsPath := filepath.Join(m.basePath, JailRootDir, "gone", "root", "dev")
+	found := false
+	for _, args := range exec.Recorder["umount"] {
+		if containsArg(args, devfsPath) {
+			found = true
+		}
+	}
+	require.True(t, found, "devfs at <jailRoot>/dev must be explicitly unmounted")
+}
+
+func TestDeleteJail_WithMounts_ExplicitNullfsUnmount(t *testing.T) {
+	// nullfs mounts declared in spec must be explicitly umounted by path.
+	m, exec, _ := newTestManager(t, []int{0, 0, 0})
+
+	j := testJail("gone", "14.2-RELEASE")
+	j.Spec.Mounts = []freebsdv1.JailMount{
+		{HostPath: "/data/www", JailPath: "/var/www", ReadOnly: true},
+	}
+	confPath := filepath.Join(m.confDir, "gone.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
+	fstabPath := filepath.Join(m.basePath, JailRootDir, "gone", "fstab")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
+	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
+
+	require.NoError(t, m.DeleteJail(context.Background(), j))
+
+	nullfsPath := filepath.Join(m.basePath, JailRootDir, "gone", "root", "var", "www")
+	found := false
+	for _, args := range exec.Recorder["umount"] {
+		if containsArg(args, nullfsPath) {
+			found = true
+		}
+	}
+	require.True(t, found, "nullfs mount at spec JailPath must be explicitly unmounted")
+}
+
 func TestEnsureJail_OrphanedSnapshot(t *testing.T) {
 	// Snapshot exists (orphaned from a previous partial delete) but the jail
 	// root dataset does not.  EnsureJail must reuse the snapshot rather than
@@ -399,9 +449,10 @@ func TestDeleteJail_SnapshotAlreadyGone(t *testing.T) {
 	// Snapshot was already cleaned up (e.g. manually) before this delete runs.
 	// DeleteJail must succeed without attempting a second destroy.
 	//
-	// Status positions: jail(0), pfctl(1), mount(2), zfs-umount(3),
-	//   Exists(jailDataset)=0(found)(4), destroy-r(5), Exists(snapshot)=1(gone)(6).
-	statuses := []int{0, 0, 0, 0, 0, 0, 1}
+	// Status positions: jail(0), pfctl(1), umount-dev(2), mount-p(3),
+	//   zfs-umount(4), Exists(jailDataset)=found(5), destroy-r-f(6),
+	//   Exists(snapshot)=gone(7).
+	statuses := []int{0, 0, 0, 0, 0, 0, 0, 1}
 	m, exec, _ := newTestManager(t, statuses)
 
 	j := testJail("gone", "14.2-RELEASE")

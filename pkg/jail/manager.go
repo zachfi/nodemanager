@@ -246,19 +246,24 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 		return err
 	}
 
-	// Unmount any remaining nullfs/devfs mounts under the jail root before
-	// destroying ZFS datasets.  jail -r normally handles this, but if the
-	// jail was never started or the stop failed, mounts may linger.
 	jailRoot := filepath.Join(m.basePath, JailRootDir, j.Name, "root")
-	if err := m.unmountAll(ctx, jailRoot); err != nil {
-		return fmt.Errorf("unmounting jail filesystems for %s: %w", j.Name, err)
+
+	// Explicitly unmount devfs (always at <root>/dev) and any nullfs mounts
+	// declared in the spec.  jail(8) removes these on a clean stop, but they
+	// linger when the jail was never fully started or jail -r returned an
+	// error.  All calls are best-effort.
+	_ = m.exec.SimpleRunCommand(ctx, "umount", "-f", filepath.Join(jailRoot, "dev"))
+	for _, mnt := range j.Spec.Mounts {
+		_ = m.exec.SimpleRunCommand(ctx, "umount", "-f", filepath.Join(jailRoot, mnt.JailPath))
 	}
 
+	// Scan for any remaining mounts not covered above and unmount them.
+	m.unmountAll(ctx, jailRoot)
+
 	// Force-unmount the jail root ZFS dataset before the recursive destroy.
-	// zfs destroy refuses to proceed on a mounted dataset, and the POSIX
-	// umount above only covers nullfs/devfs children — the ZFS dataset itself
-	// needs zfs-umount.  Errors are ignored: the dataset may already be
-	// unmounted or may not exist yet.
+	// The POSIX umount calls above handle devfs/nullfs children; the ZFS
+	// dataset itself needs zfs-umount.  Error is ignored — the dataset may
+	// already be unmounted or may not exist.
 	jailRootDataset := filepath.Join(m.dataset, JailRootDir, j.Name, "root")
 	_ = m.exec.SimpleRunCommand(ctx, "/sbin/zfs", "umount", "-f", jailRootDataset)
 
@@ -416,15 +421,17 @@ func (m *manager) copyHostFiles(jailRoot string) error {
 	return nil
 }
 
-// unmountAll finds and unmounts all filesystems mounted under jailRoot.
-// Mounts are unmounted deepest-first to avoid "device busy" errors.
-func (m *manager) unmountAll(ctx context.Context, jailRoot string) error {
+// unmountAll scans for any filesystems mounted strictly under jailRoot
+// (not jailRoot itself, which is a ZFS dataset handled by zfs-umount) and
+// unmounts them deepest-first.  Each umount is best-effort — a single
+// failure does not abort the rest, since the subsequent zfs destroy -r -f
+// is the authoritative cleanup step.
+func (m *manager) unmountAll(ctx context.Context, jailRoot string) {
 	output, _, err := m.exec.RunCommand(ctx, "mount", "-p")
 	if err != nil {
-		return fmt.Errorf("listing mounts: %w", err)
+		return
 	}
 
-	// Collect mountpoints under jailRoot.
 	prefix := jailRoot + "/"
 	var mounts []string
 	for _, line := range strings.Split(output, "\n") {
@@ -433,12 +440,12 @@ func (m *manager) unmountAll(ctx context.Context, jailRoot string) error {
 			continue
 		}
 		mp := fields[1]
-		if mp == jailRoot || strings.HasPrefix(mp, prefix) {
+		if strings.HasPrefix(mp, prefix) {
 			mounts = append(mounts, mp)
 		}
 	}
 
-	// Sort in reverse so deeper paths are unmounted first.
+	// Sort deepest-first to avoid "device busy" when a parent is still mounted.
 	slices.SortFunc(mounts, func(a, b string) int {
 		if len(a) > len(b) {
 			return -1
@@ -450,10 +457,6 @@ func (m *manager) unmountAll(ctx context.Context, jailRoot string) error {
 	})
 
 	for _, mp := range mounts {
-		if err := m.exec.SimpleRunCommand(ctx, "umount", "-f", mp); err != nil {
-			return fmt.Errorf("unmounting %s: %w", mp, err)
-		}
+		_ = m.exec.SimpleRunCommand(ctx, "umount", "-f", mp)
 	}
-
-	return nil
 }

@@ -184,5 +184,5 @@ func TestDestroyDataset(t *testing.T) {
 	require.Equal(t, []string{"destroy", "zroot/nodemanager/jails/classic"}, m.Recorder[zfsCmd][0])
 
 	require.NoError(t, z.DestroyDatasetRecursive(ctx, "zroot/nodemanager/jails/classic"))
-	require.Equal(t, []string{"destroy", "-r", "zroot/nodemanager/jails/classic"}, m.Recorder[zfsCmd][1])
+	require.Equal(t, []string{"destroy", "-r", "-f", "zroot/nodemanager/jails/classic"}, m.Recorder[zfsCmd][1])
 }

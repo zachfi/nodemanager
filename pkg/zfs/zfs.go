@@ -101,5 +101,7 @@ func (z *zfsManager) DestroyDataset(ctx context.Context, dataset string) error {
 }
 
 func (z *zfsManager) DestroyDatasetRecursive(ctx context.Context, dataset string) error {
-	return z.exec.SimpleRunCommand(ctx, zfsCmd, "destroy", "-r", dataset)
+	// -f forces unmount of any mounted ZFS filesystems within the hierarchy
+	// so that a mounted dataset never silently blocks the destroy.
+	return z.exec.SimpleRunCommand(ctx, zfsCmd, "destroy", "-r", "-f", dataset)
 }
