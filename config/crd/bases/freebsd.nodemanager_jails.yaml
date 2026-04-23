@@ -121,6 +121,16 @@ spec:
                       type: string
                     type: array
                 type: object
+              reconcilePeriod:
+                description: |-
+                  ReconcilePeriod controls how often the controller re-enforces desired
+                  jail state (running, network config, mounts) even without a Kubernetes
+                  event.  This is the primary liveness enforcement mechanism — if the
+                  jail stops unexpectedly it will be restarted within this window.  Use
+                  shorter values on servers (e.g. "15m") and longer values on
+                  resource-constrained hosts (e.g. "2h").  Empty or zero means
+                  event-driven only.
+                type: string
               release:
                 description: Release is the FreeBSD release version to use (e.g. "14.2-RELEASE").
                 type: string

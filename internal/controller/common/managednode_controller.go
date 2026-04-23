@@ -157,6 +157,15 @@ func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{RequeueAfter: time.Until(next)}, nil
 	}
 
+	if node.Spec.ReconcilePeriod != "" {
+		period, err := time.ParseDuration(node.Spec.ReconcilePeriod)
+		if err != nil {
+			r.logger.Warn("invalid reconcilePeriod, skipping periodic requeue", "node", node.Name, "err", err)
+		} else if period > 0 {
+			return ctrl.Result{RequeueAfter: period}, nil
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -779,7 +788,6 @@ func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (tim
 
 	return time.Time{}, nil
 }
-
 
 // getKubernetesNode returns the k8s Node with the given hostname, or nil if not found.
 func (r *ManagedNodeReconciler) getKubernetesNode(ctx context.Context, hostname string) (*corev1.Node, error) {

@@ -80,8 +80,14 @@ type ConfigSetConfig struct {
 	// It is not exposed as a CLI flag (the top-level namespace flag is used instead).
 	Namespace  string           `json:"-"`
 	FileBucket FileBucketConfig `json:"fileBucket,omitempty"`
+	// ReconcilePeriod controls how often the ConfigSet controller re-applies
+	// desired state even without a Kubernetes event.  Set to match the node's
+	// reconcilePeriod for consistent convergence behaviour.  Zero means
+	// event-driven only.
+	ReconcilePeriod time.Duration `json:"reconcilePeriod,omitempty"`
 }
 
 func (c *ConfigSetConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	c.FileBucket.RegisterFlagsAndApplyDefaults(prefix+".file-bucket", f)
+	f.DurationVar(&c.ReconcilePeriod, prefix+".reconcile-period", 0, "How often to re-apply ConfigSets regardless of events (0 = event-driven only).")
 }

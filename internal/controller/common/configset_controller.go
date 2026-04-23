@@ -254,6 +254,9 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	r.notifyResources(ctx, &configSet)
 
+	if r.cfg.ReconcilePeriod > 0 {
+		return ctrl.Result{RequeueAfter: r.cfg.ReconcilePeriod}, nil
+	}
 	return ctrl.Result{}, nil
 }
 

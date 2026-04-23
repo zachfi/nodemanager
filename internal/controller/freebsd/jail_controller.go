@@ -285,6 +285,15 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{RequeueAfter: time.Until(next)}, nil
 	}
 
+	if j.Spec.ReconcilePeriod != "" {
+		period, err := time.ParseDuration(j.Spec.ReconcilePeriod)
+		if err != nil {
+			r.logger.Warn("invalid reconcilePeriod, skipping periodic requeue", "jail", j.Name, "err", err)
+		} else if period > 0 {
+			return ctrl.Result{RequeueAfter: period}, nil
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 

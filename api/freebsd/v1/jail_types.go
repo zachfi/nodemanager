@@ -95,6 +95,16 @@ type JailSpec struct {
 	// children.max = 5;).
 	// +optional
 	Parameters map[string]string `json:"parameters,omitempty"`
+
+	// ReconcilePeriod controls how often the controller re-enforces desired
+	// jail state (running, network config, mounts) even without a Kubernetes
+	// event.  This is the primary liveness enforcement mechanism — if the
+	// jail stops unexpectedly it will be restarted within this window.  Use
+	// shorter values on servers (e.g. "15m") and longer values on
+	// resource-constrained hosts (e.g. "2h").  Empty or zero means
+	// event-driven only.
+	// +optional
+	ReconcilePeriod string `json:"reconcilePeriod,omitempty"`
 }
 
 // JailPF holds PF firewall rules loaded into a per-jail anchor.

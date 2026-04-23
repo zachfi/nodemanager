@@ -37,6 +37,12 @@ type ManagedNodeSpec struct {
 	Domain    string        `json:"domain,omitempty"`
 	Upgrade   Upgrade       `json:"upgrade,omitempty"`
 	WireGuard WireGuardSpec `json:"wireGuard,omitempty"`
+	// ReconcilePeriod is how often the controller re-enforces desired state
+	// even without a Kubernetes event.  Use shorter values on servers (e.g.
+	// "30m") and longer values on resource-constrained nodes (e.g. "2h" for
+	// a Raspberry Pi).  Empty or zero means event-driven only.
+	// +optional
+	ReconcilePeriod string `json:"reconcilePeriod,omitempty"`
 }
 
 type Upgrade struct {
