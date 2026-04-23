@@ -67,8 +67,9 @@ func zfsCalls(exec *handler.MockExecHandler) [][]string {
 func TestEnsureJail_NewJail(t *testing.T) {
 	// Status sequence for ZFS operations in EnsureJail:
 	//   Exists(jailDataset)     → 1 (not found) → Ensure creates it (status 0)
-	//   Exists(jailRootDataset) → 1 (not found) → Snapshot (0) + Clone (0)
-	statuses := []int{1, 0, 1, 0, 0}
+	//   Exists(jailRootDataset) → 1 (not found)
+	//   Exists(snapshot)        → 1 (not found) → Snapshot (0) + Clone (0)
+	statuses := []int{1, 0, 1, 1, 0, 0}
 	m, exec, releases := newTestManager(t, statuses)
 
 	j := testJail("classic", "14.2-RELEASE")
@@ -78,17 +79,18 @@ func TestEnsureJail_NewJail(t *testing.T) {
 	require.Equal(t, []string{"14.2-RELEASE"}, releases.ensured)
 
 	calls := zfsCalls(exec)
-	require.GreaterOrEqual(t, len(calls), 5)
+	require.GreaterOrEqual(t, len(calls), 6)
 
 	// Check jail container dataset creation.
 	require.Equal(t, []string{"list", "zroot/nodemanager/jails/classic"}, calls[0])
 	require.Equal(t, []string{"create", "zroot/nodemanager/jails/classic"}, calls[1])
 
-	// Check snapshot and clone for jail root.
+	// Check snapshot existence probe, then snapshot and clone for jail root.
 	require.Equal(t, []string{"list", "zroot/nodemanager/jails/classic/root"}, calls[2])
-	require.Equal(t, []string{"snapshot", "zroot/nodemanager/releases/14.2-RELEASE@classic"}, calls[3])
+	require.Equal(t, []string{"list", "zroot/nodemanager/releases/14.2-RELEASE@classic"}, calls[3])
+	require.Equal(t, []string{"snapshot", "zroot/nodemanager/releases/14.2-RELEASE@classic"}, calls[4])
 
-	cloneArgs := calls[4]
+	cloneArgs := calls[5]
 	require.Equal(t, "clone", cloneArgs[0])
 	require.Equal(t, "zroot/nodemanager/releases/14.2-RELEASE@classic", cloneArgs[len(cloneArgs)-2])
 	require.Equal(t, "zroot/nodemanager/jails/classic/root", cloneArgs[len(cloneArgs)-1])
@@ -129,8 +131,9 @@ func TestEnsureJail_AlreadyExists(t *testing.T) {
 func TestEnsureJail_ReleaseDrift(t *testing.T) {
 	// Root exists but was cloned from 14.2-RELEASE; spec now wants 16.2-RELEASE.
 	// Expected ZFS calls: Exists(jail)=found, Exists(root)=found, GetProperty=old origin,
-	// stop (noop), DestroyRecursive(root), DestroyDataset(snapshot), Snapshot, Clone.
-	statuses := []int{0, 0, 0, 0, 0, 0, 0, 0}
+	// stop (noop), DestroyRecursive(root), DestroyDataset(snapshot),
+	// Exists(new snapshot)=not found, Snapshot, Clone.
+	statuses := []int{0, 0, 0, 0, 0, 0, 1, 0, 0}
 	m, exec, releases := newTestManager(t, statuses)
 	// Pad empty outputs for the two Exists calls, then the old origin for GetProperty.
 	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@web01"}
@@ -153,7 +156,7 @@ func TestEnsureJail_ReleaseDrift(t *testing.T) {
 }
 
 func TestEnsureJail_WithMounts(t *testing.T) {
-	statuses := []int{1, 0, 1, 0, 0}
+	statuses := []int{1, 0, 1, 1, 0, 0}
 	m, _, _ := newTestManager(t, statuses)
 
 	j := testJail("web", "14.2-RELEASE")
@@ -196,7 +199,8 @@ func TestInstalledRelease(t *testing.T) {
 }
 
 func TestDeleteJail(t *testing.T) {
-	// Exists(jailDataset) → 0 (found) → DestroyDatasetRecursive (0) → DestroyDataset snapshot (0)
+	// All commands default to status 0; statuses queue covers the first three
+	// (jail -r, pfctl, mount -p) so the rest draw from the empty queue (→ 0).
 	statuses := []int{0, 0, 0}
 	m, exec, _ := newTestManager(t, statuses)
 
@@ -215,14 +219,16 @@ func TestDeleteJail(t *testing.T) {
 	require.NoFileExists(t, fstabPath)
 
 	calls := zfsCalls(exec)
-	require.GreaterOrEqual(t, len(calls), 3)
+	require.GreaterOrEqual(t, len(calls), 5)
 
-	// Exists check for the jail container.
-	require.Equal(t, []string{"list", "zroot/nodemanager/jails/gone"}, calls[0])
-	// Recursive destroy of the jail container and its children.
-	require.Equal(t, []string{"destroy", "-r", "zroot/nodemanager/jails/gone"}, calls[1])
-	// Snapshot cleanup on the release.
-	require.Equal(t, []string{"destroy", "zroot/nodemanager/releases/14.2-RELEASE@gone"}, calls[2])
+	// Force-unmount of the jail root ZFS dataset before destroy.
+	require.Equal(t, []string{"umount", "-f", "zroot/nodemanager/jails/gone/root"}, calls[0])
+	// Existence check then recursive destroy of the jail container and its children.
+	require.Equal(t, []string{"list", "zroot/nodemanager/jails/gone"}, calls[1])
+	require.Equal(t, []string{"destroy", "-r", "zroot/nodemanager/jails/gone"}, calls[2])
+	// Existence check then snapshot cleanup on the release.
+	require.Equal(t, []string{"list", "zroot/nodemanager/releases/14.2-RELEASE@gone"}, calls[3])
+	require.Equal(t, []string{"destroy", "zroot/nodemanager/releases/14.2-RELEASE@gone"}, calls[4])
 }
 
 func TestStartStopRestartJail(t *testing.T) {
@@ -294,7 +300,7 @@ func TestDeleteJailStopsFirst(t *testing.T) {
 }
 
 func TestEnsureJail_WithPF(t *testing.T) {
-	statuses := []int{1, 0, 1, 0, 0, 0} // ZFS ops + pfctl success
+	statuses := []int{1, 0, 1, 1, 0, 0, 0} // ZFS ops (with snapshot exists check) + pfctl success
 	m, exec, _ := newTestManager(t, statuses)
 
 	j := testJail("web", "14.2-RELEASE")
@@ -317,7 +323,7 @@ func TestEnsureJail_WithPF(t *testing.T) {
 }
 
 func TestEnsureJail_NoPF(t *testing.T) {
-	statuses := []int{1, 0, 1, 0, 0}
+	statuses := []int{1, 0, 1, 1, 0, 0}
 	m, exec, _ := newTestManager(t, statuses)
 
 	j := testJail("plain", "14.2-RELEASE")
@@ -357,6 +363,63 @@ func TestJailAnchorName(t *testing.T) {
 	t.Run("custom anchor name", func(t *testing.T) {
 		require.Equal(t, "custom/web01", jailAnchorName("web01", &freebsdv1.JailPF{AnchorName: "custom/web01"}))
 	})
+}
+
+func TestEnsureJail_OrphanedSnapshot(t *testing.T) {
+	// Snapshot exists (orphaned from a previous partial delete) but the jail
+	// root dataset does not.  EnsureJail must reuse the snapshot rather than
+	// failing with "snapshot already exists".
+	//
+	// Status sequence:
+	//   Exists(jailDataset)     → 1 (not found) → create (0)
+	//   Exists(jailRootDataset) → 1 (not found)
+	//   Exists(snapshot)        → 0 (found! orphaned) → skip Snapshot, Clone (0)
+	statuses := []int{1, 0, 1, 0, 0}
+	m, exec, releases := newTestManager(t, statuses)
+
+	j := testJail("dhcp1", "14.4-RELEASE")
+	require.NoError(t, m.EnsureJail(context.Background(), j))
+
+	require.Equal(t, []string{"14.4-RELEASE"}, releases.ensured)
+
+	calls := zfsCalls(exec)
+	ops := make([]string, len(calls))
+	for i, c := range calls {
+		ops[i] = c[0]
+	}
+	// Snapshot must NOT be re-created when it already exists.
+	for _, op := range ops {
+		require.NotEqual(t, "snapshot", op, "snapshot must not be re-created when it already exists")
+	}
+	// Clone must still be created from the existing snapshot.
+	require.Contains(t, ops, "clone")
+}
+
+func TestDeleteJail_SnapshotAlreadyGone(t *testing.T) {
+	// Snapshot was already cleaned up (e.g. manually) before this delete runs.
+	// DeleteJail must succeed without attempting a second destroy.
+	//
+	// Status positions: jail(0), pfctl(1), mount(2), zfs-umount(3),
+	//   Exists(jailDataset)=0(found)(4), destroy-r(5), Exists(snapshot)=1(gone)(6).
+	statuses := []int{0, 0, 0, 0, 0, 0, 1}
+	m, exec, _ := newTestManager(t, statuses)
+
+	j := testJail("gone", "14.2-RELEASE")
+	confPath := filepath.Join(m.confDir, "gone.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
+	fstabPath := filepath.Join(m.basePath, JailRootDir, "gone", "fstab")
+	require.NoError(t, os.MkdirAll(filepath.Dir(fstabPath), 0o755))
+	require.NoError(t, os.WriteFile(fstabPath, []byte("# fstab"), 0o644))
+
+	require.NoError(t, m.DeleteJail(context.Background(), j))
+
+	// Only the recursive jail dataset destroy should appear; no snapshot destroy.
+	calls := zfsCalls(exec)
+	for _, c := range calls {
+		if c[0] == "destroy" {
+			require.Contains(t, c, "-r", "only recursive jail-dataset destroy expected; snapshot was already gone")
+		}
+	}
 }
 
 // helpers

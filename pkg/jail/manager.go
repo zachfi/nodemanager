@@ -171,8 +171,14 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 		releaseDataset := filepath.Join(m.dataset, ReleaseRootDir, j.Spec.Release)
 		snapshot := fmt.Sprintf("%s@%s", releaseDataset, j.Name)
 
-		if err := m.zfs.Snapshot(ctx, releaseDataset, j.Name); err != nil {
-			return fmt.Errorf("snapshotting release for %s: %w", j.Name, err)
+		snapshotExists, err := m.zfs.Exists(ctx, snapshot)
+		if err != nil {
+			return fmt.Errorf("checking release snapshot for %s: %w", j.Name, err)
+		}
+		if !snapshotExists {
+			if err := m.zfs.Snapshot(ctx, releaseDataset, j.Name); err != nil {
+				return fmt.Errorf("snapshotting release for %s: %w", j.Name, err)
+			}
 		}
 		if err := m.zfs.Clone(ctx, snapshot, jailRootDataset, "mountpoint="+jailRoot); err != nil {
 			return fmt.Errorf("cloning jail root for %s: %w", j.Name, err)
@@ -248,6 +254,14 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 		return fmt.Errorf("unmounting jail filesystems for %s: %w", j.Name, err)
 	}
 
+	// Force-unmount the jail root ZFS dataset before the recursive destroy.
+	// zfs destroy refuses to proceed on a mounted dataset, and the POSIX
+	// umount above only covers nullfs/devfs children — the ZFS dataset itself
+	// needs zfs-umount.  Errors are ignored: the dataset may already be
+	// unmounted or may not exist yet.
+	jailRootDataset := filepath.Join(m.dataset, JailRootDir, j.Name, "root")
+	_ = m.exec.SimpleRunCommand(ctx, "/sbin/zfs", "umount", "-f", jailRootDataset)
+
 	// Recursively destroy jails/<name> and all child datasets (including root).
 	jailDataset := filepath.Join(m.dataset, JailRootDir, j.Name)
 	exists, err := m.zfs.Exists(ctx, jailDataset)
@@ -263,8 +277,14 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	// Clean up the release snapshot created for this jail.
 	if j.Spec.Release != "" {
 		snapshot := fmt.Sprintf("%s/%s/%s@%s", m.dataset, ReleaseRootDir, j.Spec.Release, j.Name)
-		if err := m.zfs.DestroyDataset(ctx, snapshot); err != nil {
-			return fmt.Errorf("destroying release snapshot %s: %w", snapshot, err)
+		snapshotExists, err := m.zfs.Exists(ctx, snapshot)
+		if err != nil {
+			return fmt.Errorf("checking release snapshot %s: %w", snapshot, err)
+		}
+		if snapshotExists {
+			if err := m.zfs.DestroyDataset(ctx, snapshot); err != nil {
+				return fmt.Errorf("destroying release snapshot %s: %w", snapshot, err)
+			}
 		}
 	}
 
