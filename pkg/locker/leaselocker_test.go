@@ -107,7 +107,7 @@ func TestLeaseLocker_Lock(t *testing.T) {
 			// Initialize the leaseLocker with the fake client
 			locker := NewLeaseLocker(ctx, logger, cfg, fakeClient, testReq.Namespace, testID)
 
-			err := locker.Lock(ctx, testReq)
+			err := locker.Lock(ctx, testReq) // uses config default TTL
 
 			if tt.expectError {
 				if err == nil {
@@ -221,6 +221,22 @@ func TestLeaseLocker_Unlock(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLeaseLocker_LockFor(t *testing.T) {
+	// LockFor should write the provided duration, not the config default.
+	customTTL := 25 * time.Hour
+	fakeClient := fake.NewSimpleClientset()
+	cfg := Config{}
+	cfg.RegisterFlagsAndApplyDefaults("", &flag.FlagSet{})
+
+	lkr := NewLeaseLocker(ctx, logger, cfg, fakeClient, testReq.Namespace, testID)
+	require.NoError(t, lkr.LockFor(ctx, testReq, customTTL))
+
+	lease, err := fakeClient.CoordinationV1().Leases(testReq.Namespace).Get(ctx, testReq.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, int32(customTTL.Seconds()), *lease.Spec.LeaseDurationSeconds)
+	require.Equal(t, testID, *lease.Spec.HolderIdentity)
 }
 
 // TestLockConflict specifically tests the update retry logic against an injected conflict.

@@ -463,10 +463,11 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
 	}
 
-	next, err = r.nextUpgradeTime(node.Spec.Upgrade.Schedule)
+	schedExpr, err := cronexpr.Parse(node.Spec.Upgrade.Schedule)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, fmt.Errorf("failed to parse upgrade schedule: %w", err)
 	}
+	next = schedExpr.Next(time.Now().Add(-r.cfg.ForgivenessPeriod))
 
 	last, err = r.lastUpgradeTime(node)
 	if err != nil {
@@ -482,7 +483,8 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 			Namespace: node.Namespace,
 		}
 
-		// If we have the lock, assume we have just upgraded.
+		// If we hold the lock from a previous upgrade, release it so the next
+		// group member can take its turn.
 		if r.locker.Locked(ctx, req) {
 			if err := r.locker.Unlock(ctx, req); err != nil {
 				r.logger.Warn("failed to release upgrade lock", "lease", req, "err", err)
@@ -530,8 +532,17 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	// Proceed with the upgrade
 
 	if node.Spec.Upgrade.Group != "" {
-		err = r.locker.Lock(ctx, req)
+		// TTL spans until the next schedule occurrence so at most one group
+		// member upgrades per slot.  Other members see the lock as held and
+		// skip gracefully rather than retrying with backoff.
+		lockTTL := time.Until(schedExpr.Next(time.Now()))
+		err = r.locker.LockFor(ctx, req, lockTTL)
 		if err != nil {
+			if k8serrors.IsConflict(err) {
+				r.logger.Info("upgrade group lock held by another node, skipping this slot",
+					"group", node.Spec.Upgrade.Group, "node", node.Name)
+				return next, nil
+			}
 			return time.Time{}, err
 		}
 	}
@@ -769,14 +780,6 @@ func (r *ManagedNodeReconciler) lastUpgradeTime(node *commonv1.ManagedNode) (tim
 	return time.Time{}, nil
 }
 
-func (r *ManagedNodeReconciler) nextUpgradeTime(schedule string) (time.Time, error) {
-	cron, err := cronexpr.Parse(schedule)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse schedule as cron expression: %w", err)
-	}
-
-	return cron.Next(time.Now().Add(-r.cfg.ForgivenessPeriod)), nil
-}
 
 // getKubernetesNode returns the k8s Node with the given hostname, or nil if not found.
 func (r *ManagedNodeReconciler) getKubernetesNode(ctx context.Context, hostname string) (*corev1.Node, error) {

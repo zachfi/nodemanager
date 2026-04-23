@@ -26,6 +26,7 @@ import (
 	"github.com/gorhill/cronexpr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -299,19 +300,20 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 		return time.Time{}, fmt.Errorf("parsing jail update delay: %w", err)
 	}
 
-	cron, err := cronexpr.Parse(j.Spec.Update.Schedule)
+	schedExpr, err := cronexpr.Parse(j.Spec.Update.Schedule)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parsing jail update schedule: %w", err)
 	}
 
 	const forgiveness = time.Minute
-	next := cron.Next(time.Now().Add(-forgiveness))
+	next := schedExpr.Next(time.Now().Add(-forgiveness))
 
 	var lockReq types.NamespacedName
 	if j.Spec.Update.Group != "" {
 		lockReq = types.NamespacedName{Name: j.Spec.Update.Group, Namespace: j.Namespace}
 
-		// If we hold the lock, we've just finished an update — release and requeue.
+		// If we hold the lock from a previous update, release it so the next
+		// group member can take its turn.
 		if r.locker.Locked(ctx, lockReq) {
 			if err := r.locker.Unlock(ctx, lockReq); err != nil {
 				r.logger.Warn("failed to release jail update lock", "lease", lockReq, "err", err)
@@ -337,7 +339,13 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	r.logger.Info("running freebsd-update", "jail", j.Name)
 
 	if j.Spec.Update.Group != "" {
-		if err := r.locker.Lock(ctx, lockReq); err != nil {
+		lockTTL := time.Until(schedExpr.Next(time.Now()))
+		if err := r.locker.LockFor(ctx, lockReq, lockTTL); err != nil {
+			if apierrors.IsConflict(err) {
+				r.logger.Info("jail update group lock held by another member, skipping this slot",
+					"group", j.Spec.Update.Group, "jail", j.Name)
+				return next, nil
+			}
 			return time.Time{}, fmt.Errorf("acquiring jail update lock for %s: %w", j.Name, err)
 		}
 	}

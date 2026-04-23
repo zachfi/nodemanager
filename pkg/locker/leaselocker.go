@@ -36,6 +36,10 @@ func NewLeaseLocker(ctx context.Context, logger *slog.Logger, cfg Config, client
 }
 
 func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error {
+	return l.LockFor(ctx, req, l.cfg.LeaseDuration)
+}
+
+func (l *leaseLocker) LockFor(ctx context.Context, req types.NamespacedName, duration time.Duration) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -44,7 +48,7 @@ func (l *leaseLocker) Lock(ctx context.Context, req types.NamespacedName) error 
 		b                    = backoff.New(ctx, l.cfg.Backoff)
 		leaseInterface       = l.clientset.CoordinationV1().Leases(req.Namespace)
 		currentMicroTime     = metav1.NewMicroTime(time.Now())
-		leaseDurationSeconds = int32(l.cfg.LeaseDuration.Seconds())
+		leaseDurationSeconds = int32(duration.Seconds())
 		lockData             = coordinationv1.LeaseSpec{
 			HolderIdentity:       &l.id,
 			LeaseDurationSeconds: &leaseDurationSeconds,
