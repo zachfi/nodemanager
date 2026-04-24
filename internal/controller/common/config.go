@@ -37,6 +37,9 @@ type ControllerConfig struct {
 	SecureMetrics        bool
 	EnableHTTP2          bool
 	Namespace            string
+	// GomplatePath is the path to the gomplate binary. Defaults to "gomplate"
+	// (resolved via PATH). Override when gomplate is not on the PATH.
+	GomplatePath string
 
 	ManagedNode  ManagedNodeConfig
 	ConfigSet    ConfigSetConfig
@@ -53,6 +56,7 @@ func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.
 	f.BoolVar(&c.EnableHTTP2, "enable-http2", false, "If set, HTTP/2 will be enabled for the metrics and webhook servers")
 
 	f.StringVar(&c.Namespace, "namespace", "nodemanager", "The namespace to operate within")
+	f.StringVar(&c.GomplatePath, "gomplate-path", "gomplate", "Path to the gomplate binary (override when gomplate is not on PATH).")
 
 	c.ManagedNode.RegisterFlagsAndApplyDefaults("managednode", f)
 	c.ConfigSet.RegisterFlagsAndApplyDefaults("configset", f)
@@ -85,6 +89,8 @@ type ConfigSetConfig struct {
 	// reconcilePeriod for consistent convergence behaviour.  Zero means
 	// event-driven only.
 	ReconcilePeriod time.Duration `json:"reconcilePeriod,omitempty"`
+	// GomplatePath is propagated from ControllerConfig at startup; not a CLI flag.
+	GomplatePath string `json:"-"`
 }
 
 func (c *ConfigSetConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {

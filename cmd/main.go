@@ -263,6 +263,7 @@ func main() {
 	}
 
 	cfg.ControllerConfig.ConfigSet.Namespace = cfg.ControllerConfig.Namespace
+	cfg.ControllerConfig.ConfigSet.GomplatePath = cfg.ControllerConfig.GomplatePath
 	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {

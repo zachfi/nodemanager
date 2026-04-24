@@ -1166,7 +1166,7 @@ func (r *ConfigSetReconciler) buildTemplate(ctx context.Context, template string
 		return nil, err
 	}
 
-	command := "gomplate"
+	command := r.cfg.GomplatePath
 	arg := []string{
 		"-i",
 		template,
