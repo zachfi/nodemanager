@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -392,6 +393,8 @@ func collectNetworkInterfaces() map[string]commonv1.NetworkInterface {
 		}
 
 		if len(ni.IPv4) > 0 || len(ni.IPv6) > 0 {
+			slices.Sort(ni.IPv4)
+			slices.Sort(ni.IPv6)
 			result[iface.Name] = ni
 		}
 	}
@@ -435,6 +438,12 @@ func collectSSHHostKeys(ctx context.Context, exec handler.ExecHandler, hostname 
 			Fingerprint:     fields[5],
 		})
 	}
+	slices.SortFunc(keys, func(a, b commonv1.SSHHostKey) int {
+		if a.Algorithm != b.Algorithm {
+			return a.Algorithm - b.Algorithm
+		}
+		return a.FingerprintType - b.FingerprintType
+	})
 	return keys
 }
 
