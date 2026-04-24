@@ -222,6 +222,12 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 		}
 	}
 
+	// 8. Register the jail with FreeBSD's rc.d system so it starts on boot
+	// independently of nodemanager.
+	if err := ensureJailRCService(ctx, m.exec, j.Name, m.confDir); err != nil {
+		return fmt.Errorf("registering rc.d service for jail %s: %w", j.Name, err)
+	}
+
 	// Stop the jail when jail.conf or fstab changed so the controller restarts
 	// it with the new configuration.  A running jail reads both files only at
 	// start time.  Errors are ignored — the jail may not be running.
@@ -257,6 +263,11 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	// a best-effort cleanup; errors are logged but do not block deletion.
 	anchor := jailAnchorName(j.Name, j.Spec.PF)
 	_ = m.FlushAnchor(ctx, anchor)
+
+	// Deregister from rc.d so the jail is not started on the next boot.
+	if err := removeJailRCService(ctx, m.exec, j.Name); err != nil {
+		return fmt.Errorf("deregistering rc.d service for jail %s: %w", j.Name, err)
+	}
 
 	// Remove config files so the jail cannot be started accidentally
 	// during teardown.
