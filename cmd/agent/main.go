@@ -98,7 +98,7 @@ func runSubscribe() {
 	})
 }
 
-func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string, onStatus func(bool)) error {
+func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string, onStatus func(bool), onActivity func()) error {
 	// Connect to D-Bus for desktop notifications.
 	desk, err := newDesktop(logger)
 	if err != nil {
@@ -144,6 +144,9 @@ func subscribe(ctx context.Context, logger *slog.Logger, socketPath, user string
 			return fmt.Errorf("recv: %w", err)
 		}
 
+		if onActivity != nil {
+			onActivity()
+		}
 		handleEvent(ctx, logger, desk, client, user, event)
 	}
 }

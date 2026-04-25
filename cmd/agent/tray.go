@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"log/slog"
 	"os"
+	"time"
 
 	"fyne.io/systray"
 )
@@ -20,7 +22,9 @@ type subscribeConfig struct {
 
 func runTray(ctx context.Context, cancel context.CancelFunc, logger *slog.Logger, cfg subscribeConfig) {
 	onReady := func() {
-		systray.SetIcon(systemIcon())
+		idleIcon := systemIcon()
+		activeIcon := withActivityDot(idleIcon)
+		systray.SetIcon(idleIcon)
 		systray.SetTooltip("nodemanager agent")
 
 		statusItem := systray.AddMenuItem("Connecting…", "")
@@ -38,6 +42,7 @@ func runTray(ctx context.Context, cancel context.CancelFunc, logger *slog.Logger
 		}()
 
 		go func() {
+			var revertTimer *time.Timer
 			onStatus := func(connected bool) {
 				if connected {
 					statusItem.SetTitle("● Connected")
@@ -45,7 +50,16 @@ func runTray(ctx context.Context, cancel context.CancelFunc, logger *slog.Logger
 					statusItem.SetTitle("○ Disconnected")
 				}
 			}
-			if err := subscribe(ctx, logger, cfg.socketPath, cfg.user, onStatus); err != nil {
+			onActivity := func() {
+				systray.SetIcon(activeIcon)
+				if revertTimer != nil {
+					revertTimer.Stop()
+				}
+				revertTimer = time.AfterFunc(2*time.Second, func() {
+					systray.SetIcon(idleIcon)
+				})
+			}
+			if err := subscribe(ctx, logger, cfg.socketPath, cfg.user, onStatus, onActivity); err != nil {
 				logger.Error("agent exited with error", "err", err)
 			}
 			cancel()
@@ -93,6 +107,36 @@ func generatedIcon() []byte {
 			img.Set(x, y, c)
 		}
 	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+// withActivityDot returns a copy of the icon PNG with a small amber dot drawn
+// in the bottom-right corner to indicate reconciliation activity.
+func withActivityDot(iconData []byte) []byte {
+	src, err := png.Decode(bytes.NewReader(iconData))
+	if err != nil {
+		return iconData
+	}
+
+	b := src.Bounds()
+	img := image.NewRGBA(b)
+	draw.Draw(img, b, src, b.Min, draw.Src)
+
+	// Draw a filled circle in the bottom-right corner.
+	dotColor := color.RGBA{R: 245, G: 166, B: 35, A: 255} // amber
+	radius := max(b.Dx()/5, 3)
+	cx := b.Max.X - radius - 1
+	cy := b.Max.Y - radius - 1
+	for y := cy - radius; y <= cy+radius; y++ {
+		for x := cx - radius; x <= cx+radius; x++ {
+			if (x-cx)*(x-cx)+(y-cy)*(y-cy) <= radius*radius {
+				img.Set(x, y, dotColor)
+			}
+		}
+	}
+
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, img)
 	return buf.Bytes()
