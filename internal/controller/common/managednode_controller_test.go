@@ -445,4 +445,208 @@ var _ = Describe("ManagedNode Controller", func() {
 			Expect(mn.Annotations).To(HaveKey(common.AnnotationUpgradeHold))
 		})
 	})
+
+	Context("When the managed node has a force upgrade annotation and no schedule", func() {
+		const resourceName = "test-force-node"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			By("creating the ManagedNode with the force annotation and no schedule")
+			mn := &commonv1.ManagedNode{}
+			err := k8sClient.Get(ctx, typeNamespacedName, mn)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+						Annotations: map[string]string{
+							common.AnnotationUpgradeForce: "true",
+						},
+					},
+					Spec: commonv1.ManagedNodeSpec{
+						Domain: "example.com",
+					},
+				})).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			mn := &commonv1.ManagedNode{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, mn); err == nil {
+				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
+			}
+		})
+
+		It("should run upgrade and remove the force annotation", func() {
+			sys := &mockSystemHandler{}
+			sys.Node().(*mockNodeHandler).hostname = resourceName
+			controllerReconciler := &ManagedNodeReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    sys,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking upgrade and reboot were called")
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(1))
+			Expect(sys.Node().(*mockNodeHandler).rebootCalls).To(Equal(1))
+
+			By("checking the force annotation was removed")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
+			Expect(mn.Annotations).NotTo(HaveKey(common.AnnotationUpgradeForce))
+
+			By("checking status.lastUpgrade was set")
+			Expect(mn.Status.LastUpgrade).NotTo(BeNil())
+			Expect(mn.Status.LastUpgrade.Time).To(BeTemporally("~", time.Now(), 5*time.Second))
+		})
+	})
+
+	Context("When the managed node has a force upgrade annotation with an upgrade group", func() {
+		const resourceName = "test-force-group-node"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			By("creating the ManagedNode with force annotation and upgrade group")
+			mn := &commonv1.ManagedNode{}
+			err := k8sClient.Get(ctx, typeNamespacedName, mn)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+						Annotations: map[string]string{
+							common.AnnotationUpgradeForce: "true",
+						},
+					},
+					Spec: commonv1.ManagedNodeSpec{
+						Domain: "example.com",
+						Upgrade: commonv1.Upgrade{
+							Group: "emergency",
+						},
+					},
+				})).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			mn := &commonv1.ManagedNode{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, mn); err == nil {
+				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
+			}
+			lease := &coordinationv1.Lease{}
+			leaseName := types.NamespacedName{Name: "emergency", Namespace: "default"}
+			if err := k8sClient.Get(ctx, leaseName, lease); err == nil {
+				Expect(k8sClient.Delete(ctx, lease)).To(Succeed())
+			}
+		})
+
+		It("should acquire the group lock, upgrade, and remove the force annotation", func() {
+			sys := &mockSystemHandler{}
+			sys.Node().(*mockNodeHandler).hostname = resourceName
+			controllerReconciler := &ManagedNodeReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    sys,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking upgrade and reboot were called")
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(1))
+			Expect(sys.Node().(*mockNodeHandler).rebootCalls).To(Equal(1))
+
+			By("checking the group lock was acquired")
+			leaseName := types.NamespacedName{Name: "emergency", Namespace: "default"}
+			Expect(controllerReconciler.locker.Locked(ctx, leaseName)).To(BeTrue())
+
+			By("checking the force annotation was removed")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
+			Expect(mn.Annotations).NotTo(HaveKey(common.AnnotationUpgradeForce))
+
+			By("checking a second reconcile releases the lock without re-upgrading")
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(1))
+			Expect(controllerReconciler.locker.Locked(ctx, leaseName)).To(BeFalse())
+		})
+	})
+
+	Context("When the managed node has both hold and force annotations", func() {
+		const resourceName = "test-hold-force-node"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{Name: resourceName, Namespace: "default"}
+
+		BeforeEach(func() {
+			By("creating the ManagedNode with both hold and force annotations")
+			mn := &commonv1.ManagedNode{}
+			err := k8sClient.Get(ctx, typeNamespacedName, mn)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &commonv1.ManagedNode{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      resourceName,
+						Namespace: "default",
+						Annotations: map[string]string{
+							common.AnnotationUpgradeHold:  "true",
+							common.AnnotationUpgradeForce: "true",
+						},
+					},
+					Spec: commonv1.ManagedNodeSpec{
+						Domain: "example.com",
+					},
+				})).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			mn := &commonv1.ManagedNode{}
+			if err := k8sClient.Get(ctx, typeNamespacedName, mn); err == nil {
+				Expect(k8sClient.Delete(ctx, mn)).To(Succeed())
+			}
+		})
+
+		It("should not upgrade because hold takes precedence over force", func() {
+			sys := &mockSystemHandler{}
+			sys.Node().(*mockNodeHandler).hostname = resourceName
+			controllerReconciler := &ManagedNodeReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				tracer:    noop.NewTracerProvider().Tracer("test"),
+				logger:    logger,
+				system:    sys,
+				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
+				clientset: clientset,
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+			}
+
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("checking upgrade was not called")
+			Expect(sys.Node().(*mockNodeHandler).upgradeCalls).To(Equal(0))
+
+			By("checking both annotations are still present")
+			mn := &commonv1.ManagedNode{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, mn)).To(Succeed())
+			Expect(mn.Annotations).To(HaveKey(common.AnnotationUpgradeHold))
+			Expect(mn.Annotations).To(HaveKey(common.AnnotationUpgradeForce))
+		})
+	})
 })

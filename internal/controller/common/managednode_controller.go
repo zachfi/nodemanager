@@ -465,44 +465,19 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return time.Time{}, nil
 	}
 
-	// Check if we are a node that performs upgrades
-	if node.Spec.Upgrade.Schedule == "" {
-		r.logger.Debug("managed node has no upgrade schedule")
-		return time.Time{}, nil
-	}
-
-	if node.Spec.Upgrade.Delay == "" {
-		r.logger.Info("managed node has no upgrade delay")
-		return time.Time{}, nil
-	}
-
-	delay, err = time.ParseDuration(node.Spec.Upgrade.Delay)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
-	}
-
-	schedExpr, err := cronexpr.Parse(node.Spec.Upgrade.Schedule)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("failed to parse upgrade schedule: %w", err)
-	}
-	next = schedExpr.Next(time.Now().Add(-r.cfg.ForgivenessPeriod))
-
-	last, err = r.lastUpgradeTime(node)
-	if err != nil {
-		return time.Time{}, err
-	}
+	_, forced := node.Annotations[common.AnnotationUpgradeForce]
 
 	var req types.NamespacedName
 
-	// Only lock if we have an upgrade group set
+	// Release the upgrade group lock from a previous upgrade before evaluating
+	// any schedule or delay gates. This ensures a node always releases its slot
+	// even when it has no schedule (e.g. after a forced upgrade).
 	if node.Spec.Upgrade.Group != "" {
 		req = types.NamespacedName{
 			Name:      node.Spec.Upgrade.Group,
 			Namespace: node.Namespace,
 		}
 
-		// If we hold the lock from a previous upgrade, release it so the next
-		// group member can take its turn.
 		if r.locker.Locked(ctx, req) {
 			if err := r.locker.Unlock(ctx, req); err != nil {
 				r.logger.Warn("failed to release upgrade lock", "lease", req, "err", err)
@@ -511,22 +486,62 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		}
 	}
 
-	// Skip an upgrade if an upgrade has already happened within the delay window.
-	if !last.IsZero() && time.Since(last) < delay {
-		return next, nil
+	if !forced {
+		// Check if we are a node that performs upgrades
+		if node.Spec.Upgrade.Schedule == "" {
+			r.logger.Debug("managed node has no upgrade schedule")
+			return time.Time{}, nil
+		}
+
+		if node.Spec.Upgrade.Delay == "" {
+			r.logger.Info("managed node has no upgrade delay")
+			return time.Time{}, nil
+		}
+
+		delay, err = time.ParseDuration(node.Spec.Upgrade.Delay)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse upgrade delay: %w", err)
+		}
 	}
 
-	r.logger.Info("next upgrade time", "schedule", node.Spec.Upgrade.Schedule, "until", time.Until(next))
+	// Parse the cron schedule when present — used for next-time computation and
+	// for sizing the group lock TTL.
+	var schedExpr *cronexpr.Expression
+	if node.Spec.Upgrade.Schedule != "" {
+		schedExpr, err = cronexpr.Parse(node.Spec.Upgrade.Schedule)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("failed to parse upgrade schedule: %w", err)
+		}
+		next = schedExpr.Next(time.Now().Add(-r.cfg.ForgivenessPeriod))
+	}
 
-	// Check if next is within the forgiveness period
-	if time.Since(next) < r.cfg.ForgivenessPeriod {
-		// If the next upgrade time is less than a minute in the past, we execute immediately.
-	} else if time.Until(next) < r.cfg.ForgivenessPeriod {
-		// If the upgrade time is less than a minute in the future, requeue and let controller-runtime wake us.
-		return next, nil
+	if !forced {
+		last, err = r.lastUpgradeTime(node)
+		if err != nil {
+			return time.Time{}, err
+		}
+	}
+
+	if !forced {
+		// Skip an upgrade if an upgrade has already happened within the delay window.
+		if !last.IsZero() && time.Since(last) < delay {
+			return next, nil
+		}
+
+		r.logger.Info("next upgrade time", "schedule", node.Spec.Upgrade.Schedule, "until", time.Until(next))
+
+		// Check if next is within the forgiveness period
+		if time.Since(next) < r.cfg.ForgivenessPeriod {
+			// If the next upgrade time is less than a minute in the past, we execute immediately.
+		} else if time.Until(next) < r.cfg.ForgivenessPeriod {
+			// If the upgrade time is less than a minute in the future, requeue and let controller-runtime wake us.
+			return next, nil
+		} else {
+			// If we are outside of the minute range in either direction, return the time which we should check again.
+			return next, nil
+		}
 	} else {
-		// If we are outside of the minute range in either direction, return the time which we should check again.
-		return next, nil
+		r.logger.Info("forced upgrade annotation set, bypassing schedule and delay checks", "node", node.Name)
 	}
 
 	// If notification is enabled, gate the upgrade on agent approval.
@@ -551,9 +566,18 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 	if node.Spec.Upgrade.Group != "" {
 		// TTL spans until the next schedule occurrence so at most one group
-		// member upgrades per slot.  Other members see the lock as held and
-		// skip gracefully rather than retrying with backoff.
-		lockTTL := time.Until(schedExpr.Next(time.Now()))
+		// member upgrades per slot. When there is no schedule (force-only path),
+		// use a fixed window large enough to cover the upgrade + reboot cycle.
+		// Enforce a minimum of 1s so leaseDurationSeconds is never 0.
+		var lockTTL time.Duration
+		if schedExpr != nil {
+			lockTTL = time.Until(schedExpr.Next(time.Now()))
+		} else {
+			lockTTL = 30 * time.Minute
+		}
+		if lockTTL < time.Second {
+			lockTTL = time.Second
+		}
 		err = r.locker.LockFor(ctx, req, lockTTL)
 		if err != nil {
 			if k8serrors.IsConflict(err) {
@@ -628,6 +652,21 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 		return r.Status().Update(ctx, &fresh)
 	}); err != nil {
 		return time.Time{}, fmt.Errorf("failed to set last upgrade time: %w", err)
+	}
+
+	// Remove the force annotation before rebooting so the next reconciliation
+	// after boot uses normal schedule-based logic.
+	if forced {
+		if err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			var fresh commonv1.ManagedNode
+			if err := r.Get(ctx, types.NamespacedName{Name: node.Name, Namespace: node.Namespace}, &fresh); err != nil {
+				return err
+			}
+			delete(fresh.Annotations, common.AnnotationUpgradeForce)
+			return r.Update(ctx, &fresh)
+		}); err != nil {
+			r.logger.Warn("failed to remove force upgrade annotation", "err", err)
+		}
 	}
 
 	if r.notifier != nil {
