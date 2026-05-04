@@ -545,7 +545,8 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	}
 
 	// If notification is enabled, gate the upgrade on agent approval.
-	if r.notifier != nil {
+	// Forced upgrades skip this — the annotation itself is the approval signal.
+	if r.notifier != nil && !forced {
 		if !r.notifier.HasSubscribers() {
 			r.logger.Info("no notification agent connected, skipping upgrade until agent is available")
 			return next, nil
@@ -583,6 +584,10 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 			if k8serrors.IsConflict(err) {
 				r.logger.Info("upgrade group lock held by another node, skipping this slot",
 					"group", node.Spec.Upgrade.Group, "node", node.Name)
+				if forced {
+					// Requeue to retry once the holding node releases its slot.
+					return time.Now().Add(2 * time.Minute), nil
+				}
 				return next, nil
 			}
 			return time.Time{}, err
