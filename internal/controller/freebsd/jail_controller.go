@@ -361,13 +361,19 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 
 	if err := r.manager.StopJail(ctx, j.Name); err != nil {
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "stop", "error").Inc()
+		if j.Spec.Update.Group != "" {
+			if unlockErr := r.locker.Unlock(ctx, lockReq); unlockErr != nil {
+				r.logger.Warn("failed to release jail update lock after stop failure", "lease", lockReq, "err", unlockErr)
+			}
+		}
 		return time.Time{}, fmt.Errorf("stopping jail for update: %w", err)
 	}
 	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "stop", "success").Inc()
 
 	updateErr := r.manager.UpdateJail(ctx, jailRoot)
 
-	if startErr := r.manager.StartJail(ctx, j.Name); startErr != nil {
+	startErr := r.manager.StartJail(ctx, j.Name)
+	if startErr != nil {
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
 		r.logger.Error("failed to restart jail after update", "jail", j.Name, "err", startErr)
 	} else {
@@ -379,6 +385,10 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 		return time.Time{}, fmt.Errorf("freebsd-update failed for jail %s: %w", j.Name, updateErr)
 	}
 	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "update", "success").Inc()
+
+	if startErr != nil {
+		return time.Time{}, fmt.Errorf("restarting jail after update: %w", startErr)
+	}
 
 	metaNow := metav1.Now()
 	key := types.NamespacedName{Name: j.Name, Namespace: j.Namespace}
