@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math/rand"
 	"os"
 	"os/exec"
 	"slices"
@@ -42,6 +43,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -141,7 +143,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	node, err := createOrGetNode(ctx, r.logger, r, r, req)
 	if err != nil {
 		r.logger.Error("failed to create or get managed node", "err", err)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{}, err
 	}
 
 	err = nodeLabelMatch(node, configSet.Labels)
@@ -152,7 +154,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.removeConfigSetStatus(ctx, configSet.Name)
 		err = nil // for the span defer
 		// Requeue so we retry after the ManagedNode reconciler sets labels.
-		return ctrl.Result{RequeueAfter: 2 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: jitterDuration(2 * time.Minute)}, nil
 	}
 
 	nodeName := node.Name
@@ -161,7 +163,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	conflicts, err = r.detectConflicts(ctx, &configSet, node)
 	if err != nil {
 		r.logger.Error("failed to detect conflicts", "configset", configSet.Name, "err", err)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{}, err
 	}
 	if len(conflicts) > 0 {
 		span.AddEvent("resource conflicts detected",
@@ -177,7 +179,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			r.logger.Error("failed to update conflict condition on configset", "err", statusErr)
 		}
 		err = nil
-		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: jitterDuration(1 * time.Minute)}, nil
 	}
 
 	// Clear any previously recorded conflict condition now that the conflict is resolved.
@@ -247,18 +249,29 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if err != nil {
-		// Use a fixed requeue instead of returning the error (which triggers
-		// exponential backoff and can delay retries up to 15 minutes).
+		// Return the error so the controller's rate limiter applies per-item
+		// exponential backoff (30 s → 60 s → … capped at 3 min).  Persistent
+		// failures back off gracefully; the counter resets on success.
 		r.logger.Error("configset apply failed, will retry", "configset", configSet.Name, "err", err)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{}, err
 	}
 
 	r.notifyResources(ctx, &configSet)
 
 	if r.cfg.ReconcilePeriod > 0 {
-		return ctrl.Result{RequeueAfter: r.cfg.ReconcilePeriod}, nil
+		return ctrl.Result{RequeueAfter: jitterDuration(r.cfg.ReconcilePeriod)}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// jitterDuration adds a random ±10 % spread to d so that nodes with the same
+// ReconcilePeriod do not wake up in lockstep and hammer the API server at once.
+func jitterDuration(d time.Duration) time.Duration {
+	jitter := time.Duration(rand.Int63n(int64(d / 5))) // up to 20 % of d
+	if rand.Intn(2) == 0 {
+		return d + jitter
+	}
+	return d - jitter
 }
 
 // notifyResources touches a generation-scoped annotation on each resource
@@ -344,7 +357,13 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.LabelChangedPredicate{})).
 		// Serialize ConfigSet reconciles so concurrent package installs from
 		// multiple ConfigSets matching the same node are not possible.
-		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		// Custom rate limiter: per-item exponential backoff starting at 30 s,
+		// capped at 3 min — persistent failures slow down gracefully without
+		// the 15-min delays the default limiter can produce.
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 1,
+			RateLimiter:             workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](30*time.Second, 3*time.Minute),
+		}).
 		Complete(r)
 }
 
