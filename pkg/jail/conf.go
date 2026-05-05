@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -25,7 +26,9 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMa
 	exec.stop  = "/bin/sh /etc/rc.shutdown jail";
 	exec.clean;
 	exec.consolelog = "/var/log/jail_{{ .Name }}_console.log";
-
+{{ range .PrestartCmds }}
+	exec.prestart += "{{ . }}";
+{{ end -}}
 	mount.devfs;
 	devfs_ruleset = 4;
 	enforce_statfs = 2;
@@ -57,15 +60,16 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMa
 `))
 
 type jailConfData struct {
-	Name       string
-	Hostname   string
-	Path       string
-	Interface  string
-	Inets      []string
-	Inet6s     []string
-	Release    string
-	FstabPath  string
-	Parameters map[string]string
+	Name         string
+	Hostname     string
+	Path         string
+	Interface    string
+	Inets        []string
+	Inet6s       []string
+	Release      string
+	FstabPath    string
+	Parameters   map[string]string
+	PrestartCmds []string
 }
 
 // writeJailConf renders and writes <confDir>/<name>.conf.
@@ -78,16 +82,22 @@ func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.Jai
 		hostname = name
 	}
 
+	// Build exec.prestart unmount commands to clean up any stale mounts left
+	// by a previously failed start.  Paths are sorted deepest-first so nested
+	// mounts are unmounted before their parents.
+	prestartCmds := prestartUnmounts(jailRoot, spec.Mounts)
+
 	data := jailConfData{
-		Name:       name,
-		Hostname:   hostname,
-		Path:       jailRoot,
-		Interface:  spec.Interface,
-		Inets:      spec.Inets,
-		Inet6s:     spec.Inet6s,
-		Release:    spec.Release,
-		FstabPath:  fstabPath,
-		Parameters: spec.Parameters,
+		Name:         name,
+		Hostname:     hostname,
+		Path:         jailRoot,
+		Interface:    spec.Interface,
+		Inets:        spec.Inets,
+		Inet6s:       spec.Inet6s,
+		Release:      spec.Release,
+		FstabPath:    fstabPath,
+		Parameters:   spec.Parameters,
+		PrestartCmds: prestartCmds,
 	}
 
 	var buf bytes.Buffer
@@ -118,4 +128,29 @@ func removeJailConf(confDir, name string) error {
 		return fmt.Errorf("removing jail.conf for %s: %w", name, err)
 	}
 	return nil
+}
+
+// prestartUnmounts returns exec.prestart shell commands that force-unmount any
+// stale mounts left by a previously failed jail start.  devfs is always
+// included (it is mounted by the jail machinery before fstab mounts).
+// Additional entries cover each configured nullfs/fstab mount.
+// Paths are ordered deepest-first so nested mounts are cleared before parents.
+func prestartUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
+	// Collect all host-side mountpoints that need cleanup.
+	paths := make([]string, 0, len(mounts)+1)
+	paths = append(paths, filepath.Join(jailRoot, "dev"))
+	for _, m := range mounts {
+		paths = append(paths, filepath.Join(jailRoot, m.JailPath))
+	}
+
+	// Sort deepest (longest) paths first.
+	sort.Slice(paths, func(i, j int) bool {
+		return len(paths[i]) > len(paths[j])
+	})
+
+	cmds := make([]string, len(paths))
+	for i, p := range paths {
+		cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
+	}
+	return cmds
 }

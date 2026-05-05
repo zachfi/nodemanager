@@ -141,6 +141,35 @@ func TestWriteJailConf(t *testing.T) {
 				`mount.fstab = "/usr/local/nodemanager/jails/storage/fstab";`,
 			},
 		},
+		{
+			name:      "prestart unmounts include devfs and all mounts, deepest first",
+			jailName:  "gar1",
+			jailRoot:  "/usr/local/nodemanager/jails/gar1/root",
+			fstabPath: "/usr/local/nodemanager/jails/gar1/fstab",
+			spec: freebsdv1.JailSpec{
+				Release: "14.2-RELEASE",
+				Mounts: []freebsdv1.JailMount{
+					{HostPath: "/data01/garage1", JailPath: "/var/garage"},
+					{HostPath: "/data01/meta1", JailPath: "/var/garage/meta"},
+				},
+			},
+			want: []string{
+				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/dev 2>/dev/null || true";`,
+				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage 2>/dev/null || true";`,
+				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage/meta 2>/dev/null || true";`,
+			},
+		},
+		{
+			name:     "prestart devfs unmount present even with no extra mounts",
+			jailName: "minimal",
+			jailRoot: "/usr/local/nodemanager/jails/minimal/root",
+			spec: freebsdv1.JailSpec{
+				Release: "14.2-RELEASE",
+			},
+			want: []string{
+				`exec.prestart += "umount -f /usr/local/nodemanager/jails/minimal/root/dev 2>/dev/null || true";`,
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -160,6 +189,47 @@ func TestWriteJailConf(t *testing.T) {
 			for _, notWant := range tc.notWant {
 				require.False(t, strings.Contains(content, notWant),
 					"unexpected %q in conf:\n%s", notWant, content)
+			}
+		})
+	}
+}
+
+func TestPrestartUnmounts(t *testing.T) {
+	cases := []struct {
+		name     string
+		jailRoot string
+		mounts   []freebsdv1.JailMount
+		want     []string // expected umount target paths, in order (deepest first)
+	}{
+		{
+			name:     "no extra mounts — devfs only",
+			jailRoot: "/jail/root",
+			want:     []string{"/jail/root/dev"},
+		},
+		{
+			name:     "single mount — deeper than devfs comes first",
+			jailRoot: "/jail/root",
+			mounts:   []freebsdv1.JailMount{{HostPath: "/data", JailPath: "/mnt/data"}},
+			want:     []string{"/jail/root/mnt/data", "/jail/root/dev"},
+		},
+		{
+			name:     "nested mounts — deepest first",
+			jailRoot: "/jail/root",
+			mounts: []freebsdv1.JailMount{
+				{HostPath: "/data/garage", JailPath: "/var/garage"},
+				{HostPath: "/data/meta", JailPath: "/var/garage/meta"},
+			},
+			want: []string{"/jail/root/var/garage/meta", "/jail/root/var/garage", "/jail/root/dev"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds := prestartUnmounts(tc.jailRoot, tc.mounts)
+			require.Len(t, cmds, len(tc.want))
+			for i, wantPath := range tc.want {
+				require.Contains(t, cmds[i], wantPath,
+					"command %d should contain path %q", i, wantPath)
 			}
 		})
 	}
