@@ -409,7 +409,7 @@ func (m *mockFileHandler) WriteContentFile(_ context.Context, path string, conte
 }
 
 func (m *mockFileHandler) Chown(_ context.Context, _, _, _ string) (bool, error) { return false, nil }
-func (m *mockFileHandler) SetMode(_ context.Context, _, _ string) (bool, error)   { return false, nil }
+func (m *mockFileHandler) SetMode(_ context.Context, _, _ string) (bool, error)  { return false, nil }
 func (m *mockFileHandler) Remove(_ context.Context, path string) (bool, error) {
 	m.removedPaths[path] = true
 	return true, nil
