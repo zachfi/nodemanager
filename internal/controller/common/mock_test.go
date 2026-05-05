@@ -3,9 +3,32 @@ package common
 import (
 	"context"
 
+	"github.com/zachfi/nodemanager/internal/notification"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	notificationv1 "github.com/zachfi/nodemanager/pkg/notification/v1"
 	"github.com/zachfi/nodemanager/pkg/services"
 )
+
+var _ notification.Notifier = (*mockNotifier)(nil)
+
+type mockNotifier struct {
+	hasSubscribers bool
+	events         []*notificationv1.Event
+}
+
+func (m *mockNotifier) Notify(event *notificationv1.Event) {
+	m.events = append(m.events, event)
+}
+
+func (m *mockNotifier) HasSubscribers() bool {
+	return m.hasSubscribers
+}
+
+func (m *mockNotifier) WaitForApproval(_ string) <-chan *notificationv1.ApprovalResponse {
+	return make(chan *notificationv1.ApprovalResponse, 1)
+}
+
+func (m *mockNotifier) CancelApproval(_ string) {}
 
 var systemHandler = &mockSystemHandler{}
 
