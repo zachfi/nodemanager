@@ -93,7 +93,7 @@ LD_FLAGS=-ldflags " \
     -X main.buildDate=$(BUILD_DATE) \
     "
 
-# REGISTRY is the container registry prefix to push to (e.g. reg.dist.svc.cluster.znet:5000/zachfi).
+# REGISTRY is the container registry prefix to push to (e.g. registry.znet/zachfi).
 REGISTRY ?=
 
 .PHONY: build
@@ -125,7 +125,7 @@ docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
 .PHONY: docker-ci
-docker-ci: ## Build and push versioned image to REGISTRY (e.g. make docker-ci REGISTRY=reg.dist.svc.cluster.znet:5000/zachfi).
+docker-ci: ## Build and push versioned image to REGISTRY (e.g. make docker-ci REGISTRY=registry.znet/zachfi).
 	$(CONTAINER_TOOL) build \
 		--build-arg VERSION=$(GIT_VERSION) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
