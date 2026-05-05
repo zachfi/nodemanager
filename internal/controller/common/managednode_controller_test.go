@@ -168,7 +168,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -250,7 +250,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -328,7 +328,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    systemHandler,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, typeNamespacedName.Namespace, hostname),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -430,7 +430,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -489,7 +489,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -561,7 +561,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -633,7 +633,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -692,7 +692,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				notifier:  notifier,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
@@ -776,7 +776,7 @@ var _ = Describe("ManagedNode Controller", func() {
 				system:    sys,
 				locker:    locker.NewLeaseLocker(ctx, logger, lockerConfig, clientset, "default", resourceName),
 				clientset: clientset,
-				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond},
+				cfg:       ManagedNodeConfig{DrainTimeout: 100 * time.Millisecond, ForgivenessPeriod: time.Minute},
 			}
 
 			result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})

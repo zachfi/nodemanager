@@ -530,15 +530,20 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 
 		r.logger.Info("next upgrade time", "schedule", node.Spec.Upgrade.Schedule, "until", time.Until(next))
 
-		// Check if next is within the forgiveness period
-		if time.Since(next) < r.cfg.ForgivenessPeriod {
-			// If the next upgrade time is less than a minute in the past, we execute immediately.
-		} else if time.Until(next) < r.cfg.ForgivenessPeriod {
-			// If the upgrade time is less than a minute in the future, requeue and let controller-runtime wake us.
+		// Gate on the forgiveness window.  Only execute when next is within
+		// ForgivenessPeriod of now.  Note: time.Since(future) is negative and
+		// therefore always less than ForgivenessPeriod — the original check was
+		// buggy for any future next.
+		switch {
+		case time.Until(next) > r.cfg.ForgivenessPeriod:
+			// Too far in the future; come back then.
 			return next, nil
-		} else {
-			// If we are outside of the minute range in either direction, return the time which we should check again.
+		case time.Until(next) > 0:
+			// Imminent; requeue so controller-runtime wakes us at the exact time.
 			return next, nil
+		case time.Since(next) > r.cfg.ForgivenessPeriod:
+			// Missed the window; skip to the next occurrence.
+			return schedExpr.Next(time.Now()), nil
 		}
 	} else {
 		r.logger.Info("forced upgrade annotation set, bypassing schedule and delay checks", "node", node.Name)
