@@ -262,6 +262,5 @@ mv "$$(echo "$(1)" | sed "s/-$(3)$$//")" $(1) ;\
 endef
 
 include build/release.mk
-include build/drone.mk
 include build/mixin.mk
 include build/docs.mk
