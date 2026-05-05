@@ -80,8 +80,9 @@ func (l *leaseLocker) LockFor(ctx context.Context, req types.NamespacedName, dur
 		}
 
 		var (
-			isExpired  = existingLease.Spec.RenewTime.Add(time.Duration(*existingLease.Spec.LeaseDurationSeconds) * time.Second).Before(time.Now())
-			isHeldByMe = existingLease.Spec.HolderIdentity != nil && *existingLease.Spec.HolderIdentity == l.id
+			isExpired       = existingLease.Spec.RenewTime.Add(time.Duration(*existingLease.Spec.LeaseDurationSeconds) * time.Second).Before(time.Now())
+			isHeldByMe      = existingLease.Spec.HolderIdentity != nil && *existingLease.Spec.HolderIdentity == l.id
+			isHeldByAnother = existingLease.Spec.HolderIdentity != nil && !isHeldByMe
 		)
 
 		if isHeldByMe {
@@ -89,8 +90,8 @@ func (l *leaseLocker) LockFor(ctx context.Context, req types.NamespacedName, dur
 			return nil // Already holding the lock
 		}
 
-		if !isExpired {
-			// Lock is held and not expired
+		if isHeldByAnother && !isExpired {
+			// Lock is actively held by a different node.
 			return apierrors.NewConflict(coordinationv1.Resource("leases"), req.Name, fmt.Errorf("lock held by another instance and not expired"))
 		}
 
@@ -143,11 +144,14 @@ func (l *leaseLocker) Unlock(ctx context.Context, req types.NamespacedName) erro
 			return nil
 		}
 
-		// C. Prepare to release ownership and explicitly expire the Lease
-		pastMicroTime := metav1.NewMicroTime(time.Now().Add(-2 * time.Hour))
+		// Release ownership and guarantee the lease is immediately expired by
+		// back-dating renewTime by the full lease duration. This prevents a
+		// nil-holder lease with a long TTL from blocking future acquisitions.
+		leaseDuration := time.Duration(*existingLease.Spec.LeaseDurationSeconds) * time.Second
+		expiredTime := metav1.NewMicroTime(time.Now().Add(-(leaseDuration + time.Second)))
 
-		existingLease.Spec.HolderIdentity = nil // Key to release the lock
-		existingLease.Spec.RenewTime = &pastMicroTime
+		existingLease.Spec.HolderIdentity = nil
+		existingLease.Spec.RenewTime = &expiredTime
 		// Retain ResourceVersion for Optimistic Locking
 
 		// D. Attempt the Update
