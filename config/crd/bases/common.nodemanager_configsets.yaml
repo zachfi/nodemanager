@@ -89,6 +89,15 @@ spec:
                       items:
                         type: string
                       type: array
+                    sourceFile:
+                      description: |-
+                        SourceFile is a path to a file on disk whose bytes are used as the file
+                        content instead of Content or Template. In offline apply mode the path is
+                        resolved relative to the manifest directory; in cluster-connected mode it
+                        must be absolute or reachable from the controller's working directory.
+                        If the path ends with ".tmpl" the content is treated as a gomplate
+                        template, identical to setting Template directly.
+                      type: string
                     target:
                       type: string
                     template:

@@ -19,6 +19,7 @@ nav:
   - Deployment: deployment.md
   - Guides:
     - Template Data: template-data.md
+    - Offline Apply: offline-apply.md
     - FreeBSD Jails: freebsd-jails.md
   - API Reference:
     - ManagedNode: api/managednode.md

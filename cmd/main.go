@@ -109,6 +109,9 @@ func init() {
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "apply":
+			runApply(os.Args[2:])
+			return
 		case "bootstrap":
 			runBootstrap(os.Args[2:])
 			return

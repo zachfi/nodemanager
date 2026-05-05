@@ -76,6 +76,13 @@ type File struct {
 	Template      string   `json:"template,omitempty"`
 	SecretRefs    []string `json:"secretRefs,omitempty"`
 	ConfigMapRefs []string `json:"configMapRefs,omitempty"`
+	// SourceFile is a path to a file on disk whose bytes are used as the file
+	// content instead of Content or Template. In offline apply mode the path is
+	// resolved relative to the manifest directory; in cluster-connected mode it
+	// must be absolute or reachable from the controller's working directory.
+	// If the path ends with ".tmpl" the content is treated as a gomplate
+	// template, identical to setting Template directly.
+	SourceFile string `json:"sourceFile,omitempty"`
 	// CreateOnly skips writing the file if it already exists on disk.
 	// Useful for seed/skeleton files (e.g. ~/.zshrc) that nodemanager should
 	// create on first boot but never overwrite afterward.

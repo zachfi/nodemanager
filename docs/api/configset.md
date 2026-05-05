@@ -23,13 +23,16 @@ the local `ManagedNode`.
 | `path` | string | Absolute path on disk. |
 | `ensure` | string | `file`, `directory`, `symlink`, or `absent`. |
 | `content` | string | Literal file content. |
-| `template` | string | [gomplate](https://docs.gomplate.ca/) template string. |
+| `template` | string | [gomplate](https://docs.gomplate.ca/) template string. Rendered before writing. |
+| `sourceFile` | string | Path to a file on disk whose bytes are used as the content instead of `content` or `template`. In [offline apply mode](../offline-apply.md) the path is resolved relative to the manifest directory. Paths ending in `.tmpl` are rendered as gomplate templates. |
 | `owner` | string | File owner (username). |
 | `group` | string | File group. |
 | `mode` | string | File permissions (e.g. `0644`). |
 | `target` | string | Symlink target (when `ensure: symlink`). |
-| `secretRefs` | list | Kubernetes Secret names whose data is available in templates. |
-| `configMapRefs` | list | Kubernetes ConfigMap names whose data is available in templates. |
+| `secretRefs` | list | Kubernetes Secret names whose data is available in templates. Not supported in offline apply mode. |
+| `configMapRefs` | list | Kubernetes ConfigMap names whose data is available in templates. Not supported in offline apply mode. |
+| `createOnly` | bool | Skip writing the file if it already exists on disk. Useful for seed files that nodemanager should create once but never overwrite. |
+| `purge` | bool | Remove plain files beneath this path that are not declared in any matching `ConfigSet`. Only meaningful when `ensure: directory`. Subdirectories are never removed. |
 
 ### services
 
