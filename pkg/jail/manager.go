@@ -502,7 +502,7 @@ func (m *manager) unmountAll(ctx context.Context, jailRoot string) {
 // jail -c to fail with "File exists".
 // The function is a no-op when no network address is declared in spec.
 func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jail) error {
-	if j.Spec.Inet == "" && j.Spec.Inet6 == "" {
+	if len(j.Spec.Inets) == 0 && len(j.Spec.Inet6s) == 0 {
 		return nil
 	}
 
@@ -516,19 +516,10 @@ func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jai
 			continue
 		}
 
-		wantV4 := stripCIDR(j.Spec.Inet)
-		wantV6 := stripCIDR(j.Spec.Inet6)
+		wantV4 := stripCIDRSlice(j.Spec.Inets)
+		wantV6 := stripCIDRSlice(j.Spec.Inet6s)
 
-		gotV4 := ""
-		if len(running.IPv4Addrs) > 0 {
-			gotV4 = running.IPv4Addrs[0]
-		}
-		gotV6 := ""
-		if len(running.IPv6Addrs) > 0 {
-			gotV6 = running.IPv6Addrs[0]
-		}
-
-		if wantV4 == gotV4 && wantV6 == gotV6 {
+		if ipSetsEqual(wantV4, running.IPv4Addrs) && ipSetsEqual(wantV6, running.IPv6Addrs) {
 			// Running with the correct config — nothing to do.
 			return nil
 		}
@@ -544,19 +535,19 @@ func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jai
 	return nil
 }
 
-// removeIPAliases removes the IPv4 and IPv6 aliases declared in spec from the
+// removeIPAliases removes all IPv4 and IPv6 aliases declared in spec from the
 // interface.  Errors are intentionally ignored — the alias may not exist.
 func (m *manager) removeIPAliases(ctx context.Context, j freebsdv1.Jail) {
 	if j.Spec.Interface == "" {
 		return
 	}
-	if j.Spec.Inet != "" {
+	for _, addr := range j.Spec.Inets {
 		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
-			"inet", stripCIDR(j.Spec.Inet), "-alias")
+			"inet", stripCIDR(addr), "-alias")
 	}
-	if j.Spec.Inet6 != "" {
+	for _, addr := range j.Spec.Inet6s {
 		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", j.Spec.Interface,
-			"inet6", stripCIDR(j.Spec.Inet6), "-alias")
+			"inet6", stripCIDR(addr), "-alias")
 	}
 }
 
@@ -564,4 +555,26 @@ func (m *manager) removeIPAliases(ctx context.Context, j freebsdv1.Jail) {
 // the bare IP.  Returns the input unchanged if no "/" is present.
 func stripCIDR(addr string) string {
 	return strings.SplitN(addr, "/", 2)[0]
+}
+
+// stripCIDRSlice applies stripCIDR to each element.
+func stripCIDRSlice(addrs []string) []string {
+	out := make([]string, len(addrs))
+	for i, a := range addrs {
+		out[i] = stripCIDR(a)
+	}
+	return out
+}
+
+// ipSetsEqual reports whether two IP address slices contain the same
+// addresses regardless of order.
+func ipSetsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ac := append([]string{}, a...)
+	bc := append([]string{}, b...)
+	slices.Sort(ac)
+	slices.Sort(bc)
+	return slices.Equal(ac, bc)
 }

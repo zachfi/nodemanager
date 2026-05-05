@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
@@ -14,7 +15,9 @@ import (
 // fragments on modern FreeBSD.
 const DefaultJailConfDir = "/etc/jail.conf.d"
 
-var jailConfTmpl = template.Must(template.New("jail.conf").Parse(`{{ .Name }} {
+var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMap{
+	"join": strings.Join,
+}).Parse(`{{ .Name }} {
 	host.hostname = "{{ .Hostname }}";
 	path          = "{{ .Path }}";
 
@@ -32,11 +35,11 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Parse(`{{ .Name }} {
 {{ if .Interface }}
 	interface = "{{ .Interface }}";
 {{ end -}}
-{{ if .Inet }}
-	ip4.addr = {{ .Inet }};
+{{ if .Inets }}
+	ip4.addr = {{ join .Inets ", " }};
 {{ end -}}
-{{ if .Inet6 }}
-	ip6.addr = {{ .Inet6 }};
+{{ if .Inet6s }}
+	ip6.addr = {{ join .Inet6s ", " }};
 	ip6 = new;
 {{ end -}}
 {{ if .Release }}
@@ -58,8 +61,8 @@ type jailConfData struct {
 	Hostname   string
 	Path       string
 	Interface  string
-	Inet       string
-	Inet6      string
+	Inets      []string
+	Inet6s     []string
 	Release    string
 	FstabPath  string
 	Parameters map[string]string
@@ -80,8 +83,8 @@ func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.Jai
 		Hostname:   hostname,
 		Path:       jailRoot,
 		Interface:  spec.Interface,
-		Inet:       spec.Inet,
-		Inet6:      spec.Inet6,
+		Inets:      spec.Inets,
+		Inet6s:     spec.Inet6s,
 		Release:    spec.Release,
 		FstabPath:  fstabPath,
 		Parameters: spec.Parameters,

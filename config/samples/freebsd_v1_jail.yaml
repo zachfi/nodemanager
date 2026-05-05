@@ -9,5 +9,7 @@ spec:
   templateRef: standard
   nodeName: myhost.example.com
   release: "14.4-RELEASE"
-  inet: "172.16.20.10/27"
-  inet6: "2001:db8::10/120"
+  inets:
+    - "192.0.2.10/27"
+  inet6s:
+    - "2001:db8::10/120"

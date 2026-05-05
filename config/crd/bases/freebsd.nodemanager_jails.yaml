@@ -50,14 +50,20 @@ spec:
                 description: Hostname is the jail's internal hostname. Defaults to
                   the resource name.
                 type: string
-              inet:
-                description: Inet is the IPv4 address assigned to the jail (CIDR or
-                  bare IP).
-                type: string
-              inet6:
-                description: Inet6 is the IPv6 address assigned to the jail (CIDR
-                  or bare IP).
-                type: string
+              inet6s:
+                description: |-
+                  Inet6s is the list of IPv6 addresses assigned to the jail (CIDR or bare IP).
+                  Multiple addresses are supported; all are added to ip6.addr in jail.conf.
+                items:
+                  type: string
+                type: array
+              inets:
+                description: |-
+                  Inets is the list of IPv4 addresses assigned to the jail (CIDR or bare IP).
+                  Multiple addresses are supported; all are added to ip4.addr in jail.conf.
+                items:
+                  type: string
+                type: array
               interface:
                 description: Interface is the network interface to attach to the jail.
                 type: string

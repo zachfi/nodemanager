@@ -59,13 +59,15 @@ type JailSpec struct {
 	// +optional
 	Interface string `json:"interface,omitempty"`
 
-	// Inet is the IPv4 address assigned to the jail (CIDR or bare IP).
+	// Inets is the list of IPv4 addresses assigned to the jail (CIDR or bare IP).
+	// Multiple addresses are supported; all are added to ip4.addr in jail.conf.
 	// +optional
-	Inet string `json:"inet,omitempty"`
+	Inets []string `json:"inets,omitempty"`
 
-	// Inet6 is the IPv6 address assigned to the jail (CIDR or bare IP).
+	// Inet6s is the list of IPv6 addresses assigned to the jail (CIDR or bare IP).
+	// Multiple addresses are supported; all are added to ip6.addr in jail.conf.
 	// +optional
-	Inet6 string `json:"inet6,omitempty"`
+	Inet6s []string `json:"inet6s,omitempty"`
 
 	// Mounts defines additional filesystem mounts made available inside the jail
 	// via a per-jail fstab file.

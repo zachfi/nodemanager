@@ -119,14 +119,14 @@ func TestMergeTemplateDefaults(t *testing.T) {
 				NodeName:  "host01",
 				Release:   "14.2-RELEASE",
 				Interface: "em0",
-				Inet:      "192.0.2.5",
+				Inets:     []string{"192.0.2.5"},
 			},
 			tmpl: freebsdv1.JailTemplateSpec{},
 			want: freebsdv1.JailSpec{
 				NodeName:  "host01",
 				Release:   "14.2-RELEASE",
 				Interface: "em0",
-				Inet:      "192.0.2.5",
+				Inets:     []string{"192.0.2.5"},
 			},
 		},
 		{
@@ -135,8 +135,8 @@ func TestMergeTemplateDefaults(t *testing.T) {
 				NodeName: "host01",
 				Release:  "14.2-RELEASE",
 				Hostname: "web01.internal",
-				Inet:     "192.0.2.5",
-				Inet6:    "2001:db8::5",
+				Inets:    []string{"192.0.2.5"},
+				Inet6s:   []string{"2001:db8::5"},
 			},
 			tmpl: freebsdv1.JailTemplateSpec{
 				Interface: "lo1",
@@ -146,8 +146,8 @@ func TestMergeTemplateDefaults(t *testing.T) {
 				Release:   "14.2-RELEASE",
 				Hostname:  "web01.internal",
 				Interface: "lo1",
-				Inet:      "192.0.2.5",
-				Inet6:     "2001:db8::5",
+				Inets:     []string{"192.0.2.5"},
+				Inet6s:    []string{"2001:db8::5"},
 			},
 		},
 		{

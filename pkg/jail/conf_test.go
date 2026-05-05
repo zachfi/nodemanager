@@ -67,7 +67,7 @@ func TestWriteJailConf(t *testing.T) {
 			spec: freebsdv1.JailSpec{
 				Release:   "14.2-RELEASE",
 				Interface: "em0",
-				Inet:      "192.0.2.10",
+				Inets:     []string{"192.0.2.10"},
 			},
 			want: []string{
 				`interface = "em0";`,
@@ -82,13 +82,29 @@ func TestWriteJailConf(t *testing.T) {
 			spec: freebsdv1.JailSpec{
 				Release:   "14.2-RELEASE",
 				Interface: "vtnet0",
-				Inet:      "192.0.2.5",
-				Inet6:     "2001:db8::5",
+				Inets:     []string{"192.0.2.5"},
+				Inet6s:    []string{"2001:db8::5"},
 			},
 			want: []string{
 				`interface = "vtnet0";`,
 				`ip4.addr = 192.0.2.5;`,
 				`ip6.addr = 2001:db8::5;`,
+				`ip6 = new;`,
+			},
+		},
+		{
+			name:     "with multiple IPs per family (anycast)",
+			jailName: "dns0",
+			jailRoot: "/usr/local/nodemanager/jails/dns0/root",
+			spec: freebsdv1.JailSpec{
+				Release:   "14.2-RELEASE",
+				Interface: "lo0",
+				Inets:     []string{"192.0.2.105/27", "203.0.113.53/32"},
+				Inet6s:    []string{"2001:db8::585/64", "2001:db8:ffff::53/128"},
+			},
+			want: []string{
+				`ip4.addr = 192.0.2.105/27, 203.0.113.53/32;`,
+				`ip6.addr = 2001:db8::585/64, 2001:db8:ffff::53/128;`,
 				`ip6 = new;`,
 			},
 		},

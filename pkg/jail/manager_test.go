@@ -382,7 +382,7 @@ func TestEnsureJail_ConfChangeCyclesJail(t *testing.T) {
 
 	j := testJail("myjail", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "192.0.2.1" // matches running — no IP-based cycle
+	j.Spec.Inets = []string{"192.0.2.1"} // matches running — no IP-based cycle
 
 	// Pre-write a stale conf so writeJailConf detects a change.
 	confPath := filepath.Join(m.confDir, "myjail.conf")
@@ -424,8 +424,8 @@ func TestDeleteJail_RemovesIPAliases(t *testing.T) {
 
 	j := testJail("gone", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "192.0.2.5/24"
-	j.Spec.Inet6 = "2001:db8::1/64"
+	j.Spec.Inets = []string{"192.0.2.5/24"}
+	j.Spec.Inet6s = []string{"2001:db8::1/64"}
 
 	confPath := filepath.Join(m.confDir, "gone.conf")
 	require.NoError(t, os.WriteFile(confPath, []byte("gone {}"), 0o644))
@@ -459,7 +459,7 @@ func TestEnsureJail_NetworkChangeCyclesJail(t *testing.T) {
 
 	j := testJail("netjail", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "192.0.2.6"
+	j.Spec.Inets = []string{"192.0.2.6"}
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 
@@ -483,7 +483,7 @@ func TestEnsureJail_OrphanedIPAliasCleanedBeforeStart(t *testing.T) {
 
 	j := testJail("gone", "14.2-RELEASE")
 	j.Spec.Interface = "lo1"
-	j.Spec.Inet6 = "2001:db8::1/128" // RFC 3849 documentation range
+	j.Spec.Inet6s = []string{"2001:db8::1/128"} // RFC 3849 documentation range
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 
@@ -512,7 +512,7 @@ func TestEnsureJail_NetworkUnchangedNoRestart(t *testing.T) {
 
 	j := testJail("stable", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
-	j.Spec.Inet = "192.0.2.5" // same as running
+	j.Spec.Inets = []string{"192.0.2.5"} // same as running
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 
