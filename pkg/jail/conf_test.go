@@ -176,7 +176,7 @@ func TestWriteJailConf(t *testing.T) {
 			},
 		},
 		{
-			name:     "IP alias cleanup before jail start",
+			name:     "IP alias cleanup is NOT in exec.prestart (handled by StartJail Go code)",
 			jailName: "dns0",
 			jailRoot: "/usr/local/nodemanager/jails/dns0/root",
 			spec: freebsdv1.JailSpec{
@@ -186,17 +186,8 @@ func TestWriteJailConf(t *testing.T) {
 				Inet6s:    []string{"2001:db8::53/128"},
 			},
 			want: []string{
-				`exec.prestart += "ifconfig lo1 inet 192.0.2.53 -alias 2>/dev/null || true";`,
-				`exec.prestart += "ifconfig lo1 inet6 2001:db8::53 -alias 2>/dev/null || true";`,
-			},
-		},
-		{
-			name:     "no IP cleanup when interface is empty",
-			jailName: "nonet",
-			jailRoot: "/usr/local/nodemanager/jails/nonet/root",
-			spec: freebsdv1.JailSpec{
-				Release: "14.2-RELEASE",
-				Inets:   []string{"192.0.2.1/32"},
+				`ip4.addr = 192.0.2.53/32;`,
+				`ip6.addr = 2001:db8::53/128;`,
 			},
 			notWant: []string{"-alias"},
 		},
