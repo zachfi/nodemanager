@@ -25,6 +25,8 @@ import (
 
 	"github.com/gorhill/cronexpr"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/time/rate"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -105,59 +107,81 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jails/finalizers,verbs=update
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jailtemplates,verbs=get;list;watch
 
-func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	_ = logf.FromContext(ctx)
+
+	// Open a top-level span for the reconcile.  Sub-spans for each step inside
+	// (status updates, EnsureJail, IsRunning, StartJail, BootstrapPkg,
+	// postCreate, handleUpdate, requeue path) hang off this one so an operator
+	// can see the entire code path for a single reconcile in Tempo.
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.Reconcile",
+		trace.WithAttributes(
+			attribute.String("jail.name", req.Name),
+			attribute.String("jail.namespace", req.Namespace),
+			attribute.String("host.hostname", r.hostname),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.SetAttributes(
+			attribute.Float64("result.requeue_after_seconds", result.RequeueAfter.Seconds()),
+		)
+		span.End()
+	}()
+
+	// Build a per-reconcile logger that includes the trace and span IDs so
+	// log lines can be cross-referenced with the spans in Tempo.
+	sc := span.SpanContext()
+	logger := r.logger.With(
+		"jail", req.Name,
+		"trace_id", sc.TraceID().String(),
+		"span_id", sc.SpanID().String(),
+	)
 
 	j := &freebsdv1.Jail{}
 	if err := r.Get(ctx, req.NamespacedName, j); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if client.IgnoreNotFound(err) == nil {
+			span.AddEvent("jail not found, ignoring")
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
+	span.SetAttributes(
+		attribute.String("jail.spec.node_name", j.Spec.NodeName),
+		attribute.String("jail.spec.release", j.Spec.Release),
+		attribute.String("jail.spec.template_ref", j.Spec.TemplateRef),
+		attribute.String("jail.spec.reconcile_period", j.Spec.ReconcilePeriod),
+		attribute.Int64("jail.metadata.generation", j.Generation),
+		attribute.String("jail.metadata.resource_version", j.ResourceVersion),
+	)
 
 	// Only reconcile jails assigned to this host.
 	if j.Spec.NodeName != r.hostname {
+		span.AddEvent("skipping jail assigned to different node",
+			trace.WithAttributes(attribute.String("assigned.node", j.Spec.NodeName)))
 		return ctrl.Result{}, nil
 	}
 
 	if j.DeletionTimestamp.IsZero() {
 		if !controllerutil.ContainsFinalizer(j, jailFinalizer) {
-			controllerutil.AddFinalizer(j, jailFinalizer)
-			if err := r.Update(ctx, j); err != nil {
+			err := r.tracedAddFinalizer(ctx, j)
+			if err != nil {
 				return ctrl.Result{}, err
 			}
 		}
 	} else {
-		if controllerutil.ContainsFinalizer(j, jailFinalizer) {
-			if j.Spec.DeletionProtection {
-				r.logger.Warn("deletion blocked by deletionProtection; set spec.deletionProtection=false to allow", "jail", j.Name)
-				_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-					r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "DeletionProtected",
-						"deletion blocked: set spec.deletionProtection=false to allow removal")
-				})
-				return ctrl.Result{}, nil
-			}
-			if err := r.manager.DeleteJail(ctx, *j); err != nil {
-				jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "error").Inc()
-				_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-					r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "DeleteFailed", err.Error())
-				})
-				return ctrl.Result{}, err
-			}
-			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "success").Inc()
-			controllerutil.RemoveFinalizer(j, jailFinalizer)
-			if err := r.Update(ctx, j); err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-		return ctrl.Result{}, nil
+		span.AddEvent("jail is being deleted")
+		return r.handleDeletion(ctx, req, j, logger)
 	}
 
 	// Resolve template defaults if templateRef is set.
 	mergedSpec := j.Spec
 	var postCreateCmds []freebsdv1.PostCreateCommand
 	if j.Spec.TemplateRef != "" {
-		tmpl := &freebsdv1.JailTemplate{}
-		tmplKey := types.NamespacedName{Name: j.Spec.TemplateRef, Namespace: j.Namespace}
-		if err := r.Get(ctx, tmplKey, tmpl); err != nil {
+		tmpl, err := r.tracedFetchTemplate(ctx, j)
+		if err != nil {
 			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
 				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "TemplateNotFound",
 					fmt.Sprintf("JailTemplate %q not found: %v", j.Spec.TemplateRef, err))
@@ -172,14 +196,13 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	mergedJail := j.DeepCopy()
 	mergedJail.Spec = mergedSpec
 
-	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+	if err := r.tracedSetCondition(ctx, req.NamespacedName, "Progressing=true", func(fresh *freebsdv1.Jail) {
 		r.setCondition(fresh, condProgressing, metav1.ConditionTrue, "Provisioning", "jail is being provisioned")
 	}); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	r.logger.Info("provisioning jail with merged spec",
-		"jail", j.Name,
+	logger.Info("provisioning jail with merged spec",
 		"interface", mergedJail.Spec.Interface,
 		"inets", mergedJail.Spec.Inets,
 		"inet6s", mergedJail.Spec.Inet6s)
@@ -188,7 +211,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err := r.manager.EnsureJail(ctx, *mergedJail); err != nil {
 		jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "error").Inc()
-		r.logger.Error("failed to ensure jail", "jail", j.Name, "err", err)
+		logger.Error("failed to ensure jail", "err", err)
 		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
 			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "EnsureFailed", err.Error())
 			r.setCondition(fresh, condProgressing, metav1.ConditionFalse, "EnsureFailed", "provisioning failed")
@@ -197,20 +220,24 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
 	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "provision", "success").Inc()
+	span.SetAttributes(attribute.Float64("ensure_jail.duration_seconds", time.Since(provisionStart).Seconds()))
 
 	// Start the jail if it is not already running.
 	running, err := r.manager.IsRunning(ctx, j.Name)
 	if err != nil {
-		r.logger.Error("failed to check jail state", "jail", j.Name, "err", err)
+		logger.Error("failed to check jail state", "err", err)
 		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
 			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "StatusCheckFailed", err.Error())
 		})
 		return ctrl.Result{}, err
 	}
+	span.SetAttributes(attribute.Bool("jail.running_before_start", running))
+
 	if !running {
+		span.AddEvent("starting jail")
 		if err := r.manager.StartJail(ctx, *mergedJail); err != nil {
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
-			r.logger.Error("failed to start jail", "jail", j.Name, "err", err)
+			logger.Error("failed to start jail", "err", err)
 			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
 				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "StartFailed", err.Error())
 				r.setCondition(fresh, condProgressing, metav1.ConditionFalse, "StartFailed", "jail failed to start")
@@ -225,6 +252,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	span.SetAttributes(attribute.Bool("jail.running_after_start", running))
 
 	jailRoot := filepath.Join(r.cfg.JailDataPath, jail.JailRootDir, j.Name, "root")
 
@@ -232,7 +260,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// operations inside the jail.
 	if running {
 		if err := r.manager.BootstrapPkg(ctx, j.Name, jailRoot); err != nil {
-			r.logger.Error("failed to bootstrap pkg", "jail", j.Name, "err", err)
+			logger.Error("failed to bootstrap pkg", "err", err)
 			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
 				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "PkgBootstrapFailed", err.Error())
 			})
@@ -243,23 +271,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// Run postCreate hooks once after the first successful start.
 	if len(postCreateCmds) > 0 && running {
 		if j.Status.PostCreateDone == nil {
-			for _, cmd := range postCreateCmds {
-				r.logger.Info("running postCreate hook", "jail", j.Name, "hook", cmd.Name)
-				if err := r.manager.ExecInJail(ctx, j.Name, cmd.Command, cmd.Args...); err != nil {
-					jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "error").Inc()
-					_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-						r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "PostCreateFailed",
-							fmt.Sprintf("postCreate hook %q failed: %v", cmd.Name, err))
-					})
-					return ctrl.Result{}, err
-				}
-			}
-			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "success").Inc()
-
-			postCreateNow := metav1.Now()
-			if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
-				fresh.Status.PostCreateDone = &postCreateNow
-			}); err != nil {
+			if err := r.runPostCreateHooks(ctx, req, j, postCreateCmds, logger); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -268,12 +280,13 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	// Populate status.release from the jail root filesystem.
 	release := ""
 	if rel, err := r.manager.InstalledRelease(jailRoot); err != nil {
-		r.logger.Warn("could not read installed release", "jail", j.Name, "err", err)
+		logger.Warn("could not read installed release", "err", err)
 	} else {
 		release = rel
 	}
+	span.SetAttributes(attribute.String("jail.installed_release", release))
 
-	if err := r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+	if err := r.tracedSetCondition(ctx, req.NamespacedName, "final", func(fresh *freebsdv1.Jail) {
 		r.setCondition(fresh, condProgressing, metav1.ConditionFalse, "Provisioned", "jail provisioned successfully")
 		if running {
 			r.setCondition(fresh, condAvailable, metav1.ConditionTrue, "Running", "jail is running")
@@ -310,6 +323,152 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	return ctrl.Result{}, nil
 }
 
+// tracedAddFinalizer adds the controller's finalizer and pushes the metadata
+// update to the API server.  Wrapped in its own span so that an unexpected
+// generation bump or webhook denial here is plainly visible in Tempo.
+func (r *JailReconciler) tracedAddFinalizer(ctx context.Context, j *freebsdv1.Jail) (err error) {
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.AddFinalizer",
+		trace.WithAttributes(attribute.String("jail.name", j.Name)))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	controllerutil.AddFinalizer(j, jailFinalizer)
+	return r.Update(ctx, j)
+}
+
+// handleDeletion runs the deletion path: refuse if deletionProtection is set,
+// otherwise call DeleteJail and remove the finalizer.
+func (r *JailReconciler) handleDeletion(ctx context.Context, req ctrl.Request, j *freebsdv1.Jail, logger *slog.Logger) (result ctrl.Result, retErr error) {
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.handleDeletion",
+		trace.WithAttributes(
+			attribute.String("jail.name", j.Name),
+			attribute.Bool("deletion_protection", j.Spec.DeletionProtection),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
+
+	if !controllerutil.ContainsFinalizer(j, jailFinalizer) {
+		span.AddEvent("finalizer absent, nothing to do")
+		return ctrl.Result{}, nil
+	}
+	if j.Spec.DeletionProtection {
+		logger.Warn("deletion blocked by deletionProtection; set spec.deletionProtection=false to allow")
+		span.AddEvent("deletion blocked by deletionProtection")
+		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "DeletionProtected",
+				"deletion blocked: set spec.deletionProtection=false to allow removal")
+		})
+		return ctrl.Result{}, nil
+	}
+	if err := r.manager.DeleteJail(ctx, *j); err != nil {
+		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "error").Inc()
+		_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+			r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "DeleteFailed", err.Error())
+		})
+		return ctrl.Result{}, err
+	}
+	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "delete", "success").Inc()
+	span.AddEvent("removing finalizer")
+	controllerutil.RemoveFinalizer(j, jailFinalizer)
+	if err := r.Update(ctx, j); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+// tracedFetchTemplate fetches the JailTemplate referenced by j.Spec.TemplateRef.
+func (r *JailReconciler) tracedFetchTemplate(ctx context.Context, j *freebsdv1.Jail) (tmpl *freebsdv1.JailTemplate, err error) {
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.FetchTemplate",
+		trace.WithAttributes(
+			attribute.String("jail.name", j.Name),
+			attribute.String("template.ref", j.Spec.TemplateRef),
+		))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	tmpl = &freebsdv1.JailTemplate{}
+	tmplKey := types.NamespacedName{Name: j.Spec.TemplateRef, Namespace: j.Namespace}
+	if err = r.Get(ctx, tmplKey, tmpl); err != nil {
+		return nil, err
+	}
+	span.SetAttributes(attribute.Int64("template.generation", tmpl.Generation))
+	return tmpl, nil
+}
+
+// tracedSetCondition wraps updateStatusWithRetry in a span so each status
+// write is visible in the trace.  The label argument is only attached to the
+// span (not stored in the object) and is meant to identify the call-site.
+func (r *JailReconciler) tracedSetCondition(ctx context.Context, key types.NamespacedName, label string, mutate func(*freebsdv1.Jail)) (err error) {
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.UpdateStatus",
+		trace.WithAttributes(
+			attribute.String("jail.name", key.Name),
+			attribute.String("status.label", label),
+		))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	return r.updateStatusWithRetry(ctx, key, mutate)
+}
+
+// runPostCreateHooks runs each postCreate hook sequentially inside the jail
+// and records the completion time on status.PostCreateDone.
+func (r *JailReconciler) runPostCreateHooks(ctx context.Context, req ctrl.Request, j *freebsdv1.Jail, hooks []freebsdv1.PostCreateCommand, logger *slog.Logger) (err error) {
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.runPostCreateHooks",
+		trace.WithAttributes(
+			attribute.String("jail.name", j.Name),
+			attribute.Int("hooks", len(hooks)),
+		))
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	for _, cmd := range hooks {
+		logger.Info("running postCreate hook", "hook", cmd.Name)
+		span.AddEvent("postCreate hook",
+			trace.WithAttributes(
+				attribute.String("hook.name", cmd.Name),
+				attribute.String("hook.command", cmd.Command),
+			))
+		if err = r.manager.ExecInJail(ctx, j.Name, cmd.Command, cmd.Args...); err != nil {
+			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "error").Inc()
+			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+				r.setCondition(fresh, condDegraded, metav1.ConditionTrue, "PostCreateFailed",
+					fmt.Sprintf("postCreate hook %q failed: %v", cmd.Name, err))
+			})
+			return err
+		}
+	}
+	jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "postCreate", "success").Inc()
+
+	postCreateNow := metav1.Now()
+	return r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
+		fresh.Status.PostCreateDone = &postCreateNow
+	})
+}
+
 // handleUpdate checks whether a freebsd-update run is due for the jail.
 // This always runs on the HOST — it stops the jail, applies patch-level OS
 // updates to the jail's root filesystem via freebsd-update(8), then restarts
@@ -317,10 +476,28 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 // spec.update.schedule; only the host nodemanager (spec.nodeName matching the
 // physical host) should manage jail OS updates.
 // It mirrors the schedule+delay logic used by ManagedNode.handleUpgrade.
-func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, jailRoot string) (time.Time, error) {
+func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, jailRoot string) (next time.Time, retErr error) {
 	if j.Spec.Update.Schedule == "" || j.Spec.Update.Delay == "" {
 		return time.Time{}, nil
 	}
+
+	ctx, span := r.tracer.Start(ctx, "JailReconciler.handleUpdate",
+		trace.WithAttributes(
+			attribute.String("jail.name", j.Name),
+			attribute.String("update.schedule", j.Spec.Update.Schedule),
+			attribute.String("update.delay", j.Spec.Update.Delay),
+			attribute.String("update.group", j.Spec.Update.Group),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		if !next.IsZero() {
+			span.SetAttributes(attribute.String("next_scheduled", next.Format(time.RFC3339)))
+		}
+		span.End()
+	}()
 
 	delay, err := time.ParseDuration(j.Spec.Update.Delay)
 	if err != nil {
@@ -333,7 +510,7 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 	}
 
 	const forgiveness = time.Minute
-	next := schedExpr.Next(time.Now().Add(-forgiveness))
+	next = schedExpr.Next(time.Now().Add(-forgiveness))
 
 	var lockReq types.NamespacedName
 	if j.Spec.Update.Group != "" {

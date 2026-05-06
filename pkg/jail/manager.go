@@ -9,10 +9,43 @@ import (
 	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/zfs"
 )
+
+// tracer is the package-level OpenTelemetry tracer for jail manager
+// operations. Spans are emitted for every major manager method and the
+// principal sub-steps inside EnsureJail and StartJail so that operators
+// can inspect the live code path in Tempo.
+var tracer = otel.Tracer("pkg/jail")
+
+// startSpan opens a child span on the existing context and returns the
+// new context, a finish function (call defer'd), and a helper to record
+// errors. Standardising the boilerplate keeps the call-sites readable.
+func startSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	ctx, span := tracer.Start(ctx, name)
+	if len(attrs) > 0 {
+		span.SetAttributes(attrs...)
+	}
+	return ctx, span
+}
+
+// finishSpan ends a span and records an error status if err is non-nil.
+// Use as `defer finishSpan(span, &err)` from inside a function whose named
+// return value is `err error`.
+func finishSpan(span trace.Span, errPtr *error) {
+	if errPtr != nil && *errPtr != nil {
+		span.RecordError(*errPtr)
+		span.SetStatus(codes.Error, (*errPtr).Error())
+	}
+	span.End()
+}
 
 const (
 	// JailRootDir is the subdirectory under basePath that holds per-jail datasets.
@@ -129,15 +162,25 @@ func NewManager(ctx context.Context, basePath, zfsDataset, mirror string, exec h
 
 // EnsureJail provisions the jail described by j. It is safe to call multiple
 // times; each step is skipped when already in the desired state.
-func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
+func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) (err error) {
+	ctx, span := startSpan(ctx, "jail.EnsureJail",
+		attribute.String("jail.name", j.Name),
+		attribute.String("jail.release", j.Spec.Release),
+		attribute.String("jail.interface", j.Spec.Interface),
+		attribute.Int("jail.mounts", len(j.Spec.Mounts)),
+		attribute.Int("jail.inets", len(j.Spec.Inets)),
+		attribute.Int("jail.inet6s", len(j.Spec.Inet6s)),
+	)
+	defer finishSpan(span, &err)
+
 	// 1. Ensure the FreeBSD release is downloaded and extracted.
-	if err := m.releases.Ensure(ctx, j.Spec.Release); err != nil {
+	if err = m.tracedEnsureRelease(ctx, j.Spec.Release); err != nil {
 		return fmt.Errorf("ensuring release %s: %w", j.Spec.Release, err)
 	}
 
 	// 2. Ensure the per-jail container dataset exists (holds fstab, logs, etc.).
 	jailDataset := filepath.Join(m.dataset, JailRootDir, j.Name)
-	if err := m.zfs.Ensure(ctx, jailDataset); err != nil {
+	if err = m.tracedEnsureDataset(ctx, jailDataset); err != nil {
 		return fmt.Errorf("ensuring jail dataset %s: %w", jailDataset, err)
 	}
 
@@ -147,25 +190,108 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 	jailRootDataset := filepath.Join(m.dataset, JailRootDir, j.Name, "root")
 	jailRoot := filepath.Join(m.basePath, JailRootDir, j.Name, "root")
 
+	if err = m.tracedEnsureRoot(ctx, j, jailRootDataset, jailRoot); err != nil {
+		return err
+	}
+
+	// 4. Copy essential host files into the jail root.
+	if err = m.tracedCopyHostFiles(ctx, j.Name, jailRoot); err != nil {
+		return fmt.Errorf("copying host files into jail %s: %w", j.Name, err)
+	}
+
+	// 5. Write per-jail fstab and ensure mountpoint directories exist.
+	fstabChanged, err := m.tracedWriteFstab(ctx, j, jailRoot)
+	if err != nil {
+		return err
+	}
+
+	// 6. Write <confDir>/<name>.conf.
+	confChanged, err := m.tracedWriteJailConf(ctx, j, jailRoot)
+	if err != nil {
+		return err
+	}
+
+	// 7. Sync PF anchor when rules are declared.
+	if j.Spec.PF != nil {
+		if err = m.tracedEnsurePFAnchor(ctx, j); err != nil {
+			return err
+		}
+	}
+
+	// 8. Register the jail with FreeBSD's rc.d system so it starts on boot
+	// independently of nodemanager.
+	if err = m.tracedEnsureRCService(ctx, j.Name); err != nil {
+		return fmt.Errorf("registering rc.d service for jail %s: %w", j.Name, err)
+	}
+
+	// Stop the jail when jail.conf or fstab changed so the controller restarts
+	// it with the new configuration.  A running jail reads both files only at
+	// start time.  Errors are ignored — the jail may not be running.
+	if confChanged || fstabChanged {
+		span.AddEvent("config changed, cycling jail",
+			trace.WithAttributes(
+				attribute.Bool("conf_changed", confChanged),
+				attribute.Bool("fstab_changed", fstabChanged),
+			))
+		_ = m.StopJail(ctx, j.Name)
+	}
+
+	// 9. Stop the jail if it is running with stale network config.  A running
+	// jail ignores jail.conf changes; it must be cycled for the new IP to take
+	// effect.  The controller's StartJail call will restart it on the next pass.
+	if err = m.cycleJailIfNetworkChanged(ctx, j); err != nil {
+		return fmt.Errorf("checking network change for %s: %w", j.Name, err)
+	}
+
+	return nil
+}
+
+// tracedEnsureRelease wraps the release manager's Ensure call in its own span.
+func (m *manager) tracedEnsureRelease(ctx context.Context, release string) (err error) {
+	ctx, span := startSpan(ctx, "jail.EnsureRelease", attribute.String("release", release))
+	defer finishSpan(span, &err)
+	return m.releases.Ensure(ctx, release)
+}
+
+// tracedEnsureDataset wraps zfs.Ensure for the per-jail container dataset.
+func (m *manager) tracedEnsureDataset(ctx context.Context, dataset string) (err error) {
+	ctx, span := startSpan(ctx, "jail.EnsureDataset", attribute.String("dataset", dataset))
+	defer finishSpan(span, &err)
+	return m.zfs.Ensure(ctx, dataset)
+}
+
+// tracedEnsureRoot creates (or recreates after a release change) the jail's
+// ZFS clone at jailRootDataset, mounted at jailRoot.
+func (m *manager) tracedEnsureRoot(ctx context.Context, j freebsdv1.Jail, jailRootDataset, jailRoot string) (err error) {
+	ctx, span := startSpan(ctx, "jail.EnsureRoot",
+		attribute.String("jail.name", j.Name),
+		attribute.String("dataset", jailRootDataset),
+		attribute.String("path", jailRoot),
+	)
+	defer finishSpan(span, &err)
+
 	exists, err := m.zfs.Exists(ctx, jailRootDataset)
 	if err != nil {
 		return fmt.Errorf("checking jail root dataset: %w", err)
 	}
+	span.SetAttributes(attribute.Bool("dataset.existed", exists))
 
 	if exists {
-		// Check whether the existing clone was built from spec.release.
-		// Read origin before any destructive operation.
 		origin, err := m.zfs.GetProperty(ctx, jailRootDataset, "origin")
 		if err != nil {
 			return fmt.Errorf("checking jail root origin for %s: %w", j.Name, err)
 		}
+		span.SetAttributes(attribute.String("dataset.origin", origin))
 		if origin != "" && origin != "-" && releaseFromOrigin(origin) != j.Spec.Release {
-			// User changed spec.release — reprovision from the new base.
+			span.AddEvent("release drift, reprovisioning",
+				trace.WithAttributes(
+					attribute.String("origin.release", releaseFromOrigin(origin)),
+					attribute.String("spec.release", j.Spec.Release),
+				))
 			_ = m.StopJail(ctx, j.Name)
 			if err := m.zfs.DestroyDatasetRecursive(ctx, jailRootDataset); err != nil {
 				return fmt.Errorf("destroying stale jail root for %s: %w", j.Name, err)
 			}
-			// Best-effort removal of the old release snapshot created for this jail.
 			_ = m.zfs.DestroyDataset(ctx, origin)
 			exists = false
 		}
@@ -180,79 +306,110 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 			return fmt.Errorf("checking release snapshot for %s: %w", j.Name, err)
 		}
 		if !snapshotExists {
+			span.AddEvent("creating release snapshot")
 			if err := m.zfs.Snapshot(ctx, releaseDataset, j.Name); err != nil {
 				return fmt.Errorf("snapshotting release for %s: %w", j.Name, err)
 			}
 		}
+		span.AddEvent("cloning release into jail root")
 		if err := m.zfs.Clone(ctx, snapshot, jailRootDataset, "mountpoint="+jailRoot); err != nil {
 			return fmt.Errorf("cloning jail root for %s: %w", j.Name, err)
 		}
 	}
-
-	// 4. Copy essential host files into the jail root.
-	if err := m.copyHostFiles(jailRoot); err != nil {
-		return fmt.Errorf("copying host files into jail %s: %w", j.Name, err)
-	}
-
-	// 5. Write per-jail fstab and ensure mountpoint directories exist.
-	var fstabChanged bool
-	fstabPath := ""
-	if len(j.Spec.Mounts) > 0 {
-		fstabPath = filepath.Join(m.basePath, JailRootDir, j.Name, "fstab")
-		var err error
-		fstabChanged, err = writeFstab(fstabPath, jailRoot, j.Spec.Mounts)
-		if err != nil {
-			return fmt.Errorf("writing fstab for %s: %w", j.Name, err)
-		}
-		for _, mount := range j.Spec.Mounts {
-			mp := filepath.Join(jailRoot, mount.JailPath)
-			if err := os.MkdirAll(mp, 0o755); err != nil {
-				return fmt.Errorf("creating mountpoint %s for jail %s: %w", mp, j.Name, err)
-			}
-		}
-	}
-
-	// 6. Write <confDir>/<name>.conf.
-	confChanged, err := writeJailConf(m.confDir, j.Name, jailRoot, j.Spec)
-	if err != nil {
-		return fmt.Errorf("writing jail.conf for %s: %w", j.Name, err)
-	}
-
-	// 7. Sync PF anchor when rules are declared.
-	if j.Spec.PF != nil {
-		anchor := jailAnchorName(j.Name, j.Spec.PF)
-		if err := m.EnsureAnchor(ctx, anchor, j.Spec.PF.Rules); err != nil {
-			return fmt.Errorf("syncing PF anchor %s for jail %s: %w", anchor, j.Name, err)
-		}
-	}
-
-	// 8. Register the jail with FreeBSD's rc.d system so it starts on boot
-	// independently of nodemanager.
-	if err := ensureJailRCService(ctx, m.exec, j.Name, m.confDir); err != nil {
-		return fmt.Errorf("registering rc.d service for jail %s: %w", j.Name, err)
-	}
-
-	// Stop the jail when jail.conf or fstab changed so the controller restarts
-	// it with the new configuration.  A running jail reads both files only at
-	// start time.  Errors are ignored — the jail may not be running.
-	if confChanged || fstabChanged {
-		_ = m.StopJail(ctx, j.Name)
-	}
-
-	// 8. Stop the jail if it is running with stale network config.  A running
-	// jail ignores jail.conf changes; it must be cycled for the new IP to take
-	// effect.  The controller's StartJail call will restart it on the next pass.
-	if err := m.cycleJailIfNetworkChanged(ctx, j); err != nil {
-		return fmt.Errorf("checking network change for %s: %w", j.Name, err)
-	}
-
 	return nil
+}
+
+// tracedCopyHostFiles wraps copyHostFiles in a span.
+func (m *manager) tracedCopyHostFiles(ctx context.Context, jailName, jailRoot string) (err error) {
+	_, span := startSpan(ctx, "jail.CopyHostFiles",
+		attribute.String("jail.name", jailName),
+		attribute.String("jail.root", jailRoot),
+	)
+	defer finishSpan(span, &err)
+	return m.copyHostFiles(jailRoot)
+}
+
+// tracedWriteFstab writes the per-jail fstab and creates mountpoint dirs.
+func (m *manager) tracedWriteFstab(ctx context.Context, j freebsdv1.Jail, jailRoot string) (changed bool, err error) {
+	_, span := startSpan(ctx, "jail.WriteFstab",
+		attribute.String("jail.name", j.Name),
+		attribute.Int("mounts", len(j.Spec.Mounts)),
+	)
+	defer finishSpan(span, &err)
+
+	if len(j.Spec.Mounts) == 0 {
+		return false, nil
+	}
+
+	fstabPath := filepath.Join(m.basePath, JailRootDir, j.Name, "fstab")
+	changed, err = writeFstab(fstabPath, jailRoot, j.Spec.Mounts)
+	if err != nil {
+		return false, fmt.Errorf("writing fstab for %s: %w", j.Name, err)
+	}
+	span.SetAttributes(attribute.Bool("changed", changed))
+	for _, mount := range j.Spec.Mounts {
+		mp := filepath.Join(jailRoot, mount.JailPath)
+		if mkErr := os.MkdirAll(mp, 0o755); mkErr != nil {
+			err = fmt.Errorf("creating mountpoint %s for jail %s: %w", mp, j.Name, mkErr)
+			return false, err
+		}
+	}
+	return changed, nil
+}
+
+// tracedWriteJailConf writes /etc/jail.conf.d/<name>.conf for j.
+func (m *manager) tracedWriteJailConf(ctx context.Context, j freebsdv1.Jail, jailRoot string) (changed bool, err error) {
+	_, span := startSpan(ctx, "jail.WriteJailConf",
+		attribute.String("jail.name", j.Name),
+		attribute.String("conf.dir", m.confDir),
+	)
+	defer finishSpan(span, &err)
+
+	changed, err = writeJailConf(m.confDir, j.Name, jailRoot, j.Spec)
+	if err != nil {
+		return false, fmt.Errorf("writing jail.conf for %s: %w", j.Name, err)
+	}
+	span.SetAttributes(attribute.Bool("changed", changed))
+	return changed, nil
+}
+
+// tracedEnsurePFAnchor syncs the PF anchor for j.
+func (m *manager) tracedEnsurePFAnchor(ctx context.Context, j freebsdv1.Jail) (err error) {
+	anchor := jailAnchorName(j.Name, j.Spec.PF)
+	ctx, span := startSpan(ctx, "jail.EnsurePFAnchor",
+		attribute.String("jail.name", j.Name),
+		attribute.String("anchor", anchor),
+		attribute.Int("rules", len(j.Spec.PF.Rules)),
+	)
+	defer finishSpan(span, &err)
+
+	if err = m.EnsureAnchor(ctx, anchor, j.Spec.PF.Rules); err != nil {
+		return fmt.Errorf("syncing PF anchor %s for jail %s: %w", anchor, j.Name, err)
+	}
+	return nil
+}
+
+// tracedEnsureRCService writes the rc.d script and enables it via sysrc.
+func (m *manager) tracedEnsureRCService(ctx context.Context, jailName string) (err error) {
+	ctx, span := startSpan(ctx, "jail.EnsureRCService",
+		attribute.String("jail.name", jailName),
+	)
+	defer finishSpan(span, &err)
+	return ensureJailRCService(ctx, m.exec, jailName, m.confDir)
 }
 
 // DeleteJail stops the jail (if running), then destroys its ZFS datasets and
 // removes its config files. The release dataset and its snapshot are left in
 // place for reuse by other jails on the same release.
-func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
+func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) (err error) {
+	ctx, span := startSpan(ctx, "jail.DeleteJail",
+		attribute.String("jail.name", j.Name),
+	)
+	defer finishSpan(span, &err)
+	return m.deleteJail(ctx, j)
+}
+
+func (m *manager) deleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	// Stop the jail gracefully before tearing down its filesystem. Ignore
 	// errors here — the jail may already be stopped.
 	_ = m.StopJail(ctx, j.Name)
@@ -334,27 +491,40 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	return nil
 }
 
-func (m *manager) StartJail(ctx context.Context, j freebsdv1.Jail) error {
+func (m *manager) StartJail(ctx context.Context, j freebsdv1.Jail) (err error) {
+	ctx, span := startSpan(ctx, "jail.StartJail",
+		attribute.String("jail.name", j.Name),
+		attribute.String("jail.interface", j.Spec.Interface),
+		attribute.Int("jail.mounts", len(j.Spec.Mounts)),
+		attribute.Int("jail.inets", len(j.Spec.Inets)),
+		attribute.Int("jail.inet6s", len(j.Spec.Inet6s)),
+	)
+	defer finishSpan(span, &err)
+
 	jailRoot := filepath.Join(m.basePath, JailRootDir, j.Name, "root")
 
 	// Unmount any stale nullfs mounts left by a previous failed start (deepest first).
+	span.AddEvent("unmount stale jail mounts")
 	m.unmountJailMounts(ctx, jailRoot, j.Spec.Mounts)
 
 	// Remove IP aliases that daemons (e.g. OpenBGPD) may have re-added since the
 	// last stop. jail(8) will re-add them during startup.
+	span.AddEvent("remove stale IP aliases")
 	m.removeIPAliasesForSpec(ctx, j.Spec)
 
 	// Mount filesystems in Go code before jail -c so they land entirely outside
 	// any jail(8) VFS lock context.  Running nullfs mounts inside exec.prestart
 	// still deadlocks because jail(8) path-resolves the jail root (acquiring its
 	// ZFS vnode lock) before executing exec.prestart hooks.
-	if err := m.mountJailMounts(ctx, jailRoot, j.Spec.Mounts); err != nil {
+	span.AddEvent("mount jail filesystems")
+	if err = m.mountJailMounts(ctx, jailRoot, j.Spec.Mounts); err != nil {
 		m.unmountJailMounts(ctx, jailRoot, j.Spec.Mounts)
 		return fmt.Errorf("pre-start mount for %s: %w", j.Name, err)
 	}
 
 	confPath := filepath.Join(m.confDir, j.Name+".conf")
-	if err := m.exec.SimpleRunCommand(ctx, "jail", "-c", "-f", confPath, j.Name); err != nil {
+	span.AddEvent("invoke jail -c", trace.WithAttributes(attribute.String("conf.path", confPath)))
+	if err = m.exec.SimpleRunCommand(ctx, "jail", "-c", "-f", confPath, j.Name); err != nil {
 		m.unmountJailMounts(ctx, jailRoot, j.Spec.Mounts)
 		return err
 	}
@@ -362,10 +532,16 @@ func (m *manager) StartJail(ctx context.Context, j freebsdv1.Jail) error {
 }
 
 // mountJailMounts runs mount commands for each declared mount, shallowest first.
-func (m *manager) mountJailMounts(ctx context.Context, jailRoot string, mounts []freebsdv1.JailMount) error {
+func (m *manager) mountJailMounts(ctx context.Context, jailRoot string, mounts []freebsdv1.JailMount) (err error) {
 	if len(mounts) == 0 {
 		return nil
 	}
+	ctx, span := startSpan(ctx, "jail.MountJailMounts",
+		attribute.String("jail.root", jailRoot),
+		attribute.Int("mounts", len(mounts)),
+	)
+	defer finishSpan(span, &err)
+
 	sorted := make([]freebsdv1.JailMount, len(mounts))
 	copy(sorted, mounts)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -381,7 +557,14 @@ func (m *manager) mountJailMounts(ctx context.Context, jailRoot string, mounts [
 			opts = "ro"
 		}
 		dest := filepath.Join(jailRoot, mount.JailPath)
-		if err := m.exec.SimpleRunCommand(ctx, "mount", "-t", fsType, "-o", opts, mount.HostPath, dest); err != nil {
+		span.AddEvent("mount",
+			trace.WithAttributes(
+				attribute.String("type", fsType),
+				attribute.String("opts", opts),
+				attribute.String("source", mount.HostPath),
+				attribute.String("dest", dest),
+			))
+		if err = m.exec.SimpleRunCommand(ctx, "mount", "-t", fsType, "-o", opts, mount.HostPath, dest); err != nil {
 			return fmt.Errorf("mounting %s at %s: %w", mount.HostPath, dest, err)
 		}
 	}
@@ -394,6 +577,12 @@ func (m *manager) unmountJailMounts(ctx context.Context, jailRoot string, mounts
 	if len(mounts) == 0 {
 		return
 	}
+	ctx, span := startSpan(ctx, "jail.UnmountJailMounts",
+		attribute.String("jail.root", jailRoot),
+		attribute.Int("mounts", len(mounts)),
+	)
+	defer span.End()
+
 	paths := make([]string, len(mounts))
 	for i, mount := range mounts {
 		paths[i] = filepath.Join(jailRoot, mount.JailPath)
@@ -410,6 +599,13 @@ func (m *manager) removeIPAliasesForSpec(ctx context.Context, spec freebsdv1.Jai
 	if spec.Interface == "" {
 		return
 	}
+	ctx, span := startSpan(ctx, "jail.RemoveIPAliases",
+		attribute.String("interface", spec.Interface),
+		attribute.Int("inets", len(spec.Inets)),
+		attribute.Int("inet6s", len(spec.Inet6s)),
+	)
+	defer span.End()
+
 	for _, addr := range spec.Inets {
 		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", spec.Interface, "inet", stripCIDR(addr), "-alias")
 	}
@@ -418,18 +614,28 @@ func (m *manager) removeIPAliasesForSpec(ctx context.Context, spec freebsdv1.Jai
 	}
 }
 
-func (m *manager) StopJail(ctx context.Context, name string) error {
+func (m *manager) StopJail(ctx context.Context, name string) (err error) {
+	ctx, span := startSpan(ctx, "jail.StopJail", attribute.String("jail.name", name))
+	defer finishSpan(span, &err)
 	return m.exec.SimpleRunCommand(ctx, "jail", "-r", name)
 }
 
-func (m *manager) RestartJail(ctx context.Context, j freebsdv1.Jail) error {
-	if err := m.StopJail(ctx, j.Name); err != nil {
+func (m *manager) RestartJail(ctx context.Context, j freebsdv1.Jail) (err error) {
+	ctx, span := startSpan(ctx, "jail.RestartJail", attribute.String("jail.name", j.Name))
+	defer finishSpan(span, &err)
+
+	if err = m.StopJail(ctx, j.Name); err != nil {
 		return err
 	}
 	return m.StartJail(ctx, j)
 }
 
-func (m *manager) IsRunning(ctx context.Context, name string) (bool, error) {
+func (m *manager) IsRunning(ctx context.Context, name string) (running bool, err error) {
+	ctx, span := startSpan(ctx, "jail.IsRunning", attribute.String("jail.name", name))
+	defer func() {
+		span.SetAttributes(attribute.Bool("running", running))
+		finishSpan(span, &err)
+	}()
 	return isJailRunning(ctx, m.exec, name)
 }
 
@@ -437,22 +643,41 @@ func (m *manager) InstalledRelease(jailRoot string) (string, error) {
 	return installedRelease(jailRoot)
 }
 
-func (m *manager) ExecInJail(ctx context.Context, jailName, command string, args ...string) error {
+func (m *manager) ExecInJail(ctx context.Context, jailName, command string, args ...string) (err error) {
+	ctx, span := startSpan(ctx, "jail.ExecInJail",
+		attribute.String("jail.name", jailName),
+		attribute.String("command", command),
+	)
+	defer finishSpan(span, &err)
+
 	cmdArgs := append([]string{jailName, command}, args...)
 	return m.exec.SimpleRunCommand(ctx, "jexec", cmdArgs...)
 }
 
-func (m *manager) BootstrapPkg(ctx context.Context, jailName, jailRoot string) error {
+func (m *manager) BootstrapPkg(ctx context.Context, jailName, jailRoot string) (err error) {
+	ctx, span := startSpan(ctx, "jail.BootstrapPkg",
+		attribute.String("jail.name", jailName),
+	)
+	defer finishSpan(span, &err)
+
 	pkgPath := filepath.Join(jailRoot, "usr/local/sbin/pkg")
-	if _, err := os.Stat(pkgPath); err == nil {
+	if _, statErr := os.Stat(pkgPath); statErr == nil {
+		span.SetAttributes(attribute.Bool("already_installed", true))
 		return nil
 	}
+	span.SetAttributes(attribute.Bool("already_installed", false))
+	span.AddEvent("running pkg bootstrap inside jail")
 	return m.ExecInJail(ctx, jailName, "env", "ASSUME_ALWAYS_YES=yes", "pkg", "bootstrap")
 }
 
 // UpdateJail runs freebsd-update(8) against the jail root to apply patch-level
 // security updates.  The jail should be stopped before calling this.
-func (m *manager) UpdateJail(ctx context.Context, jailRoot string) error {
+func (m *manager) UpdateJail(ctx context.Context, jailRoot string) (err error) {
+	ctx, span := startSpan(ctx, "jail.UpdateJail",
+		attribute.String("jail.root", jailRoot),
+	)
+	defer finishSpan(span, &err)
+
 	return m.exec.SimpleRunCommand(ctx, "env", "PAGER=cat",
 		"/usr/sbin/freebsd-update", "-b", jailRoot, "--not-running-from-cron", "fetch", "install")
 }
@@ -470,17 +695,28 @@ func jailAnchorName(jailName string, pf *freebsdv1.JailPF) string {
 // existing rules atomically. Rules are written to pfctl's stdin to avoid
 // temporary files, which matters on write-limited media such as SD cards.
 // If rules is empty the anchor is flushed instead.
-func (m *manager) EnsureAnchor(ctx context.Context, anchorName string, rules []string) error {
+func (m *manager) EnsureAnchor(ctx context.Context, anchorName string, rules []string) (err error) {
+	ctx, span := startSpan(ctx, "jail.EnsureAnchor",
+		attribute.String("anchor", anchorName),
+		attribute.Int("rules", len(rules)),
+	)
+	defer finishSpan(span, &err)
+
 	if len(rules) == 0 {
 		return m.FlushAnchor(ctx, anchorName)
 	}
 	input := strings.Join(rules, "\n") + "\n"
-	_, _, err := m.exec.RunCommandWithInput(ctx, input, "pfctl", "-a", anchorName, "-f", "-")
+	_, _, err = m.exec.RunCommandWithInput(ctx, input, "pfctl", "-a", anchorName, "-f", "-")
 	return err
 }
 
 // FlushAnchor removes all rules, NAT rules, and tables from a named PF anchor.
-func (m *manager) FlushAnchor(ctx context.Context, anchorName string) error {
+func (m *manager) FlushAnchor(ctx context.Context, anchorName string) (err error) {
+	ctx, span := startSpan(ctx, "jail.FlushAnchor",
+		attribute.String("anchor", anchorName),
+	)
+	defer finishSpan(span, &err)
+
 	return m.exec.SimpleRunCommand(ctx, "pfctl", "-a", anchorName, "-F", "all")
 }
 
@@ -584,8 +820,16 @@ func (m *manager) unmountAll(ctx context.Context, jailRoot string) {
 // not running — aliases can be stranded after a crash or kill, causing
 // jail -c to fail with "File exists".
 // The function is a no-op when no network address is declared in spec.
-func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jail) error {
+func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jail) (err error) {
+	ctx, span := startSpan(ctx, "jail.CycleJailIfNetworkChanged",
+		attribute.String("jail.name", j.Name),
+		attribute.StringSlice("spec.inets", j.Spec.Inets),
+		attribute.StringSlice("spec.inet6s", j.Spec.Inet6s),
+	)
+	defer finishSpan(span, &err)
+
 	if len(j.Spec.Inets) == 0 && len(j.Spec.Inet6s) == 0 {
+		span.AddEvent("no network spec, skipping")
 		return nil
 	}
 
@@ -593,24 +837,40 @@ func (m *manager) cycleJailIfNetworkChanged(ctx context.Context, j freebsdv1.Jai
 	if err != nil {
 		return fmt.Errorf("listing running jails: %w", err)
 	}
+	span.SetAttributes(attribute.Int("running.jails", len(jails)))
 
+	wasRunning := false
 	for _, running := range jails {
 		if running.Name != j.Name {
 			continue
 		}
+		wasRunning = true
+		span.SetAttributes(
+			attribute.StringSlice("running.ipv4_addrs", running.IPv4Addrs),
+			attribute.StringSlice("running.ipv6_addrs", running.IPv6Addrs),
+		)
 
 		wantV4 := stripCIDRSlice(j.Spec.Inets)
 		wantV6 := stripCIDRSlice(j.Spec.Inet6s)
 
 		if ipSetsEqual(wantV4, running.IPv4Addrs) && ipSetsEqual(wantV6, running.IPv6Addrs) {
 			// Running with the correct config — nothing to do.
+			span.AddEvent("network matches spec, no action")
 			return nil
 		}
 
 		// Config changed: stop so the controller restarts with the new conf.
+		span.AddEvent("network mismatch detected, stopping jail",
+			trace.WithAttributes(
+				attribute.StringSlice("want.ipv4", wantV4),
+				attribute.StringSlice("have.ipv4", running.IPv4Addrs),
+				attribute.StringSlice("want.ipv6", wantV6),
+				attribute.StringSlice("have.ipv6", running.IPv6Addrs),
+			))
 		_ = m.StopJail(ctx, j.Name)
 		break
 	}
+	span.SetAttributes(attribute.Bool("was_running", wasRunning))
 
 	// Jail is not running (never started, crashed, or we just stopped it).
 	// Remove any orphaned IP aliases so jail -c can add them without error.
