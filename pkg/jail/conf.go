@@ -84,15 +84,31 @@ func writeJailConf(confDir, name, jailRoot string, spec freebsdv1.JailSpec) (boo
 
 	// Build exec.prestart commands:
 	//   1. Unmount stale mounts (deepest first) from previous failed starts.
-	//   2. Mount nullfs/other mounts before jail creation so they happen
+	//   2. Remove IP aliases that may have been re-added by BGP or other
+	//      daemons between StopJail and the next start attempt.  Running this
+	//      immediately before jail -c minimises the race window.
+	//   3. Mount nullfs/other mounts before jail creation so they happen
 	//      outside the VFS locks that jail(8) holds during jail -c. Mounting
 	//      via mount.fstab deadlocks on FreeBSD because jail -c holds the
 	//      jail-root VFS lock while processing fstab entries.
 	prestartCmds := prestartUnmounts(jailRoot, spec.Mounts)
+	prestartCmds = append(prestartCmds, prestartIPCleanup(spec)...)
 	prestartCmds = append(prestartCmds, prestartMounts(jailRoot, spec.Mounts)...)
 
 	// exec.poststop unmounts the mounts after the jail stops.
 	poststopCmds := poststopUnmounts(jailRoot, spec.Mounts)
+
+	// Build a filtered copy of Parameters: strip mount.fstab because mounts are
+	// now managed via exec.prestart/exec.poststop. Keeping mount.fstab in
+	// Parameters would cause jail(8) to process the fstab file while holding the
+	// jail-root VFS lock, deadlocking nullfs mounts on FreeBSD.
+	params := make(map[string]string, len(spec.Parameters))
+	for k, v := range spec.Parameters {
+		if k == "mount.fstab" {
+			continue
+		}
+		params[k] = v
+	}
 
 	data := jailConfData{
 		Name:         name,
@@ -102,7 +118,7 @@ func writeJailConf(confDir, name, jailRoot string, spec freebsdv1.JailSpec) (boo
 		Inets:        spec.Inets,
 		Inet6s:       spec.Inet6s,
 		Release:      spec.Release,
-		Parameters:   spec.Parameters,
+		Parameters:   params,
 		PrestartCmds: prestartCmds,
 		PoststopCmds: poststopCmds,
 	}
@@ -189,6 +205,25 @@ func poststopUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
 	cmds := make([]string, len(paths))
 	for i, p := range paths {
 		cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
+	}
+	return cmds
+}
+
+// prestartIPCleanup returns exec.prestart shell commands that remove IP aliases
+// for each address declared in the jail spec. This runs immediately before
+// jail(8) adds the aliases itself, closing the window in which daemons such as
+// OpenBGPD can re-add an alias between StopJail and the next StartJail and
+// cause jail(8) to fail with "File exists".
+func prestartIPCleanup(spec freebsdv1.JailSpec) []string {
+	if spec.Interface == "" || (len(spec.Inets) == 0 && len(spec.Inet6s) == 0) {
+		return nil
+	}
+	var cmds []string
+	for _, addr := range spec.Inets {
+		cmds = append(cmds, fmt.Sprintf("ifconfig %s inet %s -alias 2>/dev/null || true", spec.Interface, stripCIDR(addr)))
+	}
+	for _, addr := range spec.Inet6s {
+		cmds = append(cmds, fmt.Sprintf("ifconfig %s inet6 %s -alias 2>/dev/null || true", spec.Interface, stripCIDR(addr)))
 	}
 	return cmds
 }

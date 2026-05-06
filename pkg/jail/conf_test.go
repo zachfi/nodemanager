@@ -173,6 +173,53 @@ func TestWriteJailConf(t *testing.T) {
 				`exec.prestart += "while umount -f /usr/local/nodemanager/jails/minimal/root/dev 2>/dev/null; do true; done";`,
 			},
 		},
+		{
+			name:     "IP alias cleanup before jail start",
+			jailName: "dns0",
+			jailRoot: "/usr/local/nodemanager/jails/dns0/root",
+			spec: freebsdv1.JailSpec{
+				Release:   "14.2-RELEASE",
+				Interface: "lo1",
+				Inets:     []string{"192.0.2.53/32"},
+				Inet6s:    []string{"2001:db8::53/128"},
+			},
+			want: []string{
+				`exec.prestart += "ifconfig lo1 inet 192.0.2.53 -alias 2>/dev/null || true";`,
+				`exec.prestart += "ifconfig lo1 inet6 2001:db8::53 -alias 2>/dev/null || true";`,
+			},
+		},
+		{
+			name:     "no IP cleanup when interface is empty",
+			jailName: "nonet",
+			jailRoot: "/usr/local/nodemanager/jails/nonet/root",
+			spec: freebsdv1.JailSpec{
+				Release: "14.2-RELEASE",
+				Inets:   []string{"192.0.2.1/32"},
+			},
+			notWant: []string{"-alias"},
+		},
+		{
+			name:     "mount.fstab stripped from Parameters even when set",
+			jailName: "poud1",
+			jailRoot: "/usr/local/nodemanager/jails/poud1/root",
+			spec: freebsdv1.JailSpec{
+				Release: "14.2-RELEASE",
+				Mounts: []freebsdv1.JailMount{
+					{HostPath: "/usr/local/poudriere", JailPath: "/usr/local/poudriere"},
+				},
+				Parameters: map[string]string{
+					"mount.fstab":     "/usr/local/nodemanager/jails/poud1/fstab",
+					"children.max":    "200",
+					"allow.mount.zfs": "",
+				},
+			},
+			want: []string{
+				`exec.prestart += "mount -t nullfs -o rw /usr/local/poudriere /usr/local/nodemanager/jails/poud1/root/usr/local/poudriere";`,
+				`children.max = 200;`,
+				`allow.mount.zfs;`,
+			},
+			notWant: []string{"mount.fstab"},
+		},
 	}
 
 	for _, tc := range cases {
