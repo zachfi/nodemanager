@@ -490,10 +490,17 @@ func (r *JailReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 	}
 
+	// For JailTemplate: only propagate changes when the template spec actually
+	// changes (generation bump).  This filters informer resync events where old
+	// and new objects are identical, preventing a tight reconcile loop when many
+	// jails reference the same template.
+	tmplChanged := predicate.GenerationChangedPredicate{}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&freebsdv1.Jail{}, ctrlbuilder.WithPredicates(genChanged)).
 		Watches(&freebsdv1.JailTemplate{},
-			ctrlhandler.EnqueueRequestsFromMapFunc(r.jailsReferencingTemplate)).
+			ctrlhandler.EnqueueRequestsFromMapFunc(r.jailsReferencingTemplate),
+			ctrlbuilder.WithPredicates(tmplChanged)).
 		Named(func() string {
 			if r.controllerName != "" {
 				return r.controllerName
