@@ -118,15 +118,38 @@ type manager struct {
 	dataset string
 	// confDir is where per-jail .conf fragments are written.
 	confDir string
+	// rcServiceDir is where per-jail rc.d scripts are written. Defaults to
+	// /usr/local/etc/rc.d on FreeBSD; tests override with t.TempDir().
+	rcServiceDir string
 
 	zfs      zfs.Manager
 	exec     handler.ExecHandler
 	releases ReleaseManager
 }
 
+// Option configures a Manager at construction time.
+type Option func(*manager)
+
+// WithConfDir overrides the directory where per-jail .conf fragments are
+// written.  Defaults to DefaultJailConfDir (/etc/jail.conf.d).
+func WithConfDir(dir string) Option {
+	return func(m *manager) { m.confDir = dir }
+}
+
+// WithRCServiceDir overrides the directory where per-jail rc.d scripts are
+// written.  Defaults to /usr/local/etc/rc.d.  Tests pass t.TempDir() so they
+// don't need root or a FreeBSD host to exercise the rc.d code path.
+func WithRCServiceDir(dir string) Option {
+	return func(m *manager) { m.rcServiceDir = dir }
+}
+
+// DefaultRCServiceDir is the standard FreeBSD location for per-jail rc.d
+// scripts.  Exported for tests that want to assert against the default.
+const DefaultRCServiceDir = "/usr/local/etc/rc.d"
+
 // NewManager initialises the manager, ensuring the base ZFS dataset layout
 // exists. It does not start or modify any jails.
-func NewManager(ctx context.Context, basePath, zfsDataset, mirror string, exec handler.ExecHandler) (Manager, error) {
+func NewManager(ctx context.Context, basePath, zfsDataset, mirror string, exec handler.ExecHandler, opts ...Option) (Manager, error) {
 	zfsManager := zfs.NewZfsManager(exec)
 
 	// Base dataset with explicit mountpoint.
@@ -150,14 +173,19 @@ func NewManager(ctx context.Context, basePath, zfsDataset, mirror string, exec h
 		exec,
 	)
 
-	return &manager{
-		basePath: basePath,
-		dataset:  zfsDataset,
-		confDir:  DefaultJailConfDir,
-		zfs:      zfsManager,
-		exec:     exec,
-		releases: releases,
-	}, nil
+	m := &manager{
+		basePath:     basePath,
+		dataset:      zfsDataset,
+		confDir:      DefaultJailConfDir,
+		rcServiceDir: DefaultRCServiceDir,
+		zfs:          zfsManager,
+		exec:         exec,
+		releases:     releases,
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m, nil
 }
 
 // EnsureJail provisions the jail described by j. It is safe to call multiple
@@ -395,7 +423,7 @@ func (m *manager) tracedEnsureRCService(ctx context.Context, jailName string) (e
 		attribute.String("jail.name", jailName),
 	)
 	defer finishSpan(span, &err)
-	return ensureJailRCService(ctx, m.exec, jailName, m.confDir)
+	return ensureJailRCService(ctx, m.exec, m.rcServiceDir, jailName, m.confDir)
 }
 
 // DeleteJail stops the jail (if running), then destroys its ZFS datasets and
@@ -426,7 +454,7 @@ func (m *manager) deleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	_ = m.FlushAnchor(ctx, anchor)
 
 	// Deregister from rc.d so the jail is not started on the next boot.
-	if err := removeJailRCService(ctx, m.exec, j.Name); err != nil {
+	if err := removeJailRCService(ctx, m.exec, m.rcServiceDir, j.Name); err != nil {
 		return fmt.Errorf("deregistering rc.d service for jail %s: %w", j.Name, err)
 	}
 

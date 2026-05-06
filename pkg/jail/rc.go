@@ -12,8 +12,6 @@ import (
 	"github.com/zachfi/nodemanager/pkg/handler"
 )
 
-const rcServiceDir = "/usr/local/etc/rc.d"
-
 // rcServiceTmpl renders a self-contained rc.d(8) service script for a single
 // jail. The script is placed in /usr/local/etc/rc.d/ (automatically sourced
 // by FreeBSD's rc) so the jail starts at boot even when nodemanager is not
@@ -53,10 +51,13 @@ type rcServiceData struct {
 	ConfPath string
 }
 
-// ensureJailRCService writes /usr/local/etc/rc.d/jail_<name> and enables it
+// ensureJailRCService writes <rcServiceDir>/jail_<name> and enables it
 // via sysrc(8). Writes are skipped when the file content and rc.conf value
 // are already correct, minimising disk activity on write-limited media.
-func ensureJailRCService(ctx context.Context, exec handler.ExecHandler, name, confDir string) error {
+//
+// rcServiceDir is the destination directory (defaults to /usr/local/etc/rc.d
+// in production; tests pass t.TempDir()).
+func ensureJailRCService(ctx context.Context, exec handler.ExecHandler, rcServiceDir, name, confDir string) error {
 	data := rcServiceData{
 		Name:     name,
 		ConfPath: filepath.Join(confDir, name+".conf"),
@@ -94,7 +95,7 @@ func ensureJailRCService(ctx context.Context, exec handler.ExecHandler, name, co
 
 // removeJailRCService disables the per-jail rc.d service and removes its
 // script. A missing script or rc.conf entry is treated as already clean.
-func removeJailRCService(ctx context.Context, exec handler.ExecHandler, name string) error {
+func removeJailRCService(ctx context.Context, exec handler.ExecHandler, rcServiceDir, name string) error {
 	rcvar := "jail_" + name + "_enable"
 	out, _, _ := exec.RunCommand(ctx, "sysrc", "-n", rcvar)
 	if strings.TrimSpace(out) == "YES" {

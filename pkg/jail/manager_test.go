@@ -39,12 +39,13 @@ func newTestManager(t *testing.T, statuses []int) (*manager, *handler.MockExecHa
 	exec := &handler.MockExecHandler{Status: statuses}
 	releases := &mockReleaseManager{basePath: filepath.Join(basePath, ReleaseRootDir)}
 	m := &manager{
-		basePath: basePath,
-		dataset:  "zroot/nodemanager",
-		confDir:  t.TempDir(),
-		zfs:      zfs.NewZfsManager(exec),
-		exec:     exec,
-		releases: releases,
+		basePath:     basePath,
+		dataset:      "zroot/nodemanager",
+		confDir:      t.TempDir(),
+		rcServiceDir: t.TempDir(),
+		zfs:          zfs.NewZfsManager(exec),
+		exec:         exec,
+		releases:     releases,
 	}
 	return m, exec, releases
 }
