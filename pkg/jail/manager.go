@@ -209,7 +209,7 @@ func (m *manager) EnsureJail(ctx context.Context, j freebsdv1.Jail) error {
 	}
 
 	// 6. Write <confDir>/<name>.conf.
-	confChanged, err := writeJailConf(m.confDir, j.Name, jailRoot, fstabPath, j.Spec)
+	confChanged, err := writeJailConf(m.confDir, j.Name, jailRoot, j.Spec)
 	if err != nil {
 		return fmt.Errorf("writing jail.conf for %s: %w", j.Name, err)
 	}

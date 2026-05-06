@@ -405,7 +405,7 @@ func TestEnsureJail_ConfUnchangedNoExtraStop(t *testing.T) {
 	// Write the exact conf that EnsureJail would produce so it detects no change.
 	confPath := filepath.Join(m.confDir, "stable.conf")
 	_, err := writeJailConf(m.confDir, "stable",
-		filepath.Join(m.basePath, JailRootDir, "stable", "root"), "", j.Spec)
+		filepath.Join(m.basePath, JailRootDir, "stable", "root"), j.Spec)
 	require.NoError(t, err)
 	_ = confPath
 

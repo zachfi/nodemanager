@@ -28,6 +28,9 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMa
 	exec.consolelog = "/var/log/jail_{{ .Name }}_console.log";
 {{- range .PrestartCmds }}
 	exec.prestart += "{{ . }}";
+{{ end -}}
+{{- range .PoststopCmds }}
+	exec.poststop += "{{ . }}";
 {{ end }}
 	mount.devfs;
 	devfs_ruleset = 4;
@@ -48,9 +51,6 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMa
 {{ if .Release }}
 	osrelease = "{{ .Release }}";
 {{ end -}}
-{{ if .FstabPath }}
-	mount.fstab = "{{ .FstabPath }}";
-{{ end -}}
 {{ range $k, $v := .Parameters }}
 {{ if $v }}	{{ $k }} = {{ $v }};
 {{ else }}	{{ $k }};
@@ -67,25 +67,32 @@ type jailConfData struct {
 	Inets        []string
 	Inet6s       []string
 	Release      string
-	FstabPath    string
 	Parameters   map[string]string
 	PrestartCmds []string
+	PoststopCmds []string
 }
 
 // writeJailConf renders and writes <confDir>/<name>.conf.
 // It returns true when the file already existed on disk with different content,
 // indicating that a running jail must be restarted to pick up the change.
 // A new file (first write) returns false — the jail hasn't started yet.
-func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.JailSpec) (bool, error) {
+func writeJailConf(confDir, name, jailRoot string, spec freebsdv1.JailSpec) (bool, error) {
 	hostname := spec.Hostname
 	if hostname == "" {
 		hostname = name
 	}
 
-	// Build exec.prestart unmount commands to clean up any stale mounts left
-	// by a previously failed start.  Paths are sorted deepest-first so nested
-	// mounts are unmounted before their parents.
+	// Build exec.prestart commands:
+	//   1. Unmount stale mounts (deepest first) from previous failed starts.
+	//   2. Mount nullfs/other mounts before jail creation so they happen
+	//      outside the VFS locks that jail(8) holds during jail -c. Mounting
+	//      via mount.fstab deadlocks on FreeBSD because jail -c holds the
+	//      jail-root VFS lock while processing fstab entries.
 	prestartCmds := prestartUnmounts(jailRoot, spec.Mounts)
+	prestartCmds = append(prestartCmds, prestartMounts(jailRoot, spec.Mounts)...)
+
+	// exec.poststop unmounts the mounts after the jail stops.
+	poststopCmds := poststopUnmounts(jailRoot, spec.Mounts)
 
 	data := jailConfData{
 		Name:         name,
@@ -95,9 +102,9 @@ func writeJailConf(confDir, name, jailRoot, fstabPath string, spec freebsdv1.Jai
 		Inets:        spec.Inets,
 		Inet6s:       spec.Inet6s,
 		Release:      spec.Release,
-		FstabPath:    fstabPath,
 		Parameters:   spec.Parameters,
 		PrestartCmds: prestartCmds,
+		PoststopCmds: poststopCmds,
 	}
 
 	var buf bytes.Buffer
@@ -128,6 +135,62 @@ func removeJailConf(confDir, name string) error {
 		return fmt.Errorf("removing jail.conf for %s: %w", name, err)
 	}
 	return nil
+}
+
+// prestartMounts returns exec.prestart shell commands that mount each declared
+// filesystem before the jail is created. Mounting in exec.prestart (rather than
+// via mount.fstab) avoids the FreeBSD VFS deadlock that occurs when jail(8)
+// holds the jail-root lock while processing fstab entries.
+// Mounts are applied shallowest-first so parent directories exist before
+// nested mounts are attempted.
+func prestartMounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
+	if len(mounts) == 0 {
+		return nil
+	}
+
+	// Sort shallowest (shortest) paths first for mounting.
+	sorted := make([]freebsdv1.JailMount, len(mounts))
+	copy(sorted, mounts)
+	sort.Slice(sorted, func(i, j int) bool {
+		return len(sorted[i].JailPath) < len(sorted[j].JailPath)
+	})
+
+	cmds := make([]string, len(sorted))
+	for i, m := range sorted {
+		fsType := m.Type
+		if fsType == "" {
+			fsType = "nullfs"
+		}
+		opts := "rw"
+		if m.ReadOnly {
+			opts = "ro"
+		}
+		dest := filepath.Join(jailRoot, m.JailPath)
+		cmds[i] = fmt.Sprintf("mount -t %s -o %s %s %s", fsType, opts, m.HostPath, dest)
+	}
+	return cmds
+}
+
+// poststopUnmounts returns exec.poststop shell commands that unmount each
+// declared filesystem after the jail stops. Deepest paths are unmounted first.
+func poststopUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
+	if len(mounts) == 0 {
+		return nil
+	}
+
+	paths := make([]string, len(mounts))
+	for i, m := range mounts {
+		paths[i] = filepath.Join(jailRoot, m.JailPath)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		return len(paths[i]) > len(paths[j])
+	})
+
+	cmds := make([]string, len(paths))
+	for i, p := range paths {
+		cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
+	}
+	return cmds
 }
 
 // prestartUnmounts returns exec.prestart shell commands that force-unmount any

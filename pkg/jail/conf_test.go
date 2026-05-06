@@ -12,13 +12,12 @@ import (
 
 func TestWriteJailConf(t *testing.T) {
 	cases := []struct {
-		name      string
-		jailName  string
-		jailRoot  string
-		fstabPath string
-		spec      freebsdv1.JailSpec
-		want      []string
-		notWant   []string
+		name     string
+		jailName string
+		jailRoot string
+		spec     freebsdv1.JailSpec
+		want     []string
+		notWant  []string
 	}{
 		{
 			name:     "minimal — no network, no fstab",
@@ -129,23 +128,25 @@ func TestWriteJailConf(t *testing.T) {
 			},
 		},
 		{
-			name:      "with fstab",
-			jailName:  "storage",
-			jailRoot:  "/usr/local/nodemanager/jails/storage/root",
-			fstabPath: "/usr/local/nodemanager/jails/storage/fstab",
+			name:     "mounts use exec.prestart/poststop instead of mount.fstab",
+			jailName: "storage",
+			jailRoot: "/usr/local/nodemanager/jails/storage/root",
 			spec: freebsdv1.JailSpec{
 				Release: "14.2-RELEASE",
 				Mounts:  []freebsdv1.JailMount{{HostPath: "/data", JailPath: "/mnt/data"}},
 			},
 			want: []string{
-				`mount.fstab = "/usr/local/nodemanager/jails/storage/fstab";`,
+				`exec.prestart += "mount -t nullfs -o rw /data /usr/local/nodemanager/jails/storage/root/mnt/data";`,
+				`exec.poststop += "umount -f /usr/local/nodemanager/jails/storage/root/mnt/data 2>/dev/null || true";`,
+			},
+			notWant: []string{
+				"mount.fstab",
 			},
 		},
 		{
-			name:      "prestart unmounts include devfs loop and all mounts, deepest first",
-			jailName:  "gar1",
-			jailRoot:  "/usr/local/nodemanager/jails/gar1/root",
-			fstabPath: "/usr/local/nodemanager/jails/gar1/fstab",
+			name:     "prestart: unmounts then mounts, deepest first for unmounts shallowest for mounts",
+			jailName: "gar1",
+			jailRoot: "/usr/local/nodemanager/jails/gar1/root",
 			spec: freebsdv1.JailSpec{
 				Release: "14.2-RELEASE",
 				Mounts: []freebsdv1.JailMount{
@@ -157,6 +158,8 @@ func TestWriteJailConf(t *testing.T) {
 				`exec.prestart += "while umount -f /usr/local/nodemanager/jails/gar1/root/dev 2>/dev/null; do true; done";`,
 				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage 2>/dev/null || true";`,
 				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage/meta 2>/dev/null || true";`,
+				`exec.prestart += "mount -t nullfs -o rw /data01/garage1 /usr/local/nodemanager/jails/gar1/root/var/garage";`,
+				`exec.prestart += "mount -t nullfs -o rw /data01/meta1 /usr/local/nodemanager/jails/gar1/root/var/garage/meta";`,
 			},
 		},
 		{
@@ -175,7 +178,7 @@ func TestWriteJailConf(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, err := writeJailConf(dir, tc.jailName, tc.jailRoot, tc.fstabPath, tc.spec)
+			_, err := writeJailConf(dir, tc.jailName, tc.jailRoot, tc.spec)
 			require.NoError(t, err)
 
 			data, err := os.ReadFile(filepath.Join(dir, tc.jailName+".conf"))
@@ -240,7 +243,7 @@ func TestRemoveJailConf(t *testing.T) {
 	name := "todelete"
 
 	// Write a conf file then remove it.
-	_, err := writeJailConf(dir, name, "/jail/root", "", freebsdv1.JailSpec{Release: "14.2-RELEASE"})
+	_, err := writeJailConf(dir, name, "/jail/root", freebsdv1.JailSpec{Release: "14.2-RELEASE"})
 	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(dir, name+".conf"))
 
