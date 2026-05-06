@@ -166,7 +166,8 @@ func TestEnsureJail_WithMounts(t *testing.T) {
 
 	require.NoError(t, m.EnsureJail(context.Background(), j))
 
-	// fstab must have been written alongside the jail.
+	// fstab must have been written alongside the jail (used for mountpoint
+	// directory creation tracking, even though jail.conf no longer references it).
 	fstabPath := filepath.Join(m.basePath, JailRootDir, "web", "fstab")
 	data, err := os.ReadFile(fstabPath)
 	require.NoError(t, err)
@@ -174,10 +175,13 @@ func TestEnsureJail_WithMounts(t *testing.T) {
 	require.True(t, strings.Contains(string(data), "nullfs"))
 	require.True(t, strings.Contains(string(data), "ro"))
 
-	// jail.conf must reference the fstab.
+	// jail.conf must NOT reference mount.fstab: mounts are now applied by
+	// StartJail Go code before jail -c to avoid the FreeBSD VFS deadlock.
+	// Instead, exec.poststop unmount commands should appear.
 	confData, err := os.ReadFile(filepath.Join(m.confDir, "web.conf"))
 	require.NoError(t, err)
-	require.True(t, strings.Contains(string(confData), "mount.fstab"))
+	require.False(t, strings.Contains(string(confData), "mount.fstab"))
+	require.True(t, strings.Contains(string(confData), "exec.poststop"))
 }
 
 func TestInstalledRelease(t *testing.T) {
@@ -455,9 +459,11 @@ func TestEnsureJail_NetworkChangeCyclesJail(t *testing.T) {
 		`]}}`
 
 	// Status sequence: Exists(jail)=found, Exists(root)=found, GetProperty=match.
-	// jls and StopJail draw from the empty queue (→ 0, success).
+	// ensureJailRCService calls "sysrc -n jail_netjail_enable" (returns ""),
+	// then "sysrc jail_netjail_enable=YES".  jls and StopJail draw from the
+	// empty queue (→ 0, success).
 	m, exec, _ := newTestManager(t, []int{0, 0, 0})
-	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@netjail", jlsOut}
+	exec.Output = []string{"", "", "zroot/nodemanager/releases/14.2-RELEASE@netjail", "", "", jlsOut}
 
 	j := testJail("netjail", "14.2-RELEASE")
 	j.Spec.Interface = "lo0"
@@ -606,10 +612,12 @@ func TestDeleteJail_SnapshotAlreadyGone(t *testing.T) {
 	// Snapshot was already cleaned up (e.g. manually) before this delete runs.
 	// DeleteJail must succeed without attempting a second destroy.
 	//
-	// Status positions: jail(0), pfctl(1), umount-dev(2), mount-p(3),
-	//   zfs-umount(4), Exists(jailDataset)=found(5), destroy-r-f(6),
-	//   Exists(snapshot)=gone(7).
-	statuses := []int{0, 0, 0, 0, 0, 0, 0, 1}
+	// Status positions: jail(0), pfctl(1), sysrc-n(2), umount-dev(3),
+	//   mount-p(4), zfs-umount(5), Exists(jailDataset)=found(6),
+	//   destroy-r-f(7), Exists(snapshot)=gone(8).
+	// removeJailRCService adds a sysrc -n call at position 2; the sysrc =NO
+	// call is skipped because the enable value is "" (not "YES").
+	statuses := []int{0, 0, 0, 0, 0, 0, 0, 0, 1}
 	m, exec, _ := newTestManager(t, statuses)
 
 	j := testJail("gone", "14.2-RELEASE")

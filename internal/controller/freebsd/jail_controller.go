@@ -65,12 +65,13 @@ type JailReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	tracer   trace.Tracer
-	logger   *slog.Logger
-	system   handler.System
-	cfg      JailConfig
-	hostname string
-	locker   locker.Locker
+	tracer         trace.Tracer
+	logger         *slog.Logger
+	system         handler.System
+	cfg            JailConfig
+	hostname       string
+	locker         locker.Locker
+	controllerName string // defaults to "freebsd-jail"; override in tests to avoid metric name conflicts
 
 	manager jail.Manager
 }
@@ -490,7 +491,12 @@ func (r *JailReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&freebsdv1.Jail{}, ctrlbuilder.WithPredicates(genChanged)).
 		Watches(&freebsdv1.JailTemplate{},
 			ctrlhandler.EnqueueRequestsFromMapFunc(r.jailsReferencingTemplate)).
-		Named("freebsd-jail").
+		Named(func() string {
+			if r.controllerName != "" {
+				return r.controllerName
+			}
+			return "freebsd-jail"
+		}()).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 1,
 			RateLimiter: workqueue.NewTypedMaxOfRateLimiter(

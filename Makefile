@@ -1,7 +1,7 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-ENVTEST_K8S_VERSION = 1.29.0
+ENVTEST_K8S_VERSION = 1.28.x
 # ENVTEST_BIN_DIR is where envtest looks for (or downloads) kube-apiserver/etcd binaries.
 # Override to /usr/local/kubebuilder/bin in CI where the tools image pre-installs them.
 ENVTEST_BIN_DIR ?= $(LOCALBIN)
@@ -77,10 +77,11 @@ test-container: ## Run tests inside a container (downloads envtest binaries auto
 		-v "$(shell pwd)":/workspace \
 		-v nodemanager-envtest-cache:/envtest-cache \
 		-w /workspace \
-		golang:1.24 \
-		bash -c 'go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.17 && \
-			KUBEBUILDER_ASSETS="$$(setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir /envtest-cache -p path)" \
-			go test -v $$(go list ./... | grep -v /e2e) -coverprofile cover.out'
+		golang:1.25 \
+		bash -c 'git config --global --add safe.directory /workspace && \
+			go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.17 && \
+			KUBEBUILDER_ASSETS="$$(setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir /envtest-cache --use-deprecated-gcs=false -p path)" \
+			go test -buildvcs=false -v $$(go list -buildvcs=false ./... | grep -v /e2e | grep -v "^github.com/zachfi/nodemanager$$") -coverprofile cover.out'
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
@@ -218,7 +219,7 @@ PROTOC_GEN_GO_GRPC = $(LOCALBIN)/protoc-gen-go-grpc-$(PROTOC_GEN_GO_GRPC_VERSION
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.3.0
 CONTROLLER_TOOLS_VERSION ?= v0.19.0
-ENVTEST_VERSION ?= release-0.17
+ENVTEST_VERSION ?= release-0.22
 GOLANGCI_LINT_VERSION ?= v1.54.2
 BUF_VERSION ?= v1.50.0
 PROTOC_GEN_GO_VERSION ?= v1.36.7

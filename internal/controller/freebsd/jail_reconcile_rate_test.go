@@ -2,6 +2,7 @@ package freebsd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -18,6 +19,14 @@ import (
 	"github.com/zachfi/nodemanager/pkg/locker"
 )
 
+// testControllerSeq generates unique controller names so each It block registers
+// distinct Prometheus metrics and avoids "controller already exists" errors.
+var testControllerSeq atomic.Int32
+
+func nextControllerName() string {
+	return fmt.Sprintf("freebsd-jail-test-%d", testControllerSeq.Add(1))
+}
+
 // mockJailManager satisfies jail.Manager with no-op implementations.  It
 // records EnsureJail calls so tests can assert on reconcile frequency.
 type mockJailManager struct {
@@ -29,46 +38,51 @@ func (m *mockJailManager) EnsureJail(_ context.Context, _ freebsdv1.Jail) error 
 	m.ensureCalls.Add(1)
 	return nil
 }
-func (m *mockJailManager) DeleteJail(_ context.Context, _ freebsdv1.Jail) error   { return nil }
-func (m *mockJailManager) StartJail(_ context.Context, _ freebsdv1.Jail) error    { return nil }
-func (m *mockJailManager) StopJail(_ context.Context, _ string) error             { return nil }
-func (m *mockJailManager) RestartJail(_ context.Context, _ freebsdv1.Jail) error  { return nil }
-func (m *mockJailManager) IsRunning(_ context.Context, _ string) (bool, error)    { return m.isRunning, nil }
-func (m *mockJailManager) InstalledRelease(_ string) (string, error)              { return "14.2-RELEASE", nil }
-func (m *mockJailManager) UpdateJail(_ context.Context, _ string) error           { return nil }
+func (m *mockJailManager) DeleteJail(_ context.Context, _ freebsdv1.Jail) error  { return nil }
+func (m *mockJailManager) StartJail(_ context.Context, _ freebsdv1.Jail) error   { return nil }
+func (m *mockJailManager) StopJail(_ context.Context, _ string) error            { return nil }
+func (m *mockJailManager) RestartJail(_ context.Context, _ freebsdv1.Jail) error { return nil }
+func (m *mockJailManager) IsRunning(_ context.Context, _ string) (bool, error) {
+	return m.isRunning, nil
+}
+func (m *mockJailManager) InstalledRelease(_ string) (string, error)    { return "14.2-RELEASE", nil }
+func (m *mockJailManager) UpdateJail(_ context.Context, _ string) error { return nil }
 func (m *mockJailManager) ExecInJail(_ context.Context, _ string, _ string, _ ...string) error {
 	return nil
 }
-func (m *mockJailManager) BootstrapPkg(_ context.Context, _, _ string) error      { return nil }
+func (m *mockJailManager) BootstrapPkg(_ context.Context, _, _ string) error          { return nil }
 func (m *mockJailManager) EnsureAnchor(_ context.Context, _ string, _ []string) error { return nil }
-func (m *mockJailManager) FlushAnchor(_ context.Context, _ string) error          { return nil }
+func (m *mockJailManager) FlushAnchor(_ context.Context, _ string) error              { return nil }
 
 var _ jail.Manager = (*mockJailManager)(nil)
 
 // mockLocker is a no-op Locker for tests that never acquire or hold leases.
 type mockLocker struct{}
 
-func (l *mockLocker) Lock(_ context.Context, _ types.NamespacedName) error           { return nil }
+func (l *mockLocker) Lock(_ context.Context, _ types.NamespacedName) error { return nil }
 func (l *mockLocker) LockFor(_ context.Context, _ types.NamespacedName, _ time.Duration) error {
 	return nil
 }
-func (l *mockLocker) Unlock(_ context.Context, _ types.NamespacedName) error         { return nil }
-func (l *mockLocker) Locked(_ context.Context, _ types.NamespacedName) bool          { return false }
+func (l *mockLocker) Unlock(_ context.Context, _ types.NamespacedName) error { return nil }
+func (l *mockLocker) Locked(_ context.Context, _ types.NamespacedName) bool  { return false }
 
 var _ locker.Locker = (*mockLocker)(nil)
 
 // newTestReconciler builds a JailReconciler wired to a mock manager and a
 // synthetic hostname.  It is registered with mgr via SetupWithManager so that
-// the full predicate and rate-limiter stack is exercised.
+// the full predicate and rate-limiter stack is exercised.  Each call uses a
+// unique controllerName to avoid Prometheus metric registration conflicts when
+// multiple managers are created in a single test suite run.
 func newTestReconciler(mgr ctrl.Manager, hostname string, mock *mockJailManager) *JailReconciler {
 	r := &JailReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		tracer:   otel.Tracer("test"),
-		logger:   slog.Default().With("controller", "jail-test"),
-		hostname: hostname,
-		locker:   &mockLocker{},
-		manager:  mock,
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		tracer:         otel.Tracer("test"),
+		logger:         slog.Default().With("controller", "jail-test"),
+		hostname:       hostname,
+		locker:         &mockLocker{},
+		manager:        mock,
+		controllerName: nextControllerName(),
 	}
 	return r
 }
