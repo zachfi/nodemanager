@@ -18,9 +18,11 @@ package freebsd
 
 import (
 	"context"
+	"log/slog"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.opentelemetry.io/otel"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -78,9 +80,14 @@ var _ = Describe("Jail Controller", func() {
 			// Construct the reconciler directly (hostname defaults to ""), so
 			// any Jail with a non-empty NodeName will be filtered out and
 			// Reconcile will return immediately without invoking the manager.
+			// tracer + logger must be set: Reconcile opens an OTEL span and
+			// emits log lines before reaching the NodeName-mismatch early
+			// return.
 			controllerReconciler := &JailReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+				tracer: otel.Tracer("test"),
+				logger: slog.Default().With("controller", "jail-test"),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

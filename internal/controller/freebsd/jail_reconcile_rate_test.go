@@ -14,11 +14,26 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/jail"
 	"github.com/zachfi/nodemanager/pkg/locker"
 )
+
+// newTestManager constructs a controller-runtime Manager configured for unit
+// tests. Metrics, health probe, and webhook servers are all disabled
+// (BindAddress: "0") because each It block builds its own manager and the
+// default :8080 / :8081 ports would collide across specs in the same process,
+// causing the second-and-later managers to error out and shut down before
+// they ever reconcile anything.
+func newTestManager() (ctrl.Manager, error) {
+	return ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 k8sClient.Scheme(),
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+}
 
 // testControllerSeq generates unique controller names so each It block registers
 // distinct Prometheus metrics and avoids "controller already exists" errors.
@@ -240,7 +255,7 @@ var _ = Describe("Jail Controller reconcile rate", func() {
 
 	It("does not loop after initial reconcile when jail is running", func() {
 		By("starting a controller manager with the mock jail manager")
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme()})
+		mgr, err := newTestManager()
 		Expect(err).NotTo(HaveOccurred())
 
 		mock := &mockJailManager{isRunning: true}
@@ -279,7 +294,7 @@ var _ = Describe("Jail Controller reconcile rate", func() {
 
 	It("triggers a new reconcile when the Jail spec changes", func() {
 		By("starting a controller manager")
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme()})
+		mgr, err := newTestManager()
 		Expect(err).NotTo(HaveOccurred())
 
 		mock := &mockJailManager{isRunning: true}
@@ -324,7 +339,7 @@ var _ = Describe("Jail Controller reconcile rate", func() {
 
 	It("reconciles periodically when ReconcilePeriod is set", func() {
 		By("starting a controller manager")
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme()})
+		mgr, err := newTestManager()
 		Expect(err).NotTo(HaveOccurred())
 
 		mock := &mockJailManager{isRunning: true}
@@ -357,7 +372,7 @@ var _ = Describe("Jail Controller reconcile rate", func() {
 
 	It("does not reconcile jails assigned to other nodes", func() {
 		By("starting a controller manager")
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme()})
+		mgr, err := newTestManager()
 		Expect(err).NotTo(HaveOccurred())
 
 		mock := &mockJailManager{isRunning: true}
@@ -389,7 +404,7 @@ var _ = Describe("Jail Controller reconcile rate", func() {
 
 	It("records the merged spec passed to EnsureJail", func() {
 		By("starting a controller manager")
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme()})
+		mgr, err := newTestManager()
 		Expect(err).NotTo(HaveOccurred())
 
 		mock := &mockJailManager{isRunning: true}
@@ -450,7 +465,7 @@ var _ = Describe("Jail Controller reconcile rate", func() {
 
 	It("calls StartJail when IsRunning returns false", func() {
 		By("starting a controller manager with isRunning=false")
-		mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: k8sClient.Scheme()})
+		mgr, err := newTestManager()
 		Expect(err).NotTo(HaveOccurred())
 
 		// First IsRunning call returns false → StartJail invoked.
