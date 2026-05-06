@@ -311,6 +311,11 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 }
 
 // handleUpdate checks whether a freebsd-update run is due for the jail.
+// This always runs on the HOST — it stops the jail, applies patch-level OS
+// updates to the jail's root filesystem via freebsd-update(8), then restarts
+// the jail.  A nodemanager instance running INSIDE a jail should not set
+// spec.update.schedule; only the host nodemanager (spec.nodeName matching the
+// physical host) should manage jail OS updates.
 // It mirrors the schedule+delay logic used by ManagedNode.handleUpgrade.
 func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, jailRoot string) (time.Time, error) {
 	if j.Spec.Update.Schedule == "" || j.Spec.Update.Delay == "" {
@@ -349,12 +354,10 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 		return next, nil
 	}
 
-	// Outside forgiveness window — requeue without running.
-	if time.Since(next) < forgiveness {
-		// within the window — fall through to run
-	} else if time.Until(next) < forgiveness {
-		return next, nil
-	} else {
+	// Only run when within the forgiveness window past the scheduled time.
+	// time.Since(next) is positive when next is in the past.
+	sinceNext := time.Since(next)
+	if sinceNext < 0 || sinceNext >= forgiveness {
 		return next, nil
 	}
 
