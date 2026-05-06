@@ -32,11 +32,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/client-go/util/workqueue"
+	"golang.org/x/time/rate"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
@@ -461,10 +467,28 @@ func (r *JailReconciler) jailsReferencingTemplate(ctx context.Context, obj clien
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *JailReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Only reconcile on generation changes (spec edits), not on status-only
+	// updates. Without this, every status write triggers a new reconcile, which
+	// triggers another status write, creating a tight loop.
+	genChanged := predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return e.ObjectNew.GetGeneration() != e.ObjectOld.GetGeneration()
+		},
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&freebsdv1.Jail{}).
+		For(&freebsdv1.Jail{}, ctrlbuilder.WithPredicates(genChanged)).
 		Watches(&freebsdv1.JailTemplate{},
 			ctrlhandler.EnqueueRequestsFromMapFunc(r.jailsReferencingTemplate)).
 		Named("freebsd-jail").
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 1,
+			RateLimiter: workqueue.NewTypedMaxOfRateLimiter(
+				workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](30*time.Second, 5*time.Minute),
+				&workqueue.TypedBucketRateLimiter[reconcile.Request]{
+					Limiter: rate.NewLimiter(rate.Every(30*time.Second), 1),
+				},
+			),
+		}).
 		Complete(r)
 }
