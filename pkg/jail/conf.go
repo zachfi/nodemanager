@@ -26,9 +26,6 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMa
 	exec.stop  = "/bin/sh /etc/rc.shutdown jail";
 	exec.clean;
 	exec.consolelog = "/var/log/jail_{{ .Name }}_console.log";
-{{- range .PrestartCmds }}
-	exec.prestart += "{{ . }}";
-{{ end -}}
 {{- range .PoststopCmds }}
 	exec.poststop += "{{ . }}";
 {{ end }}
@@ -68,7 +65,6 @@ type jailConfData struct {
 	Inet6s       []string
 	Release      string
 	Parameters   map[string]string
-	PrestartCmds []string
 	PoststopCmds []string
 }
 
@@ -82,13 +78,13 @@ func writeJailConf(confDir, name, jailRoot string, spec freebsdv1.JailSpec) (boo
 		hostname = name
 	}
 
-	// Build exec.prestart commands: loop-unmount stale devfs layers from
-	// previous failed starts.  IP alias cleanup and nullfs mounts are handled
-	// by StartJail Go code before jail -c — keeping them here as well causes
-	// jail(8) to fail to assign addresses on some FreeBSD kernel configurations.
-	prestartCmds := prestartUnmounts(jailRoot, nil) // devfs only
-
-	// exec.poststop unmounts the mounts after the jail stops.
+	// exec.poststop force-unmounts devfs (using a loop to clear any stacked
+	// layers from previous failed runs) and any declared nullfs/fstab mounts
+	// after the jail stops. The cleanup must NOT live in exec.prestart: jail(8)
+	// runs mount.devfs before exec.prestart on JAIL_CREATE, so a prestart
+	// umount would strip the freshly mounted devfs and leave the jail with an
+	// empty /dev. IP alias cleanup and nullfs mounts are handled by the
+	// StartJail Go code before jail -c.
 	poststopCmds := poststopUnmounts(jailRoot, spec.Mounts)
 
 	// Build a filtered copy of Parameters: strip mount.fstab because mounts are
@@ -112,7 +108,6 @@ func writeJailConf(confDir, name, jailRoot string, spec freebsdv1.JailSpec) (boo
 		Inet6s:       spec.Inet6s,
 		Release:      spec.Release,
 		Parameters:   params,
-		PrestartCmds: prestartCmds,
 		PoststopCmds: poststopCmds,
 	}
 
@@ -146,34 +141,18 @@ func removeJailConf(confDir, name string) error {
 	return nil
 }
 
-// poststopUnmounts returns exec.poststop shell commands that unmount each
-// declared filesystem after the jail stops. Deepest paths are unmounted first.
+// poststopUnmounts returns exec.poststop shell commands that force-unmount
+// devfs and each declared filesystem after the jail stops. devfs uses a loop
+// to peel off any stacked layers left by previously crashed jail runs; the
+// next start then sees a clean mountpoint when jail(8) runs mount.devfs.
+//
+// Note: this cleanup must run on poststop, not prestart. jail(8) processes
+// mount.devfs before exec.prestart on JAIL_CREATE (independent of source
+// order in jail.conf), so a prestart umount strips the freshly mounted devfs
+// and leaves the jail with an empty /dev.
+//
+// Paths are ordered deepest-first so nested mounts unmount before parents.
 func poststopUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
-	if len(mounts) == 0 {
-		return nil
-	}
-
-	paths := make([]string, len(mounts))
-	for i, m := range mounts {
-		paths[i] = filepath.Join(jailRoot, m.JailPath)
-	}
-	sort.Slice(paths, func(i, j int) bool {
-		return len(paths[i]) > len(paths[j])
-	})
-
-	cmds := make([]string, len(paths))
-	for i, p := range paths {
-		cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
-	}
-	return cmds
-}
-
-// prestartUnmounts returns exec.prestart shell commands that force-unmount any
-// stale mounts left by a previously failed jail start.  devfs is always
-// included (it is mounted by the jail machinery before fstab mounts).
-// Additional entries cover each configured nullfs/fstab mount.
-// Paths are ordered deepest-first so nested mounts are cleared before parents.
-func prestartUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
 	// Collect all host-side mountpoints that need cleanup.
 	paths := make([]string, 0, len(mounts)+1)
 	paths = append(paths, filepath.Join(jailRoot, "dev"))
@@ -189,9 +168,8 @@ func prestartUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
 	cmds := make([]string, len(paths))
 	for i, p := range paths {
 		if strings.HasSuffix(p, "/dev") {
-			// devfs can accumulate multiple stacked mounts from previous failed
-			// starts. Loop until umount reports nothing left to unmount so all
-			// stale devfs layers are cleared before the jail recreates its own.
+			// Loop until umount reports nothing left so any stacked devfs
+			// layers from previous crashed runs are fully cleared.
 			cmds[i] = fmt.Sprintf("while umount -f %s 2>/dev/null; do true; done", p)
 		} else {
 			cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
