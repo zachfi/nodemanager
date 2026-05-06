@@ -142,7 +142,7 @@ func TestWriteJailConf(t *testing.T) {
 			},
 		},
 		{
-			name:      "prestart unmounts include devfs and all mounts, deepest first",
+			name:      "prestart unmounts include devfs loop and all mounts, deepest first",
 			jailName:  "gar1",
 			jailRoot:  "/usr/local/nodemanager/jails/gar1/root",
 			fstabPath: "/usr/local/nodemanager/jails/gar1/fstab",
@@ -154,20 +154,20 @@ func TestWriteJailConf(t *testing.T) {
 				},
 			},
 			want: []string{
-				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/dev 2>/dev/null || true";`,
+				`exec.prestart += "while umount -f /usr/local/nodemanager/jails/gar1/root/dev 2>/dev/null; do true; done";`,
 				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage 2>/dev/null || true";`,
 				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage/meta 2>/dev/null || true";`,
 			},
 		},
 		{
-			name:     "prestart devfs unmount present even with no extra mounts",
+			name:     "prestart devfs uses loop even with no extra mounts",
 			jailName: "minimal",
 			jailRoot: "/usr/local/nodemanager/jails/minimal/root",
 			spec: freebsdv1.JailSpec{
 				Release: "14.2-RELEASE",
 			},
 			want: []string{
-				`exec.prestart += "umount -f /usr/local/nodemanager/jails/minimal/root/dev 2>/dev/null || true";`,
+				`exec.prestart += "while umount -f /usr/local/nodemanager/jails/minimal/root/dev 2>/dev/null; do true; done";`,
 			},
 		},
 	}
@@ -202,24 +202,24 @@ func TestPrestartUnmounts(t *testing.T) {
 		want     []string // expected umount target paths, in order (deepest first)
 	}{
 		{
-			name:     "no extra mounts — devfs only",
+			name:     "no extra mounts — devfs loop only",
 			jailRoot: "/jail/root",
-			want:     []string{"/jail/root/dev"},
+			want:     []string{"while umount -f /jail/root/dev"},
 		},
 		{
 			name:     "single mount — deeper than devfs comes first",
 			jailRoot: "/jail/root",
 			mounts:   []freebsdv1.JailMount{{HostPath: "/data", JailPath: "/mnt/data"}},
-			want:     []string{"/jail/root/mnt/data", "/jail/root/dev"},
+			want:     []string{"/jail/root/mnt/data", "while umount -f /jail/root/dev"},
 		},
 		{
-			name:     "nested mounts — deepest first",
+			name:     "nested mounts — deepest first, devfs uses loop",
 			jailRoot: "/jail/root",
 			mounts: []freebsdv1.JailMount{
 				{HostPath: "/data/garage", JailPath: "/var/garage"},
 				{HostPath: "/data/meta", JailPath: "/var/garage/meta"},
 			},
-			want: []string{"/jail/root/var/garage/meta", "/jail/root/var/garage", "/jail/root/dev"},
+			want: []string{"/jail/root/var/garage/meta", "/jail/root/var/garage", "while umount -f /jail/root/dev"},
 		},
 	}
 

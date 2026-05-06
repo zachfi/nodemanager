@@ -26,9 +26,9 @@ var jailConfTmpl = template.Must(template.New("jail.conf").Funcs(template.FuncMa
 	exec.stop  = "/bin/sh /etc/rc.shutdown jail";
 	exec.clean;
 	exec.consolelog = "/var/log/jail_{{ .Name }}_console.log";
-{{ range .PrestartCmds }}
+{{- range .PrestartCmds }}
 	exec.prestart += "{{ . }}";
-{{ end -}}
+{{ end }}
 	mount.devfs;
 	devfs_ruleset = 4;
 	enforce_statfs = 2;
@@ -150,7 +150,14 @@ func prestartUnmounts(jailRoot string, mounts []freebsdv1.JailMount) []string {
 
 	cmds := make([]string, len(paths))
 	for i, p := range paths {
-		cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
+		if strings.HasSuffix(p, "/dev") {
+			// devfs can accumulate multiple stacked mounts from previous failed
+			// starts. Loop until umount reports nothing left to unmount so all
+			// stale devfs layers are cleared before the jail recreates its own.
+			cmds[i] = fmt.Sprintf("while umount -f %s 2>/dev/null; do true; done", p)
+		} else {
+			cmds[i] = fmt.Sprintf("umount -f %s 2>/dev/null || true", p)
+		}
 	}
 	return cmds
 }
