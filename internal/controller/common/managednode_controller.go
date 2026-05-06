@@ -187,8 +187,12 @@ func newNameFilterPredicate(targetName string) predicate.Predicate {
 		CreateFunc: func(e event.CreateEvent) bool {
 			return e.Object.GetName() == targetName
 		},
+		// Only reconcile on spec changes (generation bump), not status-only
+		// writes. Status updates from this reconciler and from ConfigSet would
+		// otherwise create a tight reconcile loop.
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			return e.ObjectNew.GetName() == targetName
+			return e.ObjectNew.GetName() == targetName &&
+				e.ObjectNew.GetGeneration() != e.ObjectOld.GetGeneration()
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			return e.Object.GetName() == targetName
