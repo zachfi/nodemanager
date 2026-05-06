@@ -468,11 +468,21 @@ func (r *JailReconciler) jailsReferencingTemplate(ctx context.Context, obj clien
 // SetupWithManager sets up the controller with the Manager.
 func (r *JailReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Only reconcile on generation changes (spec edits), not on status-only
-	// updates. Without this, every status write triggers a new reconcile, which
-	// triggers another status write, creating a tight loop.
+	// updates. All four functions must be set explicitly: leaving GenericFunc
+	// nil defaults to true, letting generic events bypass the filter and
+	// recreating the tight loop.
 	genChanged := predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			return true
+		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			return e.ObjectNew.GetGeneration() != e.ObjectOld.GetGeneration()
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			return true
+		},
+		GenericFunc: func(e event.GenericEvent) bool {
+			return false
 		},
 	}
 
