@@ -171,6 +171,12 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	r.logger.Debug("provisioning jail with merged spec",
+		"jail", j.Name,
+		"interface", mergedJail.Spec.Interface,
+		"inets", mergedJail.Spec.Inets,
+		"inet6s", mergedJail.Spec.Inet6s)
+
 	provisionStart := time.Now()
 	if err := r.manager.EnsureJail(ctx, *mergedJail); err != nil {
 		jailProvisionDuration.WithLabelValues(r.hostname, j.Name).Observe(time.Since(provisionStart).Seconds())
