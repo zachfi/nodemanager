@@ -171,7 +171,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	r.logger.Debug("provisioning jail with merged spec",
+	r.logger.Info("provisioning jail with merged spec",
 		"jail", j.Name,
 		"interface", mergedJail.Spec.Interface,
 		"inets", mergedJail.Spec.Inets,
