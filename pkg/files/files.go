@@ -221,7 +221,8 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, d
 
 	// Check if the incoming data matches what is already on disk
 	dataHash := h.hash(ctx, data)
-	if h.hash(ctx, fileBytes) == dataHash {
+	existingHash := h.hash(ctx, fileBytes)
+	if existingHash == dataHash {
 		return false, nil
 	}
 
@@ -233,7 +234,7 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, d
 
 	// NOTE: the file has been truncated on the Create() above.
 
-	h.logger.Info("writing file", "path", path, "hash", dataHash)
+	h.logger.Info("writing file", "path", path, "hash", dataHash, "prev", existingHash)
 	_, err = f.Write(data)
 	if err != nil {
 		return true, err
