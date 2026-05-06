@@ -201,7 +201,7 @@ func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 	if !running {
-		if err := r.manager.StartJail(ctx, j.Name); err != nil {
+		if err := r.manager.StartJail(ctx, *mergedJail); err != nil {
 			jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
 			r.logger.Error("failed to start jail", "jail", j.Name, "err", err)
 			_ = r.updateStatusWithRetry(ctx, req.NamespacedName, func(fresh *freebsdv1.Jail) {
@@ -378,7 +378,7 @@ func (r *JailReconciler) handleUpdate(ctx context.Context, j *freebsdv1.Jail, ja
 
 	updateErr := r.manager.UpdateJail(ctx, jailRoot)
 
-	startErr := r.manager.StartJail(ctx, j.Name)
+	startErr := r.manager.StartJail(ctx, *j)
 	if startErr != nil {
 		jailOperationsTotal.WithLabelValues(r.hostname, j.Name, "start", "error").Inc()
 		r.logger.Error("failed to restart jail after update", "jail", j.Name, "err", startErr)

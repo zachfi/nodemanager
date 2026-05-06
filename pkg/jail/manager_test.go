@@ -232,9 +232,11 @@ func TestDeleteJail(t *testing.T) {
 }
 
 func TestStartStopRestartJail(t *testing.T) {
+	classic := freebsdv1.Jail{ObjectMeta: metav1.ObjectMeta{Name: "classic"}}
+
 	t.Run("start", func(t *testing.T) {
 		m, exec, _ := newTestManager(t, []int{0})
-		require.NoError(t, m.StartJail(context.Background(), "classic"))
+		require.NoError(t, m.StartJail(context.Background(), classic))
 		confPath := filepath.Join(m.confDir, "classic.conf")
 		require.Equal(t, []string{"-c", "-f", confPath, "classic"}, exec.Recorder["jail"][0])
 	})
@@ -248,7 +250,7 @@ func TestStartStopRestartJail(t *testing.T) {
 	t.Run("restart", func(t *testing.T) {
 		// Restart calls stop then start, so two jail invocations.
 		m, exec, _ := newTestManager(t, []int{0, 0})
-		require.NoError(t, m.RestartJail(context.Background(), "classic"))
+		require.NoError(t, m.RestartJail(context.Background(), classic))
 		require.Len(t, exec.Recorder["jail"], 2)
 		require.Equal(t, []string{"-r", "classic"}, exec.Recorder["jail"][0])
 		confPath := filepath.Join(m.confDir, "classic.conf")

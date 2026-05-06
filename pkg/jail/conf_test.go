@@ -128,7 +128,7 @@ func TestWriteJailConf(t *testing.T) {
 			},
 		},
 		{
-			name:     "mounts use exec.prestart/poststop instead of mount.fstab",
+			name:     "mounts appear in exec.poststop; mount commands are NOT in exec.prestart (handled by StartJail Go code)",
 			jailName: "storage",
 			jailRoot: "/usr/local/nodemanager/jails/storage/root",
 			spec: freebsdv1.JailSpec{
@@ -136,15 +136,15 @@ func TestWriteJailConf(t *testing.T) {
 				Mounts:  []freebsdv1.JailMount{{HostPath: "/data", JailPath: "/mnt/data"}},
 			},
 			want: []string{
-				`exec.prestart += "mount -t nullfs -o rw /data /usr/local/nodemanager/jails/storage/root/mnt/data";`,
 				`exec.poststop += "umount -f /usr/local/nodemanager/jails/storage/root/mnt/data 2>/dev/null || true";`,
 			},
 			notWant: []string{
 				"mount.fstab",
+				`exec.prestart += "mount`,
 			},
 		},
 		{
-			name:     "prestart: unmounts then mounts, deepest first for unmounts shallowest for mounts",
+			name:     "exec.prestart has only devfs loop (no nullfs mount/unmount commands)",
 			jailName: "gar1",
 			jailRoot: "/usr/local/nodemanager/jails/gar1/root",
 			spec: freebsdv1.JailSpec{
@@ -156,10 +156,12 @@ func TestWriteJailConf(t *testing.T) {
 			},
 			want: []string{
 				`exec.prestart += "while umount -f /usr/local/nodemanager/jails/gar1/root/dev 2>/dev/null; do true; done";`,
-				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage 2>/dev/null || true";`,
-				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage/meta 2>/dev/null || true";`,
-				`exec.prestart += "mount -t nullfs -o rw /data01/garage1 /usr/local/nodemanager/jails/gar1/root/var/garage";`,
-				`exec.prestart += "mount -t nullfs -o rw /data01/meta1 /usr/local/nodemanager/jails/gar1/root/var/garage/meta";`,
+				`exec.poststop += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage/meta 2>/dev/null || true";`,
+				`exec.poststop += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage 2>/dev/null || true";`,
+			},
+			notWant: []string{
+				`exec.prestart += "mount`,
+				`exec.prestart += "umount -f /usr/local/nodemanager/jails/gar1/root/var/garage`,
 			},
 		},
 		{
@@ -214,11 +216,14 @@ func TestWriteJailConf(t *testing.T) {
 				},
 			},
 			want: []string{
-				`exec.prestart += "mount -t nullfs -o rw /usr/local/poudriere /usr/local/nodemanager/jails/poud1/root/usr/local/poudriere";`,
 				`children.max = 200;`,
 				`allow.mount.zfs;`,
+				`exec.poststop += "umount -f /usr/local/nodemanager/jails/poud1/root/usr/local/poudriere 2>/dev/null || true";`,
 			},
-			notWant: []string{"mount.fstab"},
+			notWant: []string{
+				"mount.fstab",
+				`exec.prestart += "mount`,
+			},
 		},
 	}
 

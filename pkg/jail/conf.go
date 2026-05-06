@@ -83,17 +83,15 @@ func writeJailConf(confDir, name, jailRoot string, spec freebsdv1.JailSpec) (boo
 	}
 
 	// Build exec.prestart commands:
-	//   1. Unmount stale mounts (deepest first) from previous failed starts.
-	//   2. Remove IP aliases that may have been re-added by BGP or other
-	//      daemons between StopJail and the next start attempt.  Running this
-	//      immediately before jail -c minimises the race window.
-	//   3. Mount nullfs/other mounts before jail creation so they happen
-	//      outside the VFS locks that jail(8) holds during jail -c. Mounting
-	//      via mount.fstab deadlocks on FreeBSD because jail -c holds the
-	//      jail-root VFS lock while processing fstab entries.
-	prestartCmds := prestartUnmounts(jailRoot, spec.Mounts)
+	//   1. Loop-unmount stale devfs layers from previous failed starts.
+	//      Nullfs mounts are handled by StartJail Go code before jail -c to
+	//      avoid the ZFS vnode lock cycle that occurs when jail(8) path-resolves
+	//      the jail root before running exec.prestart hooks.
+	//   2. Belt-and-suspenders IP alias cleanup in case a daemon re-added an
+	//      alias in the narrow window between StartJail's removeIPAliasesForSpec
+	//      call and jail(8) adding the aliases itself.
+	prestartCmds := prestartUnmounts(jailRoot, nil) // devfs only
 	prestartCmds = append(prestartCmds, prestartIPCleanup(spec)...)
-	prestartCmds = append(prestartCmds, prestartMounts(jailRoot, spec.Mounts)...)
 
 	// exec.poststop unmounts the mounts after the jail stops.
 	poststopCmds := poststopUnmounts(jailRoot, spec.Mounts)

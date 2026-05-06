@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
@@ -41,12 +42,15 @@ type Manager interface {
 	// DeleteJail stops the jail (if running) then tears down its ZFS datasets
 	// and config files.
 	DeleteJail(ctx context.Context, j freebsdv1.Jail) error
-	// StartJail starts a provisioned jail via `jail -c`.
-	StartJail(ctx context.Context, name string) error
+	// StartJail mounts filesystems, cleans up stale IP aliases, then starts the
+	// jail via `jail -c`. Mounts are applied directly in Go code rather than via
+	// exec.prestart to avoid the FreeBSD VFS lock cycle that occurs when jail(8)
+	// accesses the jail root before exec.prestart runs.
+	StartJail(ctx context.Context, j freebsdv1.Jail) error
 	// StopJail stops a running jail via `jail -r`.
 	StopJail(ctx context.Context, name string) error
 	// RestartJail stops and then starts a jail.
-	RestartJail(ctx context.Context, name string) error
+	RestartJail(ctx context.Context, j freebsdv1.Jail) error
 	// IsRunning reports whether the named jail is currently active according
 	// to jls(8).
 	IsRunning(ctx context.Context, name string) (bool, error)
@@ -330,20 +334,99 @@ func (m *manager) DeleteJail(ctx context.Context, j freebsdv1.Jail) error {
 	return nil
 }
 
-func (m *manager) StartJail(ctx context.Context, name string) error {
-	confPath := filepath.Join(m.confDir, name+".conf")
-	return m.exec.SimpleRunCommand(ctx, "jail", "-c", "-f", confPath, name)
+func (m *manager) StartJail(ctx context.Context, j freebsdv1.Jail) error {
+	jailRoot := filepath.Join(m.basePath, JailRootDir, j.Name, "root")
+
+	// Unmount any stale nullfs mounts left by a previous failed start (deepest first).
+	m.unmountJailMounts(ctx, jailRoot, j.Spec.Mounts)
+
+	// Remove IP aliases that daemons (e.g. OpenBGPD) may have re-added since the
+	// last stop. jail(8) will re-add them during startup.
+	m.removeIPAliasesForSpec(ctx, j.Spec)
+
+	// Mount filesystems in Go code before jail -c so they land entirely outside
+	// any jail(8) VFS lock context.  Running nullfs mounts inside exec.prestart
+	// still deadlocks because jail(8) path-resolves the jail root (acquiring its
+	// ZFS vnode lock) before executing exec.prestart hooks.
+	if err := m.mountJailMounts(ctx, jailRoot, j.Spec.Mounts); err != nil {
+		m.unmountJailMounts(ctx, jailRoot, j.Spec.Mounts)
+		return fmt.Errorf("pre-start mount for %s: %w", j.Name, err)
+	}
+
+	confPath := filepath.Join(m.confDir, j.Name+".conf")
+	if err := m.exec.SimpleRunCommand(ctx, "jail", "-c", "-f", confPath, j.Name); err != nil {
+		m.unmountJailMounts(ctx, jailRoot, j.Spec.Mounts)
+		return err
+	}
+	return nil
+}
+
+// mountJailMounts runs mount commands for each declared mount, shallowest first.
+func (m *manager) mountJailMounts(ctx context.Context, jailRoot string, mounts []freebsdv1.JailMount) error {
+	if len(mounts) == 0 {
+		return nil
+	}
+	sorted := make([]freebsdv1.JailMount, len(mounts))
+	copy(sorted, mounts)
+	sort.Slice(sorted, func(i, j int) bool {
+		return len(sorted[i].JailPath) < len(sorted[j].JailPath)
+	})
+	for _, mount := range sorted {
+		fsType := mount.Type
+		if fsType == "" {
+			fsType = "nullfs"
+		}
+		opts := "rw"
+		if mount.ReadOnly {
+			opts = "ro"
+		}
+		dest := filepath.Join(jailRoot, mount.JailPath)
+		if err := m.exec.SimpleRunCommand(ctx, "mount", "-t", fsType, "-o", opts, mount.HostPath, dest); err != nil {
+			return fmt.Errorf("mounting %s at %s: %w", mount.HostPath, dest, err)
+		}
+	}
+	return nil
+}
+
+// unmountJailMounts force-unmounts each declared mount, deepest first. Errors
+// are ignored because this is used for cleanup where mounts may not be present.
+func (m *manager) unmountJailMounts(ctx context.Context, jailRoot string, mounts []freebsdv1.JailMount) {
+	if len(mounts) == 0 {
+		return
+	}
+	paths := make([]string, len(mounts))
+	for i, mount := range mounts {
+		paths[i] = filepath.Join(jailRoot, mount.JailPath)
+	}
+	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
+	for _, p := range paths {
+		_ = m.exec.SimpleRunCommand(ctx, "umount", "-f", p)
+	}
+}
+
+// removeIPAliasesForSpec removes IP aliases for each declared address. Errors
+// are ignored since the alias may not currently be assigned.
+func (m *manager) removeIPAliasesForSpec(ctx context.Context, spec freebsdv1.JailSpec) {
+	if spec.Interface == "" {
+		return
+	}
+	for _, addr := range spec.Inets {
+		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", spec.Interface, "inet", stripCIDR(addr), "-alias")
+	}
+	for _, addr := range spec.Inet6s {
+		_ = m.exec.SimpleRunCommand(ctx, "ifconfig", spec.Interface, "inet6", stripCIDR(addr), "-alias")
+	}
 }
 
 func (m *manager) StopJail(ctx context.Context, name string) error {
 	return m.exec.SimpleRunCommand(ctx, "jail", "-r", name)
 }
 
-func (m *manager) RestartJail(ctx context.Context, name string) error {
-	if err := m.StopJail(ctx, name); err != nil {
+func (m *manager) RestartJail(ctx context.Context, j freebsdv1.Jail) error {
+	if err := m.StopJail(ctx, j.Name); err != nil {
 		return err
 	}
-	return m.StartJail(ctx, name)
+	return m.StartJail(ctx, j)
 }
 
 func (m *manager) IsRunning(ctx context.Context, name string) (bool, error) {
