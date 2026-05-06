@@ -66,6 +66,22 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$${KUBEBUILDER_ASSETS:-$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_BIN_DIR) -p path)}" go test -v $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+# test-container runs the full test suite inside a Go container that downloads
+# the envtest binaries automatically.  Use this on machines that don't have
+# setup-envtest or the kubebuilder assets installed locally.
+# A named volume (nodemanager-envtest-cache) persists the downloaded binaries
+# across runs so they are only fetched once.
+.PHONY: test-container
+test-container: ## Run tests inside a container (downloads envtest binaries automatically).
+	$(CONTAINER_TOOL) run --rm \
+		-v "$(shell pwd)":/workspace \
+		-v nodemanager-envtest-cache:/envtest-cache \
+		-w /workspace \
+		golang:1.24 \
+		bash -c 'go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.17 && \
+			KUBEBUILDER_ASSETS="$$(setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir /envtest-cache -p path)" \
+			go test -v $$(go list ./... | grep -v /e2e) -coverprofile cover.out'
+
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
 test-e2e:
