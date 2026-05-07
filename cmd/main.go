@@ -276,31 +276,42 @@ func main() {
 
 	switch id {
 	case system.FreeBSD:
-		// Skip host-only controllers when running inside a jail unless the operator
-		// has explicitly opted in via freebsd.allow-in-jail.  Jail and Poudriere
-		// controllers require ZFS access and the ability to create nested jails —
-		// neither is available in a standard jail.  A privileged jail with ZFS
-		// dataset delegation and allow.mount.zfs can opt in to run poudriere.
-		if freebsdnode.IsJailed(ctx, sys.Exec()) && !cfg.ControllerConfig.FreeBSD.AllowInJail {
-			setupLog.Info("running inside a FreeBSD jail; jail and poudriere controllers disabled (set freebsd.allow-in-jail=true to enable in a privileged jail)")
-			break
+		// Each controller is enabled independently via
+		// --freebsd.<name>.enabled.  The default ("auto") enables on
+		// the host and disables inside a jail, which keeps service
+		// jails (git8, dhcp1, …) from spinning up Jail/Poudriere
+		// informers they will never reconcile.  A privileged build
+		// jail (poud1) opts in selectively with
+		// --freebsd.poudriere.enabled=true while leaving
+		// --freebsd.jail.enabled=auto (i.e. off, since it's jailed).
+		isJailed := freebsdnode.IsJailed(ctx, sys.Exec())
+		if cfg.ControllerConfig.FreeBSD.ApplyDeprecations() {
+			setupLog.Info("--freebsd.allow-in-jail is deprecated; please switch to --freebsd.jail.enabled and --freebsd.poudriere.enabled")
 		}
 
-		poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys)
-		if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
-			os.Exit(1)
+		if cfg.ControllerConfig.FreeBSD.Poudriere.Enabled.IsEnabled(isJailed) {
+			poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys)
+			if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
+				os.Exit(1)
+			}
+		} else {
+			setupLog.Info("Poudriere reconciler disabled by config", "jailed", isJailed, "mode", cfg.ControllerConfig.FreeBSD.Poudriere.Enabled)
 		}
 
-		jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys, locker)
-		if jailErr != nil {
-			setupLog.Error(jailErr, "unable to create controller", "controller", "Jail")
-			os.Exit(1)
-		}
+		if cfg.ControllerConfig.FreeBSD.Jail.Enabled.IsEnabled(isJailed) {
+			jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys, locker)
+			if jailErr != nil {
+				setupLog.Error(jailErr, "unable to create controller", "controller", "Jail")
+				os.Exit(1)
+			}
 
-		if err = jailReconciler.SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create controller", "controller", "Jail")
-			os.Exit(1)
+			if err = jailReconciler.SetupWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create controller", "controller", "Jail")
+				os.Exit(1)
+			}
+		} else {
+			setupLog.Info("Jail reconciler disabled by config", "jailed", isJailed, "mode", cfg.ControllerConfig.FreeBSD.Jail.Enabled)
 		}
 	}
 
