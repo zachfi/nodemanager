@@ -37,21 +37,132 @@ spec:
           metadata:
             type: object
           spec:
-            description: PoudriereBulkSpec defines the desired state of PoudriereBulk
+            description: PoudriereBulkSpec defines the desired state of PoudriereBulk.
             properties:
               jail:
+                description: |-
+                  Jail is the poudriere build jail name (the -j argument). Must match
+                  the metadata.name of a PoudriereJail in the same namespace.
                 type: string
               ports:
+                description: |-
+                  Ports is the list of port origins (e.g. "net/curl", "shells/zsh") to
+                  build. Each entry is passed as a separate argument to `poudriere bulk`.
                 items:
                   type: string
                 type: array
-              tree:
+              reconcilePeriod:
+                description: |-
+                  ReconcilePeriod controls how often the controller re-runs portshaker
+                  and `poudriere bulk` even without a Kubernetes event.  Use this to
+                  turn the controller into a scheduled build loop.  Examples: "1h",
+                  "6h", "24h".  Empty or zero means event-driven only — a build runs
+                  only when the spec changes or an external trigger fires (such as a
+                  Forgejo push annotation, see Phase 4).
                 type: string
+              tree:
+                description: |-
+                  Tree is the poudriere ports tree name (the -p argument). Must match
+                  the metadata.name of a PoudrierePorts in the same namespace.
+                type: string
+            required:
+            - jail
+            - tree
             type: object
           status:
-            description: PoudriereBulkStatus defines the observed state of PoudriereBulk
+            description: PoudriereBulkStatus defines the observed state of PoudriereBulk.
             properties:
+              conditions:
+                description: |-
+                  Conditions represent the current state of the PoudriereBulk resource.
+
+                  Standard condition types:
+                    - "Available":   the most recent build completed successfully and
+                                     its packages are available in the package repo.
+                    - "Progressing": a build is currently in flight.
+                    - "Degraded":    the most recent build failed.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               hash:
+                description: |-
+                  Hash is a content hash of the build inputs (sorted ports[], tree,
+                  jail, plus any external trigger annotation) from the last successful
+                  reconcile.  When the recomputed hash matches this value the
+                  controller will skip invoking `poudriere bulk` (see Phase 3).  Empty
+                  until the first successful build completes.
+                type: string
+              lastBuildResult:
+                description: |-
+                  LastBuildResult is "Succeeded" or "Failed" for the most recent run.
+                  Empty before the first build completes.
+                type: string
+              lastBuildTime:
+                description: |-
+                  LastBuildTime records when `poudriere bulk` last completed (success
+                  or failure).  Combined with LastBuildResult this lets operators
+                  detect stalled or failed builds via Prometheus alerts.
+                format: date-time
+                type: string
+              lastError:
+                description: |-
+                  LastError captures the error message from the most recent failed
+                  build.  Cleared on a subsequent successful build.
                 type: string
             type: object
         type: object

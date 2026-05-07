@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -299,7 +300,7 @@ var _ = Describe("Poudriere Controller", func() {
 		Expect(portshakerCalls[0]).To(Equal([]string{"-v"}))
 	})
 
-	It("processes every PoudriereBulk, not just the one named in the request", func() {
+	It("builds only the PoudriereBulk named in the request, not other bulks in the namespace", func() {
 		hostname := nextPoudriereHostname()
 		r, exec := newPoudriereTestReconciler(hostname)
 		// ports -l, jail -l = 2 List calls
@@ -352,12 +353,125 @@ var _ = Describe("Poudriere Controller", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
+		// Only bulk-a's port should appear in a `poudriere bulk` call. bulk-b
+		// has its own reconcile request and would build on its own; mixing
+		// them in one reconcile would prevent per-bulk ReconcilePeriod and
+		// per-bulk status writes from working correctly.
 		poudriereCalls := exec.callsByCommand("/usr/local/bin/poudriere")
 		Expect(poudriereCalls).To(ContainElement(
 			[]string{"bulk", "-p", "tree-multi", "-j", "14amd64-multi", "-J", "2", "net/curl"},
 		))
-		Expect(poudriereCalls).To(ContainElement(
+		Expect(poudriereCalls).NotTo(ContainElement(
 			[]string{"bulk", "-p", "tree-multi", "-j", "14amd64-multi", "-J", "2", "shells/zsh"},
 		))
+	})
+
+	It("returns RequeueAfter when ReconcilePeriod is set on the bulk", func() {
+		hostname := nextPoudriereHostname()
+		r, exec := newPoudriereTestReconciler(hostname)
+		exec.outputs = []string{"", ""}
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		ports := &freebsdv1.PoudrierePorts{
+			ObjectMeta: metav1.ObjectMeta{Name: "periodic-tree", Namespace: namespace},
+			Spec:       freebsdv1.PoudrierePortsSpec{FetchMethod: "git"},
+		}
+		Expect(k8sClient.Create(ctx, ports)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), ports) })
+
+		bjail := &freebsdv1.PoudriereJail{
+			ObjectMeta: metav1.ObjectMeta{Name: "periodic-jail", Namespace: namespace},
+			Spec:       freebsdv1.PoudriereJailSpec{Version: "14.2-RELEASE"},
+		}
+		Expect(k8sClient.Create(ctx, bjail)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bjail) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "periodic-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree:            "periodic-tree",
+				Jail:            "periodic-jail",
+				Ports:           []string{"net/curl"},
+				ReconcilePeriod: "30m",
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		result, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "periodic-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Minute))
+	})
+
+	It("writes Succeeded status with LastBuildTime after a successful build", func() {
+		hostname := nextPoudriereHostname()
+		r, exec := newPoudriereTestReconciler(hostname)
+		exec.outputs = []string{"", ""}
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		ports := &freebsdv1.PoudrierePorts{
+			ObjectMeta: metav1.ObjectMeta{Name: "status-tree", Namespace: namespace},
+			Spec:       freebsdv1.PoudrierePortsSpec{FetchMethod: "git"},
+		}
+		Expect(k8sClient.Create(ctx, ports)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), ports) })
+
+		bjail := &freebsdv1.PoudriereJail{
+			ObjectMeta: metav1.ObjectMeta{Name: "status-jail", Namespace: namespace},
+			Spec:       freebsdv1.PoudriereJailSpec{Version: "14.2-RELEASE"},
+		}
+		Expect(k8sClient.Create(ctx, bjail)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bjail) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "status-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "status-tree", Jail: "status-jail", Ports: []string{"net/curl"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "status-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		var got freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Namespace: namespace, Name: "status-bulk",
+		}, &got)).To(Succeed())
+
+		Expect(got.Status.LastBuildResult).To(Equal("Succeeded"))
+		Expect(got.Status.LastError).To(BeEmpty())
+		Expect(got.Status.LastBuildTime).NotTo(BeNil())
+		Expect(got.Status.Conditions).To(ContainElement(And(
+			HaveField("Type", condAvailable),
+			HaveField("Status", metav1.ConditionTrue),
+		)))
+		Expect(got.Status.Conditions).To(ContainElement(And(
+			HaveField("Type", condProgressing),
+			HaveField("Status", metav1.ConditionFalse),
+		)))
 	})
 })

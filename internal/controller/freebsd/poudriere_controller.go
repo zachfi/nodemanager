@@ -18,12 +18,17 @@ package freebsd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
@@ -62,11 +67,19 @@ func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger
 //+kubebuilder:rbac:groups=freebsd.nodemanager,resources=poudrieres/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=freebsd.nodemanager,resources=poudrieres/finalizers,verbs=update
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
+// Reconcile drives a single PoudriereBulk through the build pipeline:
 //
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.2/pkg/reconcile
+//  1. label-gate the host on freebsd.nodemanager/poudriere
+//  2. ensure all PoudrierePorts trees exist (poudriere ports -c)
+//  3. ensure all PoudriereJail build-jails exist (poudriere jail -c)
+//  4. portshaker -v to pull port-tree changes
+//  5. poudriere bulk for the specific Bulk in req
+//  6. write status (LastBuildTime / LastBuildResult / Conditions) and
+//     record Prometheus metrics
+//  7. requeue after Spec.ReconcilePeriod for periodic rebuilds
+//
+// Steps 2 and 3 act on the full namespace because the per-bulk reconcile
+// path needs the full setup to be in place; they are idempotent.
 func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
@@ -97,15 +110,22 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
+	// Fetch the specific Bulk being reconciled.  If it's gone (deletion),
+	// return without touching trees/jails — there's nothing to record
+	// status against.
+	var bulk freebsdv1.PoudriereBulk
+	if err := r.Get(ctx, req.NamespacedName, &bulk); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
 	exec := r.system.Exec()
 
 	p, err := poudriere.NewPorts(r.logger, exec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
-	err = r.ensureAllTrees(ctx, p)
-	if err != nil {
+	if err := r.ensureAllTrees(ctx, p); err != nil {
+		r.recordBuildFailure(ctx, req.NamespacedName, hostname, "TreesEnsureFailed", err)
 		return ctrl.Result{}, err
 	}
 
@@ -113,9 +133,8 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
-	err = r.ensureAllJails(ctx, j)
-	if err != nil {
+	if err := r.ensureAllJails(ctx, j); err != nil {
+		r.recordBuildFailure(ctx, req.NamespacedName, hostname, "JailsEnsureFailed", err)
 		return ctrl.Result{}, err
 	}
 
@@ -124,12 +143,121 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	err = r.buildAll(ctx, b)
-	if err != nil {
-		return ctrl.Result{}, err
+	// Mark the bulk as Progressing before kicking off the build.
+	_ = r.updateBulkStatus(ctx, req.NamespacedName, func(fresh *freebsdv1.PoudriereBulk) {
+		r.setBulkCondition(fresh, condProgressing, metav1.ConditionTrue, "Building",
+			"syncing port tree and running poudriere bulk")
+	})
+
+	start := time.Now()
+	buildErr := r.runBuild(ctx, b, &bulk)
+	duration := time.Since(start)
+
+	// Always record the run's outcome — success or failure — so operators
+	// see a fresh LastBuildTime even on failed runs.
+	resultLabel := "success"
+	if buildErr != nil {
+		resultLabel = "error"
+	}
+	poudriereBulkRunsTotal.WithLabelValues(hostname, bulk.Name, resultLabel).Inc()
+	poudriereBulkDuration.WithLabelValues(hostname, bulk.Name).Observe(duration.Seconds())
+	poudriereLastBulkTimestamp.WithLabelValues(hostname, bulk.Name).Set(float64(time.Now().Unix()))
+
+	_ = r.updateBulkStatus(ctx, req.NamespacedName, func(fresh *freebsdv1.PoudriereBulk) {
+		now := metav1.Now()
+		fresh.Status.LastBuildTime = &now
+		if buildErr != nil {
+			fresh.Status.LastBuildResult = "Failed"
+			fresh.Status.LastError = buildErr.Error()
+			r.setBulkCondition(fresh, condProgressing, metav1.ConditionFalse, "BuildFailed", "build failed")
+			r.setBulkCondition(fresh, condDegraded, metav1.ConditionTrue, "BuildFailed", buildErr.Error())
+			r.setBulkCondition(fresh, condAvailable, metav1.ConditionFalse, "BuildFailed",
+				"no usable build available")
+		} else {
+			fresh.Status.LastBuildResult = "Succeeded"
+			fresh.Status.LastError = ""
+			r.setBulkCondition(fresh, condProgressing, metav1.ConditionFalse, "Built", "build completed")
+			r.setBulkCondition(fresh, condDegraded, metav1.ConditionFalse, "Built", "")
+			r.setBulkCondition(fresh, condAvailable, metav1.ConditionTrue, "Built",
+				"build completed successfully")
+		}
+	})
+
+	if buildErr != nil {
+		// Returning the error lets controller-runtime apply its rate
+		// limiter and retry; the next reconcile will write a fresh
+		// status when the build either succeeds or fails again.
+		return ctrl.Result{}, buildErr
+	}
+
+	// Periodic rebuild: requeue after Spec.ReconcilePeriod when set.
+	if bulk.Spec.ReconcilePeriod != "" {
+		period, err := time.ParseDuration(bulk.Spec.ReconcilePeriod)
+		if err != nil {
+			r.logger.Warn("invalid reconcilePeriod, ignoring",
+				"bulk", bulk.Name, "value", bulk.Spec.ReconcilePeriod, "err", err)
+		} else if period > 0 {
+			return ctrl.Result{RequeueAfter: period}, nil
+		}
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// runBuild executes portshaker sync followed by `poudriere bulk` for the
+// single PoudriereBulk being reconciled.  Errors are wrapped with the failing
+// stage so status messages identify which step broke.
+func (r *PoudriereReconciler) runBuild(ctx context.Context, b *poudriere.PoudriereBulk, bulk *freebsdv1.PoudriereBulk) error {
+	if err := b.Sync(ctx); err != nil {
+		return fmt.Errorf("portshaker sync failed: %w", err)
+	}
+	if err := b.Build(ctx, bulk.Spec.Jail, bulk.Spec.Tree, bulk.Spec.Ports); err != nil {
+		return fmt.Errorf("poudriere bulk failed: %w", err)
+	}
+	return nil
+}
+
+// setBulkCondition upserts a named condition on the bulk's status.
+func (r *PoudriereReconciler) setBulkCondition(b *freebsdv1.PoudriereBulk, condType string, status metav1.ConditionStatus, reason, msg string) {
+	meta.SetStatusCondition(&b.Status.Conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            msg,
+		ObservedGeneration: b.Generation,
+	})
+}
+
+// updateBulkStatus re-fetches the bulk and applies the mutation under
+// RetryOnConflict so concurrent status writes from rapid reconciles don't
+// produce "object has been modified" errors.
+func (r *PoudriereReconciler) updateBulkStatus(ctx context.Context, key types.NamespacedName, mutate func(*freebsdv1.PoudriereBulk)) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var fresh freebsdv1.PoudriereBulk
+		if err := r.Get(ctx, key, &fresh); err != nil {
+			return err
+		}
+		mutate(&fresh)
+		return r.Status().Update(ctx, &fresh)
+	})
+}
+
+// recordBuildFailure writes a Degraded condition + LastError when an
+// ensure-step fails before the bulk run can start.  It is best-effort: we
+// already have a real error from the failing step, so a second error from
+// the status write is logged and dropped.
+func (r *PoudriereReconciler) recordBuildFailure(ctx context.Context, key types.NamespacedName, hostname, reason string, err error) {
+	poudriereBulkRunsTotal.WithLabelValues(hostname, key.Name, "error").Inc()
+	if uerr := r.updateBulkStatus(ctx, key, func(fresh *freebsdv1.PoudriereBulk) {
+		now := metav1.Now()
+		fresh.Status.LastBuildTime = &now
+		fresh.Status.LastBuildResult = "Failed"
+		fresh.Status.LastError = err.Error()
+		r.setBulkCondition(fresh, condDegraded, metav1.ConditionTrue, reason, err.Error())
+		r.setBulkCondition(fresh, condProgressing, metav1.ConditionFalse, reason, "build prerequisites failed")
+	}); uerr != nil {
+		r.logger.Error("failed to record build failure status", "bulk", key.Name, "err", uerr)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -238,25 +366,6 @@ func (r *PoudriereReconciler) ensureAllJails(ctx context.Context, p *poudriere.P
 				continue
 			}
 		}
-	}
-
-	return nil
-}
-
-func (r *PoudriereReconciler) buildAll(ctx context.Context, p *poudriere.PoudriereBulk) error {
-	bulks := &freebsdv1.PoudriereBulkList{}
-	err := r.List(ctx, bulks)
-	if err != nil {
-		return err
-	}
-
-	err = p.Sync(ctx)
-	if err != nil {
-		return err
-	}
-
-	for _, b := range bulks.Items {
-		p.Build(ctx, b.Spec.Jail, b.Spec.Tree, b.Spec.Ports)
 	}
 
 	return nil
