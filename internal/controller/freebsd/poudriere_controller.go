@@ -31,12 +31,14 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	"github.com/zachfi/nodemanager/internal/controller/limits"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/poudriere"
@@ -260,13 +262,20 @@ func (r *PoudriereReconciler) recordBuildFailure(ctx context.Context, key types.
 	}
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// SetupWithManager sets up the controller with the Manager.  Uses the
+// LongRunning profile because a successful reconcile can run portshaker
+// plus `poudriere bulk`, which routinely takes minutes to hours; the
+// 30-second token bucket prevents a status-update loop or a flapping
+// resource from kicking off heavy builds back-to-back.
 func (r *PoudriereReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	opts := controller.Options{}
+	limits.LongRunning.ApplyTo(&opts)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&freebsdv1.PoudriereBulk{}).
 		Named("Poudriere").
 		Watches(&freebsdv1.PoudriereJail{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.bulksOnChange)).
 		Watches(&freebsdv1.PoudrierePorts{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.bulksOnChange)).
+		WithOptions(opts).
 		Complete(r)
 }
 

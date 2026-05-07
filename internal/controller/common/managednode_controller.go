@@ -32,7 +32,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/time/rate"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	corev1 "k8s.io/api/core/v1"
 	policyv1beta1 "k8s.io/api/policy/v1beta1"
@@ -42,16 +41,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/internal/controller/limits"
 	"github.com/zachfi/nodemanager/internal/notification"
 	"github.com/zachfi/nodemanager/pkg/common"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
@@ -183,19 +181,17 @@ func (r *ManagedNodeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&commonv1.ManagedNode{}, builder.WithPredicates(newNameFilterPredicate(hostname))).
-		WithOptions(controller.Options{
-			MaxConcurrentReconciles: 1,
-			// Cap reconcile throughput at one per 10 seconds regardless of event
-			// volume. The ManagedNode reconciler is time-scheduled (upgrade checks)
-			// and does not need to react to rapid-fire events. Without this, a
-			// status-update loop can saturate the API server.
-			RateLimiter: workqueue.NewTypedMaxOfRateLimiter(
-				workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](30*time.Second, 5*time.Minute),
-				&workqueue.TypedBucketRateLimiter[reconcile.Request]{
-					Limiter: rate.NewLimiter(rate.Every(10*time.Second), 1),
-				},
-			),
-		}).
+		// limits.Default: MaxConcurrent=1 with a 1-token-per-10s
+		// steady-state bucket.  ManagedNode reconciles are
+		// time-scheduled (upgrade checks, label refresh) and don't
+		// need to react to rapid-fire events; the bucket prevents a
+		// status-update loop from saturating the API.  See
+		// internal/controller/limits for the profile rationale.
+		WithOptions(func() controller.Options {
+			opts := controller.Options{}
+			limits.Default.ApplyTo(&opts)
+			return opts
+		}()).
 		Complete(r)
 }
 

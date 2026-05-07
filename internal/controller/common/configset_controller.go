@@ -43,7 +43,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -54,6 +53,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
+	"github.com/zachfi/nodemanager/internal/controller/limits"
 	"github.com/zachfi/nodemanager/pkg/files"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -355,15 +355,18 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// WireGuard, configset apply results) don't cause a flood of reconciles.
 		Watches(&commonv1.ManagedNode{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsOnNodeChange(hostname)),
 			builder.WithPredicates(predicate.LabelChangedPredicate{})).
-		// Serialize ConfigSet reconciles so concurrent package installs from
-		// multiple ConfigSets matching the same node are not possible.
-		// Custom rate limiter: per-item exponential backoff starting at 30 s,
-		// capped at 3 min — persistent failures slow down gracefully without
-		// the 15-min delays the default limiter can produce.
-		WithOptions(controller.Options{
-			MaxConcurrentReconciles: 1,
-			RateLimiter:             workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](30*time.Second, 3*time.Minute),
-		}).
+		// Serialise ConfigSet reconciles via limits.FastReact:
+		// MaxConcurrent=1 (concurrent package installs from multiple
+		// ConfigSets matching the same node are not safe) and a
+		// 30s→3m exponential failure backoff with no steady-state
+		// bucket — Secret/ConfigMap fan-in events should drain quickly
+		// once the per-item backoff clears.  See
+		// internal/controller/limits for the profile rationale.
+		WithOptions(func() controller.Options {
+			opts := controller.Options{}
+			limits.FastReact.ApplyTo(&opts)
+			return opts
+		}()).
 		Complete(r)
 }
 
