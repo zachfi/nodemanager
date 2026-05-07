@@ -29,6 +29,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	//+kubebuilder:scaffold:imports
 )
@@ -62,6 +63,12 @@ var _ = BeforeSuite(func() {
 	Expect(cfg).NotTo(BeNil())
 
 	err = freebsdv1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	// PoudriereReconciler reads ManagedNode (common.nodemanager) to gate on
+	// the freebsd.nodemanager/poudriere label, so the common scheme must be
+	// registered alongside the freebsd one.
+	err = commonv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	//+kubebuilder:scaffold:scheme

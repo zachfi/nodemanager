@@ -80,12 +80,19 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Bail if this node is disabled
-	if labels.LabelGate(labels.NoneMatch, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"}) {
+	// Bail if this node has the poudriere label explicitly set to "disabled".
+	// labels.Or returns true on the first matching key+value, which is exactly
+	// "this label is set to disabled."  The previous use of labels.NoneMatch
+	// was inverted: NoneMatch returns true only when the value does NOT match,
+	// so the reconciler bailed on every node whose poudriere label was anything
+	// other than "disabled" — meaning the reconciler effectively never ran on
+	// a correctly-configured build host.
+	if labels.LabelGate(labels.Or, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"}) {
 		return ctrl.Result{}, nil
 	}
 
-	// Match only the key
+	// Require the poudriere label to be present at all (any non-"disabled"
+	// value opts the node in).
 	if !labels.LabelGate(labels.AnyKey, node.Labels, map[string]string{labels.PoudriereBuild: ""}) {
 		return ctrl.Result{}, nil
 	}
