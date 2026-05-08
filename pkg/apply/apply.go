@@ -137,14 +137,50 @@ func (a *Applier) Files(ctx context.Context, nodeName, configSetName, namespace 
 				}
 			}
 
-			if file.Content == "" || file.Ensure == files.Absent.String() {
-				continue
+			fileExists := false
+			if _, statErr := os.Stat(file.Path); statErr == nil {
+				fileExists = true
 			}
 
-			if file.CreateOnly {
-				if _, statErr := os.Stat(file.Path); statErr == nil {
-					continue
+			// Three cases skip the content write:
+			//   - Content == "" : nothing to write; treat as a metadata-only
+			//     declaration so ConfigSets can govern ownership/mode of
+			//     files produced externally (nsd-control-setup, ssh-keygen,
+			//     dehydrated, etc.) without touching the bytes.
+			//   - Ensure == absent : handled by the `case files.Absent` arm;
+			//     this branch is defensive.
+			//   - CreateOnly && file exists : seed-file semantics.
+			// In the first and third cases, if the file is on disk we still
+			// converge Owner/Group/Mode so the spec stays authoritative.
+			skipContent := file.Content == "" ||
+				file.Ensure == files.Absent.String() ||
+				(file.CreateOnly && fileExists)
+
+			if skipContent {
+				if fileExists && file.Ensure != files.Absent.String() {
+					ownerChanged := false
+					if file.Owner != "" || file.Group != "" {
+						oc, ownErr := h.Chown(ctx, file.Path, file.Owner, file.Group)
+						if ownErr != nil {
+							errs = append(errs, fmt.Errorf("chown %q: %w", file.Path, ownErr))
+							continue
+						}
+						ownerChanged = oc
+					}
+					modeChanged := false
+					if file.Mode != "" {
+						mc, modeErr := h.SetMode(ctx, file.Path, file.Mode)
+						if modeErr != nil {
+							errs = append(errs, fmt.Errorf("chmod %q: %w", file.Path, modeErr))
+							continue
+						}
+						modeChanged = mc
+					}
+					if ownerChanged || modeChanged {
+						changedFiles = append(changedFiles, file.Path)
+					}
 				}
+				continue
 			}
 
 			changed, backupHash, writeErr := a.writeFileContent(ctx, file, h)

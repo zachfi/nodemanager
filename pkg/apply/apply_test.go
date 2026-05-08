@@ -223,6 +223,92 @@ func TestApplier_Files_CreateOnly_SkipsExisting(t *testing.T) {
 	require.Empty(t, sys.fileHandler.writtenContent, "createOnly should not write when file exists")
 }
 
+// A File with empty Content is a metadata-only declaration: the ConfigSet
+// owns Owner/Group/Mode but the bytes are produced by an external tool
+// (nsd-control-setup, ssh-keygen, dehydrated, etc.). When the file is
+// already on disk we must converge ownership/mode rather than skip
+// silently.
+func TestApplier_Files_EmptyContent_EnforcesMetadataOnExisting(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "external.pem")
+	require.NoError(t, os.WriteFile(target, []byte("external content"), 0o644))
+
+	sys := newMockSystem()
+	sys.fileHandler.chownChanged = true
+
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{
+		{Path: target, Ensure: "file", Owner: "nsd", Group: "nsd", Mode: "0640"},
+	}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.Empty(t, sys.fileHandler.writtenContent, "empty content must not write bytes")
+	require.Equal(t, chownCall{owner: "nsd", group: "nsd"}, sys.fileHandler.chowns[target])
+	require.Equal(t, "0640", sys.fileHandler.modes[target])
+	require.Contains(t, changed, target)
+}
+
+// Empty-content metadata declaration is a no-op when the target doesn't
+// exist (we have nothing to chown). Importantly, this must NOT error —
+// some files arrive later via Executions or boot-time tooling.
+func TestApplier_Files_EmptyContent_MissingTargetIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "not-yet.pem")
+
+	sys := newMockSystem()
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{
+		{Path: target, Ensure: "file", Owner: "nsd", Group: "nsd", Mode: "0640"},
+	}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.Empty(t, changed)
+	require.Empty(t, sys.fileHandler.chowns, "must not chown a path that doesn't exist")
+}
+
+// CreateOnly preserves the bytes of a pre-existing file but must still
+// converge ownership and mode — that's how external creators (e.g.
+// nsd-control-setup, ssh-keygen) can produce content while the ConfigSet
+// owns "who can read it".
+func TestApplier_Files_CreateOnly_EnforcesMetadataOnExisting(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "existing.pem")
+	require.NoError(t, os.WriteFile(target, []byte("external content"), 0o644))
+
+	sys := newMockSystem()
+	// Pretend the underlying handler reports a metadata change so we can
+	// verify the change is propagated into changedFiles.
+	sys.fileHandler.chownChanged = true
+
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{
+		{
+			Path:       target,
+			Ensure:     "file",
+			Content:    "ignored because createOnly + exists",
+			Owner:      "nsd",
+			Group:      "nsd",
+			Mode:       "0640",
+			CreateOnly: true,
+		},
+	}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.Empty(t, sys.fileHandler.writtenContent, "createOnly must not rewrite content of existing file")
+	require.Equal(t, chownCall{owner: "nsd", group: "nsd"}, sys.fileHandler.chowns[target], "ownership must be enforced")
+	require.Equal(t, "0640", sys.fileHandler.modes[target], "mode must be enforced")
+	require.Contains(t, changed, target, "metadata-only change should propagate to changedFiles for service subscriptions")
+}
+
 func TestApplier_Files_CreateOnly_WritesNew(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "new.conf")
@@ -496,9 +582,18 @@ func (m *mockSystem) File() handler.FileHandler       { return m.fileHandler }
 func (m *mockSystem) Node() handler.NodeHandler       { return nil }
 func (m *mockSystem) Exec() handler.ExecHandler       { return m.execHandler }
 
+type chownCall struct {
+	owner string
+	group string
+}
+
 type mockFileHandler struct {
 	writtenContent map[string]string
 	removedPaths   map[string]bool
+	chowns         map[string]chownCall
+	modes          map[string]string
+	chownChanged   bool
+	modeChanged    bool
 }
 
 func (m *mockFileHandler) WriteContentFile(_ context.Context, path string, content []byte) (bool, error) {
@@ -506,8 +601,21 @@ func (m *mockFileHandler) WriteContentFile(_ context.Context, path string, conte
 	return true, nil
 }
 
-func (m *mockFileHandler) Chown(_ context.Context, _, _, _ string) (bool, error) { return false, nil }
-func (m *mockFileHandler) SetMode(_ context.Context, _, _ string) (bool, error)  { return false, nil }
+func (m *mockFileHandler) Chown(_ context.Context, path, owner, group string) (bool, error) {
+	if m.chowns == nil {
+		m.chowns = make(map[string]chownCall)
+	}
+	m.chowns[path] = chownCall{owner: owner, group: group}
+	return m.chownChanged, nil
+}
+
+func (m *mockFileHandler) SetMode(_ context.Context, path, mode string) (bool, error) {
+	if m.modes == nil {
+		m.modes = make(map[string]string)
+	}
+	m.modes[path] = mode
+	return m.modeChanged, nil
+}
 func (m *mockFileHandler) Remove(_ context.Context, path string) (bool, error) {
 	m.removedPaths[path] = true
 	// Actually unlink so that follow-on operations (e.g. os.Symlink replacing
