@@ -18,8 +18,10 @@ package freebsd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -32,6 +34,7 @@ import (
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
+	"github.com/zachfi/nodemanager/pkg/cmdrunner"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/handler"
 )
@@ -149,18 +152,23 @@ func nextPoudriereHostname() string {
 
 // newPoudriereTestReconciler wires a PoudriereReconciler with the mock
 // system (so exec calls are recorded) and the envtest k8sClient/scheme.
+// The Command-mode runner uses the real cmdrunner with the envtest
+// client so SecretEnv resolution works in tests; Command-mode tests
+// use real /bin/sh programs as Dispatch / Status executables.
 func newPoudriereTestReconciler(hostname string) (*PoudriereReconciler, *poudriereMockExec) {
 	exec := &poudriereMockExec{}
 	sys := &poudriereMockSystem{
 		exec: exec,
 		node: &poudriereMockNode{hostname: hostname},
 	}
+	logger := slog.Default().With("controller", "poudriere-test")
 	r := &PoudriereReconciler{
 		Client: k8sClient,
 		Scheme: k8sClient.Scheme(),
 		tracer: otel.Tracer("test"),
-		logger: slog.Default().With("controller", "poudriere-test"),
+		logger: logger,
 		system: sys,
+		runner: cmdrunner.New(k8sClient, logger.With("component", "cmdrunner")),
 	}
 	return r, exec
 }
@@ -473,5 +481,470 @@ var _ = Describe("Poudriere Controller", func() {
 			HaveField("Type", condProgressing),
 			HaveField("Status", metav1.ConditionFalse),
 		)))
+	})
+
+	// ----------------------------------------------------------------------
+	// InProcess skip-if-unchanged
+	// ----------------------------------------------------------------------
+
+	It("skips the bulk run when inputs are unchanged since the last successful build", func() {
+		hostname := nextPoudriereHostname()
+		r, exec := newPoudriereTestReconciler(hostname)
+		// Stage outputs for the FIRST reconcile only; if the second
+		// reconcile actually invokes poudriere we'll see additional
+		// recorded calls.
+		exec.outputs = []string{"", ""}
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		ports := &freebsdv1.PoudrierePorts{
+			ObjectMeta: metav1.ObjectMeta{Name: "skip-tree", Namespace: namespace},
+			Spec:       freebsdv1.PoudrierePortsSpec{FetchMethod: "git"},
+		}
+		Expect(k8sClient.Create(ctx, ports)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), ports) })
+
+		bjail := &freebsdv1.PoudriereJail{
+			ObjectMeta: metav1.ObjectMeta{Name: "skip-jail", Namespace: namespace},
+			Spec:       freebsdv1.PoudriereJailSpec{Version: "14.2-RELEASE"},
+		}
+		Expect(k8sClient.Create(ctx, bjail)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bjail) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "skip-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "skip-tree", Jail: "skip-jail", Ports: []string{"net/curl"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		// First reconcile: actual build runs, status is populated.
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "skip-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		callsAfterFirst := len(exec.callsByCommand("/usr/local/bin/poudriere"))
+		Expect(callsAfterFirst).To(BeNumerically(">", 0), "first reconcile must invoke poudriere")
+
+		// Second reconcile: same spec, last build Succeeded, hash matches → skip.
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "skip-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		callsAfterSecond := len(exec.callsByCommand("/usr/local/bin/poudriere"))
+		Expect(callsAfterSecond).To(Equal(callsAfterFirst),
+			"second reconcile must skip the bulk: no additional poudriere invocations")
+	})
+
+	It("rebuilds when ports list changes (input hash invalidated)", func() {
+		hostname := nextPoudriereHostname()
+		r, exec := newPoudriereTestReconciler(hostname)
+		exec.outputs = []string{"", "", "", ""} // first + second reconcile each see 2 List calls
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		ports := &freebsdv1.PoudrierePorts{
+			ObjectMeta: metav1.ObjectMeta{Name: "rebuild-tree", Namespace: namespace},
+			Spec:       freebsdv1.PoudrierePortsSpec{FetchMethod: "git"},
+		}
+		Expect(k8sClient.Create(ctx, ports)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), ports) })
+
+		bjail := &freebsdv1.PoudriereJail{
+			ObjectMeta: metav1.ObjectMeta{Name: "rebuild-jail", Namespace: namespace},
+			Spec:       freebsdv1.PoudriereJailSpec{Version: "14.2-RELEASE"},
+		}
+		Expect(k8sClient.Create(ctx, bjail)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bjail) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "rebuild-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "rebuild-tree", Jail: "rebuild-jail", Ports: []string{"net/curl"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		// First reconcile: builds with ["net/curl"].
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "rebuild-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		callsAfterFirst := len(exec.callsByCommand("/usr/local/bin/poudriere"))
+
+		// Edit the ports list; hash invalidates.
+		var fresh freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "rebuild-bulk"}, &fresh)).To(Succeed())
+		fresh.Spec.Ports = []string{"net/curl", "shells/zsh"}
+		Expect(k8sClient.Update(ctx, &fresh)).To(Succeed())
+
+		// Second reconcile: hash differs → bulk runs again with the new port list.
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "rebuild-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		callsAfterSecond := len(exec.callsByCommand("/usr/local/bin/poudriere"))
+		Expect(callsAfterSecond).To(BeNumerically(">", callsAfterFirst),
+			"changed spec must invalidate the input hash and trigger a fresh build")
+
+		// And the last bulk invocation must contain the new port.
+		bulkCalls := exec.callsByCommand("/usr/local/bin/poudriere")
+		var lastBulk []string
+		for _, args := range bulkCalls {
+			if len(args) > 0 && args[0] == "bulk" {
+				lastBulk = args
+			}
+		}
+		Expect(lastBulk).To(ContainElement("shells/zsh"))
+	})
+
+	// ----------------------------------------------------------------------
+	// Command executor — dispatch / status / state machine
+	// ----------------------------------------------------------------------
+
+	It("dispatches a Command executor and records run ID, run URL after status poll", func() {
+		hostname := nextPoudriereHostname()
+		r, _ := newPoudriereTestReconciler(hostname)
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		// Dispatch program: read JSON spec on stdin, print a fixed run ID.
+		// Status program: read run ID on stdin, return success JSON.
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmd-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "cmd-tree", Jail: "cmd-jail", Ports: []string{"net/curl"},
+				Executor: &freebsdv1.BulkExecutor{
+					Type: freebsdv1.BulkExecutorCommand,
+					Command: &freebsdv1.CommandExecutor{
+						Dispatch: []string{"/bin/sh", "-c", `cat >/dev/null; echo run-9001`},
+						Status: []string{"/bin/sh", "-c",
+							`cat >/dev/null; printf '{"apiVersion":"freebsd.nodemanager/v1","kind":"BulkRunStatus","state":"success","url":"https://example/run/9001"}'`,
+						},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		// First reconcile: dispatch — runs Dispatch program, captures run ID,
+		// requeues with statusPollInterval to start polling.
+		result, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(statusPollInterval))
+
+		var got freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.LastDispatchedRunID).To(Equal("run-9001"))
+		Expect(got.Status.LastDispatchTime).NotTo(BeNil())
+		Expect(got.Status.LastBuildResult).To(BeEmpty(), "in-flight: terminal result not yet known")
+
+		// Second reconcile: poll — Status program returns success, terminal state recorded.
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.LastBuildResult).To(Equal("Succeeded"))
+		Expect(got.Status.LastDispatchedRunURL).To(Equal("https://example/run/9001"))
+		Expect(got.Status.LastDispatchedRunID).To(BeEmpty(), "terminal: in-flight marker cleared")
+	})
+
+	It("Command executor: dispatch program exit non-zero records BuildFailed", func() {
+		hostname := nextPoudriereHostname()
+		r, _ := newPoudriereTestReconciler(hostname)
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmd-fail-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "t", Jail: "j", Ports: []string{"net/curl"},
+				Executor: &freebsdv1.BulkExecutor{
+					Type: freebsdv1.BulkExecutorCommand,
+					Command: &freebsdv1.CommandExecutor{
+						Dispatch: []string{"/bin/sh", "-c", `cat >/dev/null; echo "fjord broke" 1>&2; exit 7`},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-fail-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred(), "dispatch program exit non-zero is recorded as build failure, not surfaced as Reconcile error")
+
+		var got freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-fail-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.LastBuildResult).To(Equal("Failed"))
+		Expect(got.Status.LastError).To(ContainSubstring("exit 7"))
+		Expect(got.Status.LastError).To(ContainSubstring("fjord broke"))
+	})
+
+	It("Command executor without Status program: dispatch is fire-and-forget", func() {
+		hostname := nextPoudriereHostname()
+		r, _ := newPoudriereTestReconciler(hostname)
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmd-fnf-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "t", Jail: "j", Ports: []string{"net/curl"},
+				Executor: &freebsdv1.BulkExecutor{
+					Type: freebsdv1.BulkExecutorCommand,
+					Command: &freebsdv1.CommandExecutor{
+						Dispatch: []string{"/bin/sh", "-c", `cat >/dev/null; echo just-a-handle`},
+						// No Status program — fire-and-forget.
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-fnf-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		var got freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-fnf-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.LastBuildResult).To(Equal("Succeeded"),
+			"fire-and-forget records dispatch as Succeeded immediately")
+		Expect(got.Status.LastDispatchedRunID).To(BeEmpty(),
+			"fire-and-forget clears the in-flight marker so the next reconcile dispatches fresh")
+	})
+
+	It("Command executor: in-flight run polled across multiple reconciles", func() {
+		hostname := nextPoudriereHostname()
+		r, _ := newPoudriereTestReconciler(hostname)
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		// Status program returns "running" the first time it's invoked
+		// (we simulate this by writing a counter to a tmpfile and
+		// changing the response based on its value).
+		tmpDir := GinkgoT().TempDir()
+		statusScript := tmpDir + "/status.sh"
+		Expect(os.WriteFile(statusScript, []byte(`#!/bin/sh
+COUNTER=`+tmpDir+`/counter
+N=$(cat "$COUNTER" 2>/dev/null || echo 0)
+N=$((N + 1))
+echo "$N" > "$COUNTER"
+cat >/dev/null
+if [ "$N" = "1" ]; then
+  printf '{"apiVersion":"freebsd.nodemanager/v1","kind":"BulkRunStatus","state":"running","url":"https://x/123"}'
+else
+  printf '{"apiVersion":"freebsd.nodemanager/v1","kind":"BulkRunStatus","state":"success","url":"https://x/123"}'
+fi
+`), 0o755)).To(Succeed())
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmd-inflight-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "t", Jail: "j", Ports: []string{"net/curl"},
+				Executor: &freebsdv1.BulkExecutor{
+					Type: freebsdv1.BulkExecutorCommand,
+					Command: &freebsdv1.CommandExecutor{
+						Dispatch: []string{"/bin/sh", "-c", `cat >/dev/null; echo run-INFLIGHT`},
+						Status:   []string{statusScript},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		// 1) Dispatch.
+		result, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-inflight-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(statusPollInterval))
+
+		// 2) Poll — running, URL recorded, still in-flight.
+		result, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-inflight-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(statusPollInterval))
+
+		var got freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-inflight-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.LastDispatchedRunID).To(Equal("run-INFLIGHT"), "in-flight marker still set while running")
+		Expect(got.Status.LastDispatchedRunURL).To(Equal("https://x/123"), "URL surfaced from running state")
+		Expect(got.Status.LastBuildResult).To(BeEmpty(), "no terminal result yet")
+
+		// 3) Poll — success, terminal recorded, in-flight marker cleared.
+		_, err = r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-inflight-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-inflight-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.LastBuildResult).To(Equal("Succeeded"))
+		Expect(got.Status.LastDispatchedRunID).To(BeEmpty())
+	})
+
+	It("Command executor: invalid spec (Type=Command without .Command) records InvalidExecutor", func() {
+		hostname := nextPoudriereHostname()
+		r, _ := newPoudriereTestReconciler(hostname)
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmd-invalid-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree: "t", Jail: "j", Ports: []string{"net/curl"},
+				Executor: &freebsdv1.BulkExecutor{
+					Type: freebsdv1.BulkExecutorCommand,
+					// Command field deliberately nil
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-invalid-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred(), "validation failure recorded on status, not returned")
+
+		var got freebsdv1.PoudriereBulk
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace, Name: "cmd-invalid-bulk"}, &got)).To(Succeed())
+		Expect(got.Status.Conditions).To(ContainElement(And(
+			HaveField("Type", condDegraded),
+			HaveField("Status", metav1.ConditionTrue),
+			HaveField("Reason", "InvalidExecutor"),
+		)))
+	})
+
+	It("Command executor delivers BulkDispatchInput JSON on stdin per the v1 contract", func() {
+		hostname := nextPoudriereHostname()
+		r, _ := newPoudriereTestReconciler(hostname)
+
+		node := &commonv1.ManagedNode{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      hostname,
+				Namespace: namespace,
+				Labels:    map[string]string{labels.PoudriereBuild: "enabled"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, node)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), node) })
+
+		// Dispatch program writes received stdin to a tmpfile we can inspect.
+		tmpDir := GinkgoT().TempDir()
+		stdinCapture := tmpDir + "/stdin.json"
+		dispatchScript := tmpDir + "/dispatch.sh"
+		Expect(os.WriteFile(dispatchScript, []byte(
+			`#!/bin/sh
+cat > `+stdinCapture+`
+echo run-CONTRACT
+`), 0o755)).To(Succeed())
+
+		bulk := &freebsdv1.PoudriereBulk{
+			ObjectMeta: metav1.ObjectMeta{Name: "cmd-contract-bulk", Namespace: namespace},
+			Spec: freebsdv1.PoudriereBulkSpec{
+				Tree:  "contract-tree",
+				Jail:  "contract-jail",
+				Ports: []string{"net/curl", "shells/zsh"},
+				Executor: &freebsdv1.BulkExecutor{
+					Type: freebsdv1.BulkExecutorCommand,
+					Command: &freebsdv1.CommandExecutor{
+						Dispatch: []string{dispatchScript},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, bulk)).To(Succeed())
+		DeferCleanup(func() { _ = k8sClient.Delete(context.Background(), bulk) })
+
+		_, err := r.Reconcile(ctx, ctrl.Request{
+			NamespacedName: types.NamespacedName{Namespace: namespace, Name: "cmd-contract-bulk"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Verify the captured stdin matches the documented contract shape.
+		stdin, err := os.ReadFile(stdinCapture)
+		Expect(err).NotTo(HaveOccurred())
+
+		var input cmdrunner.BulkDispatchInput
+		Expect(json.Unmarshal(stdin, &input)).To(Succeed())
+		Expect(input.APIVersion).To(Equal(cmdrunner.ContractAPIVersion))
+		Expect(input.Kind).To(Equal(cmdrunner.KindBulkDispatchInput))
+		Expect(input.Metadata.Name).To(Equal("cmd-contract-bulk"))
+		Expect(input.Metadata.Namespace).To(Equal(namespace))
+		Expect(input.Spec.Jail).To(Equal("contract-jail"))
+		Expect(input.Spec.Tree).To(Equal("contract-tree"))
+		Expect(input.Spec.Ports).To(Equal([]string{"net/curl", "shells/zsh"}))
 	})
 })
