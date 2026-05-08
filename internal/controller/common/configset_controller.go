@@ -754,6 +754,12 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		// Context is used to pass a user value on the systemd handler.
 		context.Context
 		commonv1.Service
+		// triggeringFiles is the deduped subset of changedFiles that intersected
+		// this service's SubscribeFiles list — i.e. the answer to
+		// "why was this service restarted?".  Recorded as a span attribute on
+		// the per-service restart span so a single trace inspection answers
+		// the question without a follow-up dig.
+		triggeringFiles []string
 	}
 
 	var (
@@ -769,7 +775,13 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 				for _, sub := range svc.SusbscribeFiles {
 					if sub == cf {
 						r.logger.Debug("changed file will notify service", "file", cf, "svc", svc, "sub", sub)
-						restartServices[svc.Name] = restartService{svcCtx, svc}
+						entry := restartServices[svc.Name]
+						entry.Context = svcCtx
+						entry.Service = svc
+						if !slices.Contains(entry.triggeringFiles, cf) {
+							entry.triggeringFiles = append(entry.triggeringFiles, cf)
+						}
+						restartServices[svc.Name] = entry
 					}
 				}
 			}
@@ -846,30 +858,42 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 	)
 
 	restartF := func(restart string, restartSvc restartService) error {
+		// Per-service restart span: records the service name and the exact
+		// changedFiles entries that intersected its SubscribeFiles, so the
+		// trace answers "why did this service restart?" directly.
+		restartCtx, restartSpan := r.tracer.Start(restartSvc.Context, "restart-service",
+			trace.WithAttributes(
+				attribute.String("service.name", restart),
+				attribute.StringSlice("triggering_files", restartSvc.triggeringFiles),
+			))
+		defer restartSpan.End()
+
 		if restartSvc.LockGroup != "" {
 			req = types.NamespacedName{
 				Namespace: namespace,
 				Name:      restartSvc.LockGroup,
 			}
 
-			if err = r.locker.Lock(ctx, req); err != nil {
+			if err = r.locker.Lock(restartCtx, req); err != nil {
+				restartSpan.SetStatus(codes.Error, err.Error())
 				return fmt.Errorf("failed to acquire lock: %w", err)
 			}
 
 			defer func() {
-				unlockErr := r.locker.Unlock(ctx, req)
+				unlockErr := r.locker.Unlock(restartCtx, req)
 				if unlockErr != nil {
 					r.logger.Error("failed to unlock", "err", err)
 				}
 			}()
 		}
 
-		r.logger.Info("restarting service", "name", restart)
-		restartHandler := withUserContext(handler, restartSvc.Context)
-		err = restartHandler.Restart(restartSvc.Context, restart)
+		r.logger.Info("restarting service", "name", restart, "triggering_files", restartSvc.triggeringFiles)
+		restartHandler := withUserContext(handler, restartCtx)
+		err = restartHandler.Restart(restartCtx, restart)
 		result := "success"
 		if err != nil {
 			result = "error"
+			restartSpan.SetStatus(codes.Error, err.Error())
 		}
 		serviceOperationsTotal.WithLabelValues(nodeName, "restart", result).Inc()
 		if err != nil {

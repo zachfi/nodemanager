@@ -132,8 +132,18 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		currentGID := int(stat.Gid)
 
 		if currentGID == gid && currentUID == uid {
+			span.SetAttributes(attribute.Bool("changed", false))
 			return false, nil
 		}
+
+		// Record the previous ids on the span so a single trace tells the whole
+		// "X is flipping ownership of file Y" story without a follow-up dig.
+		span.SetAttributes(
+			attribute.Int("previous_uid", currentUID),
+			attribute.Int("previous_gid", currentGID),
+			attribute.Int("desired_uid", uid),
+			attribute.Int("desired_gid", gid),
+		)
 	}
 
 	err = os.Chown(path, uid, gid)
@@ -141,6 +151,7 @@ func (h *FileHandlerCommon) Chown(ctx context.Context, path, owner, group string
 		return false, errors.Wrap(err, "failed to chown file")
 	}
 
+	span.SetAttributes(attribute.Bool("changed", true))
 	span.AddEvent("ownership set")
 
 	return true, nil
@@ -180,6 +191,7 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) (boo
 
 	// Make no change to the file if the current mode matches the desired mode
 	if desiredPerms == currentPerms {
+		span.SetAttributes(attribute.Bool("changed", false))
 		return false, nil
 	}
 
@@ -190,11 +202,19 @@ func (h *FileHandlerCommon) SetMode(ctx context.Context, path, mode string) (boo
 		"path", path,
 	)
 
+	// Record the previous mode on the span so a single trace tells the whole
+	// "X is flipping mode on file Y" story without a follow-up dig.
+	span.SetAttributes(
+		attribute.String("previous_mode", currentPerms.String()),
+		attribute.String("desired_mode", desiredPerms.String()),
+	)
+
 	err = os.Chmod(path, desiredFileMode)
 	if err != nil {
 		return false, err
 	}
 
+	span.SetAttributes(attribute.Bool("changed", true))
 	span.AddEvent("mode set")
 
 	return true, nil
@@ -223,9 +243,15 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, d
 	dataHash := h.hash(ctx, data)
 	existingHash := h.hash(ctx, fileBytes)
 	if existingHash == dataHash {
+		span.SetAttributes(attribute.Bool("changed", false))
 		return false, nil
 	}
 
+	span.SetAttributes(
+		attribute.Bool("changed", true),
+		attribute.String("hash", dataHash),
+		attribute.String("previous_hash", existingHash),
+	)
 	h.logger.Info("writing file", "path", path, "hash", dataHash, "prev", existingHash)
 
 	// Write to a sibling temp file then rename(2) into place so a reader (or
