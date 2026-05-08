@@ -1044,28 +1044,64 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 			}
 
 		case files.Symlink:
-			target, linkErr := os.Readlink(file.Path)
-			if linkErr != nil {
-				errs = append(errs, fmt.Errorf("failed to read symlink %q: %w", file.Path, linkErr))
-				continue
-			}
-
-			if target != file.Target {
-				changed, removeErr := handler.Remove(ctx, file.Path)
-				if removeErr != nil {
-					r.logger.Error("failed removing existing link", "path", file.Path, "err", removeErr)
-					errs = append(errs, removeErr)
-					continue
-				}
-				if changed {
-					changedFiles = append(changedFiles, file.Path)
-				}
-
-				r.logger.Info("symlinking file", "name", file.Path)
-
+			// Lstat first so we can distinguish: missing, regular file/dir, or
+			// existing symlink. The previous implementation called Readlink
+			// unconditionally, which returns EINVAL on a regular file and ENOENT
+			// on a missing path — either errored out the reconcile and prevented
+			// convergence (e.g. a fresh /etc/resolv.conf left by Arch defaults
+			// could never be replaced with the systemd-resolved stub link).
+			fi, statErr := os.Lstat(file.Path)
+			switch {
+			case errors.Is(statErr, os.ErrNotExist):
+				r.logger.Info("symlinking file", "name", file.Path, "target", file.Target)
 				if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
 					errs = append(errs, fmt.Errorf("failed to create symlink %q -> %q: %w", file.Path, file.Target, symlinkErr))
 					continue
+				}
+				changedFiles = append(changedFiles, file.Path)
+
+			case statErr != nil:
+				errs = append(errs, fmt.Errorf("failed to stat %q: %w", file.Path, statErr))
+				continue
+
+			case fi.Mode()&os.ModeSymlink == 0:
+				// A non-symlink (regular file or directory) sits at the desired
+				// path. Remove it and replace with the symlink.
+				r.logger.Info("replacing non-symlink with symlink", "path", file.Path, "existing_mode", fi.Mode().String(), "target", file.Target)
+				if _, removeErr := handler.Remove(ctx, file.Path); removeErr != nil {
+					errs = append(errs, fmt.Errorf("failed to remove existing %q to install symlink: %w", file.Path, removeErr))
+					continue
+				}
+				if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
+					errs = append(errs, fmt.Errorf("failed to create symlink %q -> %q: %w", file.Path, file.Target, symlinkErr))
+					continue
+				}
+				changedFiles = append(changedFiles, file.Path)
+
+			default:
+				// Existing symlink — verify target matches.
+				target, linkErr := os.Readlink(file.Path)
+				if linkErr != nil {
+					errs = append(errs, fmt.Errorf("failed to read symlink %q: %w", file.Path, linkErr))
+					continue
+				}
+				if target != file.Target {
+					changed, removeErr := handler.Remove(ctx, file.Path)
+					if removeErr != nil {
+						r.logger.Error("failed removing existing link", "path", file.Path, "err", removeErr)
+						errs = append(errs, removeErr)
+						continue
+					}
+					if changed {
+						changedFiles = append(changedFiles, file.Path)
+					}
+
+					r.logger.Info("symlinking file", "name", file.Path, "target", file.Target)
+
+					if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
+						errs = append(errs, fmt.Errorf("failed to create symlink %q -> %q: %w", file.Path, file.Target, symlinkErr))
+						continue
+					}
 				}
 			}
 		case files.Absent:

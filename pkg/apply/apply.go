@@ -210,20 +210,52 @@ func (a *Applier) Files(ctx context.Context, nodeName, configSetName, namespace 
 			}
 
 		case files.Symlink:
-			target, linkErr := os.Readlink(file.Path)
-			if linkErr != nil {
-				errs = append(errs, fmt.Errorf("readlink %q: %w", file.Path, linkErr))
-				continue
-			}
-			if target != file.Target {
-				if changed, removeErr := h.Remove(ctx, file.Path); removeErr != nil {
-					errs = append(errs, removeErr)
+			// Lstat first so we can distinguish missing, regular file/dir, or
+			// existing symlink. Calling Readlink unconditionally returned
+			// EINVAL on a regular file and ENOENT on a missing path, which
+			// blocked convergence forever — see configset_controller.go for
+			// the full rationale.
+			fi, statErr := os.Lstat(file.Path)
+			switch {
+			case errors.Is(statErr, os.ErrNotExist):
+				if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
+					errs = append(errs, fmt.Errorf("symlink %q → %q: %w", file.Path, file.Target, symlinkErr))
 					continue
-				} else if changed {
-					changedFiles = append(changedFiles, file.Path)
+				}
+				changedFiles = append(changedFiles, file.Path)
+
+			case statErr != nil:
+				errs = append(errs, fmt.Errorf("stat %q: %w", file.Path, statErr))
+				continue
+
+			case fi.Mode()&os.ModeSymlink == 0:
+				a.logger.Info("replacing non-symlink with symlink", "path", file.Path, "existing_mode", fi.Mode().String(), "target", file.Target)
+				if _, removeErr := h.Remove(ctx, file.Path); removeErr != nil {
+					errs = append(errs, fmt.Errorf("remove existing %q to install symlink: %w", file.Path, removeErr))
+					continue
 				}
 				if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
 					errs = append(errs, fmt.Errorf("symlink %q → %q: %w", file.Path, file.Target, symlinkErr))
+					continue
+				}
+				changedFiles = append(changedFiles, file.Path)
+
+			default:
+				target, linkErr := os.Readlink(file.Path)
+				if linkErr != nil {
+					errs = append(errs, fmt.Errorf("readlink %q: %w", file.Path, linkErr))
+					continue
+				}
+				if target != file.Target {
+					if changed, removeErr := h.Remove(ctx, file.Path); removeErr != nil {
+						errs = append(errs, removeErr)
+						continue
+					} else if changed {
+						changedFiles = append(changedFiles, file.Path)
+					}
+					if symlinkErr := os.Symlink(file.Target, file.Path); symlinkErr != nil {
+						errs = append(errs, fmt.Errorf("symlink %q → %q: %w", file.Path, file.Target, symlinkErr))
+					}
 				}
 			}
 

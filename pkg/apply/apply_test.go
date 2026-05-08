@@ -260,6 +260,104 @@ func TestApplier_Files_Directory(t *testing.T) {
 	require.True(t, info.IsDir())
 }
 
+// --- Applier.Files symlink tests ---
+
+// TestApplier_Files_Symlink_CreatesWhenMissing verifies that a fresh path with
+// no existing entry gets the desired symlink installed in one reconcile pass.
+func TestApplier_Files_Symlink_CreatesWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "resolv.conf")
+	target := "/run/systemd/resolve/stub-resolv.conf"
+
+	sys := newMockSystem()
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{{Path: link, Ensure: "symlink", Target: target}}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.Contains(t, changed, link)
+
+	got, readErr := os.Readlink(link)
+	require.NoError(t, readErr)
+	require.Equal(t, target, got)
+}
+
+// TestApplier_Files_Symlink_ReplacesRegularFile is the regression test for the
+// /etc/resolv.conf case: when the path already holds a regular file (e.g. the
+// default Arch resolv.conf) the reconciler must remove it and install the
+// desired symlink. The previous implementation called os.Readlink first, which
+// returned EINVAL on a regular file and aborted the reconcile so convergence
+// was impossible.
+func TestApplier_Files_Symlink_ReplacesRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "resolv.conf")
+	target := "/run/systemd/resolve/stub-resolv.conf"
+
+	require.NoError(t, os.WriteFile(link, []byte("nameserver 1.1.1.1\n"), 0o644))
+
+	sys := newMockSystem()
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{{Path: link, Ensure: "symlink", Target: target}}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.Contains(t, changed, link)
+	require.Contains(t, sys.fileHandler.removedPaths, link)
+
+	got, readErr := os.Readlink(link)
+	require.NoError(t, readErr)
+	require.Equal(t, target, got)
+}
+
+// TestApplier_Files_Symlink_RetargetsExisting verifies that an existing
+// symlink with the wrong target gets removed and replaced.
+func TestApplier_Files_Symlink_RetargetsExisting(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "resolv.conf")
+	wantTarget := "/run/systemd/resolve/stub-resolv.conf"
+
+	require.NoError(t, os.Symlink("/etc/resolv.conf.head", link))
+
+	sys := newMockSystem()
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{{Path: link, Ensure: "symlink", Target: wantTarget}}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.Contains(t, changed, link)
+
+	got, readErr := os.Readlink(link)
+	require.NoError(t, readErr)
+	require.Equal(t, wantTarget, got)
+}
+
+// TestApplier_Files_Symlink_NoopWhenAlreadyCorrect verifies idempotence:
+// a correct existing symlink results in no changes recorded and no remove.
+func TestApplier_Files_Symlink_NoopWhenAlreadyCorrect(t *testing.T) {
+	dir := t.TempDir()
+	link := filepath.Join(dir, "resolv.conf")
+	target := "/run/systemd/resolve/stub-resolv.conf"
+
+	require.NoError(t, os.Symlink(target, link))
+
+	sys := newMockSystem()
+	a := apply.New(sys, discardLogger, apply.Config{})
+	resolver := apply.NewLocalResolver(discardLogger, commonv1.ManagedNode{}, nil)
+
+	fileSet := []commonv1.File{{Path: link, Ensure: "symlink", Target: target}}
+
+	changed, _, err := a.Files(context.Background(), "host", "cs", "", fileSet, commonv1.ManagedNode{}, resolver)
+	require.NoError(t, err)
+	require.NotContains(t, changed, link)
+	require.NotContains(t, sys.fileHandler.removedPaths, link)
+}
+
 // --- Applier.Packages tests ---
 
 func TestApplier_Packages_InstallMissing(t *testing.T) {
@@ -412,6 +510,11 @@ func (m *mockFileHandler) Chown(_ context.Context, _, _, _ string) (bool, error)
 func (m *mockFileHandler) SetMode(_ context.Context, _, _ string) (bool, error)  { return false, nil }
 func (m *mockFileHandler) Remove(_ context.Context, path string) (bool, error) {
 	m.removedPaths[path] = true
+	// Actually unlink so that follow-on operations (e.g. os.Symlink replacing
+	// a regular file at this path) can succeed in tests using a real TempDir.
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return true, err
+	}
 	return true, nil
 }
 
