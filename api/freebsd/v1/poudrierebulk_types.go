@@ -17,8 +17,108 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// BulkExecutorType selects how a PoudriereBulk's build is performed.
+//
+// +kubebuilder:validation:Enum=InProcess;Command
+type BulkExecutorType string
+
+const (
+	// BulkExecutorInProcess runs `poudriere bulk` directly inside the
+	// nodemanager process on the host where the reconciler is running.
+	// This is the default and matches v0.14.x behaviour.
+	BulkExecutorInProcess BulkExecutorType = "InProcess"
+
+	// BulkExecutorCommand invokes an external program — shell script, Go
+	// binary, anything os/exec can run — to dispatch the build to a
+	// separate build system (Forgejo Actions, Woodpecker, a remote shell,
+	// …).  See docs/poudriere/command-contract.md for the stdio + JSON
+	// contract executors must satisfy.
+	BulkExecutorCommand BulkExecutorType = "Command"
+)
+
+// BulkExecutor selects and configures how a PoudriereBulk is executed.
+// The default (Type unset) is InProcess for backward compatibility.
+type BulkExecutor struct {
+	// Type selects the executor.  See the BulkExecutorType constants.
+	// +kubebuilder:default=InProcess
+	Type BulkExecutorType `json:"type,omitempty"`
+
+	// Command configures the external program when Type=Command.  Ignored
+	// for other Types.  See CommandExecutor for the contract.
+	// +optional
+	Command *CommandExecutor `json:"command,omitempty"`
+}
+
+// CommandExecutor configures an external program that brokers between
+// the PoudriereBulk CR and an off-cluster build system (typically a CI
+// runner such as Forgejo Actions or Woodpecker).
+//
+// The program receives the bulk's spec on stdin as a JSON
+// BulkDispatchInput document and returns an opaque run identifier on
+// stdout.  An optional Status program polls in-flight runs and returns a
+// BulkRunStatus JSON object.  The full contract is documented in
+// docs/poudriere/command-contract.md and represented in code by the
+// types in pkg/cmdrunner.
+//
+// Programs may be shell scripts, compiled binaries, or any other
+// executable on the host.  The CRD does not constrain the executable
+// shape; nodemanager invokes it via os/exec.
+type CommandExecutor struct {
+	// Dispatch is the executable + arguments invoked when starting a
+	// build.  argv[0] must be an absolute path (no $PATH lookup at the
+	// CR level — operators put the program where they want and reference
+	// it explicitly).  See docs/poudriere/command-contract.md.
+	// +kubebuilder:validation:MinItems=1
+	Dispatch []string `json:"dispatch"`
+
+	// Status is the executable + arguments invoked when polling an
+	// in-flight run.  Optional; when empty, dispatched runs are
+	// fire-and-forget — nodemanager records LastDispatchedRunID but
+	// never queries state.
+	// +optional
+	Status []string `json:"status,omitempty"`
+
+	// Env is explicit environment passed to Dispatch and Status.  Layers
+	// over (and replaces matching keys from) the allowlisted host
+	// environment.  Use SecretEnv for credentials.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// SecretEnv exposes Secret keys as environment variables to the
+	// executor program.  Resolved at every reconcile (so Secret rotation
+	// is automatic) and never written to disk or logged by name.  This
+	// is where credentials such as a Forgejo personal access token live.
+	// +optional
+	SecretEnv []CommandSecretEnv `json:"secretEnv,omitempty"`
+
+	// DispatchTimeout caps the dispatch invocation.  Parsed by
+	// time.ParseDuration; defaults to 60s when empty.
+	// +optional
+	DispatchTimeout string `json:"dispatchTimeout,omitempty"`
+
+	// StatusTimeout caps the status invocation.  Parsed by
+	// time.ParseDuration; defaults to 30s when empty.
+	// +optional
+	StatusTimeout string `json:"statusTimeout,omitempty"`
+}
+
+// CommandSecretEnv binds a Secret key to an environment variable the
+// executor program receives.
+type CommandSecretEnv struct {
+	// Name is the environment variable name set in the executor's
+	// process environment (e.g. "FORGEJO_TOKEN").  Must be a valid
+	// POSIX env var identifier.
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
+	Name string `json:"name"`
+
+	// SecretRef points to the Secret + key whose value populates Name.
+	// The Secret must exist in the same namespace as the PoudriereBulk.
+	SecretRef corev1.SecretKeySelector `json:"secretRef"`
+}
 
 // PoudriereBulkSpec defines the desired state of PoudriereBulk.
 type PoudriereBulkSpec struct {
@@ -45,6 +145,14 @@ type PoudriereBulkSpec struct {
 	// Forgejo push annotation, see Phase 4).
 	// +optional
 	ReconcilePeriod string `json:"reconcilePeriod,omitempty"`
+
+	// Executor selects how the build is performed.  When unset the bulk
+	// runs in-process on the reconciler's host (backward-compatible with
+	// v0.14.x).  Set Executor.Type=Command to dispatch the build to a
+	// separate build system via an external program; see CommandExecutor
+	// and docs/poudriere/command-contract.md.
+	// +optional
+	Executor *BulkExecutor `json:"executor,omitempty"`
 }
 
 // PoudriereBulkStatus defines the observed state of PoudriereBulk.
@@ -85,6 +193,28 @@ type PoudriereBulkStatus struct {
 	// build.  Cleared on a subsequent successful build.
 	// +optional
 	LastError string `json:"lastError,omitempty"`
+
+	// LastDispatchTime records when the controller last invoked an
+	// external dispatch program (Spec.Executor.Type=Command).  Only set
+	// for Command executors.  Distinct from LastBuildTime — dispatch is
+	// the moment the build was *requested*; LastBuildTime is the moment
+	// the controller learned the build *finished*.  For InProcess
+	// executors the two coincide.
+	// +optional
+	LastDispatchTime *metav1.Time `json:"lastDispatchTime,omitempty"`
+
+	// LastDispatchedRunID is the opaque run identifier returned by the
+	// most recent successful dispatch (Spec.Executor.Type=Command,
+	// Dispatch program exit 0).  Passed back to the Status program when
+	// polling.  Empty for InProcess executors.
+	// +optional
+	LastDispatchedRunID string `json:"lastDispatchedRunID,omitempty"`
+
+	// LastDispatchedRunURL is an optional human-readable URL for the run
+	// (e.g. a Forgejo Actions run page).  Reported by the Status program
+	// in BulkRunStatus.url.
+	// +optional
+	LastDispatchedRunURL string `json:"lastDispatchedRunURL,omitempty"`
 }
 
 //+kubebuilder:object:root=true
