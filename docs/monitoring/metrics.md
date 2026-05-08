@@ -47,6 +47,17 @@ Custom metrics emitted by nodemanager itself.
 | `nodemanager_jail_operations_total` | `node`, `jail`, `operation`, `result` | Jail lifecycle operations. `operation` is `provision`, `start`, or `delete`. |
 | `nodemanager_jail_provision_duration_seconds` | `node`, `jail` | Duration of `EnsureJail` (release download, ZFS clone, conf/fstab write). |
 
+### Poudriere builds (FreeBSD)
+
+| Metric | Labels | Description |
+|---|---|---|
+| `nodemanager_poudriere_bulk_runs_total` | `node`, `bulk`, `result` | Total poudriere bulk runs by result. `result` ∈ `success`, `error`, `skipped`, `dispatched`. `dispatched` only appears for Command-mode bulks (a dispatch was sent; the terminal result lands later via the status program). |
+| `nodemanager_poudriere_bulk_duration_seconds` | `node`, `bulk` | Histogram of poudriere bulk run durations. Buckets cover 10s (a no-op rerun) through 4h (full rebuilds). |
+| `nodemanager_poudriere_last_bulk_timestamp_seconds` | `node`, `bulk` | Unix timestamp of the most recent terminal completion (success or failure). Used for the `PoudriereBuildStale` alert. |
+
+See [Poudriere monitoring](poudriere.md) for example PromQL queries
+that combine these metrics into the views an operator typically wants.
+
 ### Upgrades
 
 | Metric | Labels | Description |

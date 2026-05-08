@@ -1,9 +1,41 @@
+# PoudrierePorts declares a poudriere ports tree (the source tree
+# poudriere reads port Makefiles from).  The metadata.name is the -p
+# argument to poudriere(8); poudriere's own convention reserves
+# "default" for the upstream FreeBSD ports tree, so use a different
+# name for any tree that mixes in your own ports.
+#
+# Two trees side-by-side (one upstream, one personal) is a common
+# layout for users who maintain their own port overlays via
+# portshaker(1).
 apiVersion: freebsd.nodemanager/v1
 kind: PoudrierePorts
 metadata:
   labels:
     app.kubernetes.io/name: nodemanager
     app.kubernetes.io/managed-by: kustomize
-  name: poudriereports-sample
+  name: default
+  namespace: nodemanager
 spec:
-  # TODO(user): Add fields here
+  # Fetch method passed to `poudriere ports -m`.  As of FreeBSD's
+  # 2021-04-08 git server change, the bare "git" method is broken;
+  # use git+https or git+ssh.  Other valid values: portsnap (legacy),
+  # svn (legacy), null (manage the tree contents yourself).
+  fetchmethod: "git+https"
+  # Branch / ref the fetcher tracks.  For git+https against
+  # git.FreeBSD.org this is typically "main".
+  branch: "main"
+---
+# A second tree that's typically populated by portshaker(1) merging
+# upstream + private port overlays.  The fetchmethod here is "null"
+# because portshaker rather than poudriere is the source of truth
+# for tree contents — poudriere just reads them.
+apiVersion: freebsd.nodemanager/v1
+kind: PoudrierePorts
+metadata:
+  labels:
+    app.kubernetes.io/name: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: personal
+  namespace: nodemanager
+spec:
+  fetchmethod: "null"

@@ -212,5 +212,85 @@
       },
     },
 
+    // ── Poudriere build metrics (FreeBSD) ────────────────────────────────────
+
+    {
+      alert: 'NodeManagerPoudriereBuildFailed',
+      // Fires when a poudriere bulk run completes with result=error.  Both
+      // executor types share this metric: InProcess records "error" when
+      // `poudriere bulk` exits non-zero; Command records "error" when the
+      // dispatch program fails or the status program reports state=failed.
+      expr: |||
+        increase(nodemanager_poudriere_bulk_runs_total{result="error"}[15m]) > 0
+      |||,
+      'for': '0m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'Poudriere bulk {{ $labels.bulk }} failed on node {{ $labels.node }}.',
+        description: |||
+          Poudriere bulk {{ $labels.bulk }} on node {{ $labels.node }} produced
+          {{ $value }} failed run(s) in the last 15 minutes.
+          Check the bulk's status (kubectl describe poudrierebulk {{ $labels.bulk }})
+          for the LastError detail; for Command-mode bulks the LastDispatchedRunURL
+          field links directly to the upstream build log.
+        |||,
+      },
+    },
+
+    {
+      alert: 'NodeManagerPoudriereBuildStale',
+      // Fires when a bulk has not produced any run (success, failure, or
+      // skip) in 24 hours.  Most production bulks have spec.reconcilePeriod
+      // <= 6h, so 24h indicates either the controller is wedged, the build
+      // host is offline, or the executor's bridge is silently dropping
+      // dispatches.  Tune the threshold here against your longest expected
+      // reconcilePeriod.
+      expr: |||
+        (time() - nodemanager_poudriere_last_bulk_timestamp_seconds) > 86400
+      |||,
+      'for': '15m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'Poudriere bulk {{ $labels.bulk }} has not run recently on {{ $labels.node }}.',
+        description: |||
+          Poudriere bulk {{ $labels.bulk }} on node {{ $labels.node }} last
+          completed {{ $value | humanizeDuration }} ago — well past the
+          24-hour staleness threshold.  Either the controller is wedged, the
+          build host is unreachable, or (for Command-mode bulks) the
+          dispatch bridge is failing silently.  Check controller logs and
+          the bulk's status conditions.
+        |||,
+      },
+    },
+
+    {
+      alert: 'NodeManagerPoudriereBuildLong',
+      // Fires when a single bulk run takes longer than the histogram's
+      // top bucket (4h) — at that point the build is either stuck or
+      // dramatically larger than expected.  Different from the "Stale"
+      // alert because completions are still happening; they just take
+      // forever.  Useful for catching a runaway build that's blocking
+      // its sibling bulks behind the workqueue rate limiter.
+      expr: |||
+        histogram_quantile(0.95,
+          sum by (node, bulk, le) (
+            rate(nodemanager_poudriere_bulk_duration_seconds_bucket[1h])
+          )
+        ) > 14400
+      |||,
+      'for': '1h',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'Poudriere bulk {{ $labels.bulk }} is taking unusually long on {{ $labels.node }}.',
+        description: |||
+          The 95th-percentile run duration for poudriere bulk {{ $labels.bulk }}
+          on node {{ $labels.node }} has exceeded 4 hours over the last 1h
+          window.  Current p95: {{ $value | humanizeDuration }}.
+          Check whether one port in the list is hanging (poudriere -j {{ $labels.bulk }})
+          or if a circular dependency was introduced.
+        |||,
+      },
+    },
+
   ],
 }

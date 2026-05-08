@@ -1,9 +1,101 @@
+# PoudriereBulk declares a list of port origins to build for a
+# (jail, tree) pair.  Multiple bulks targeting the same jail+tree are
+# fine — they're independent and each have their own status, schedule,
+# and executor configuration.
+#
+# Two examples below: a default in-process bulk and a Command-mode
+# bulk that dispatches to Forgejo Actions.
+#
+# Choose one to start with.  Switching between them is non-destructive:
+# editing spec.executor swaps how the build runs; status fields keep
+# their meaning across the change.
+
+# ---------------------------------------------------------------------
+# Example 1: InProcess executor (default).
+#
+# The controller calls `poudriere bulk` directly on its host.  Use
+# this when nodemanager runs on the build host itself (e.g. inside a
+# privileged poud1 jail with --freebsd.poudriere.enabled=true).
+# ---------------------------------------------------------------------
 apiVersion: freebsd.nodemanager/v1
 kind: PoudriereBulk
 metadata:
   labels:
     app.kubernetes.io/name: nodemanager
     app.kubernetes.io/managed-by: kustomize
-  name: poudrierebulk-sample
+  name: personal-amd64
+  namespace: nodemanager
 spec:
-  # TODO(user): Add fields here
+  jail: "14amd64"
+  tree: "personal"
+  ports:
+    - "shells/zsh"
+    - "net/curl"
+    - "sysutils/htop"
+  # Re-run portshaker + poudriere bulk every 6 hours even without
+  # an event.  Combined with the Hash-based skip-if-unchanged check,
+  # this becomes a no-op when nothing has changed upstream.
+  reconcilePeriod: "6h"
+
+---
+# ---------------------------------------------------------------------
+# Example 2: Command executor — dispatch to Forgejo Actions.
+#
+# The controller invokes an external program that translates the
+# Bulk spec into a workflow_dispatch call.  See
+# docs/poudriere/command-contract.md for the full contract; sample
+# bridges live in config/samples/scripts/.
+#
+# Prerequisites:
+#   * A Forgejo Actions runner registered for FreeBSD that hosts a
+#     workflow accepting jail/tree/ports inputs and running
+#     `poudriere bulk` itself.
+#   * A k8s Secret in the same namespace holding the runner's PAT:
+#       kubectl create secret generic forgejo-poudriere-pat \
+#         -n nodemanager --from-literal=token=<PAT>
+#   * A ConfigSet that delivers the dispatch and status scripts to
+#     the controller's host (typically /usr/local/libexec/...).
+# ---------------------------------------------------------------------
+apiVersion: freebsd.nodemanager/v1
+kind: PoudriereBulk
+metadata:
+  labels:
+    app.kubernetes.io/name: nodemanager
+    app.kubernetes.io/managed-by: kustomize
+  name: personal-amd64-forgejo
+  namespace: nodemanager
+spec:
+  jail: "14amd64"
+  tree: "personal"
+  ports:
+    - "shells/zsh"
+    - "net/curl"
+  reconcilePeriod: "6h"
+  executor:
+    type: Command
+    command:
+      dispatch:
+        - "/usr/local/libexec/poudriere-dispatch-forgejo.sh"
+      status:
+        - "/usr/local/libexec/poudriere-status-forgejo.sh"
+      env:
+        - name: FORGEJO_BASE_URL
+          value: "https://forgejo.example.com"
+        - name: FORGEJO_REPO
+          value: "build/poudriere-workflows"
+        - name: FORGEJO_WORKFLOW
+          value: "poudriere-build.yml"
+        - name: FORGEJO_REF
+          value: "main"
+      secretEnv:
+        - name: FORGEJO_TOKEN
+          secretRef:
+            name: forgejo-poudriere-pat
+            key: token
+      # Bound how long a single dispatch HTTP call may take.  Forgejo
+      # workflow_dispatch returns 204 promptly; the bridge then polls
+      # /runs to learn the run ID, so the practical wall-clock is a
+      # few seconds.
+      dispatchTimeout: "30s"
+      # Bound a single status poll.
+      statusTimeout: "15s"

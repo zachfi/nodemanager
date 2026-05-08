@@ -30,6 +30,7 @@ nav:
     - ConfigSet: api/configset.md
   - Monitoring:
     - Metrics: monitoring/metrics.md
+    - Poudriere: monitoring/poudriere.md
     - Runbooks:
       - NodeManagerReconcileErrors: runbooks/NodeManagerReconcileErrors.md
       - NodeManagerConfigSetApplyError: runbooks/NodeManagerConfigSetApplyError.md

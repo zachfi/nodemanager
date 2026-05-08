@@ -1,9 +1,29 @@
+# PoudriereJail declares a poudriere build jail (the chroot in which
+# `poudriere bulk` performs the actual build).  Multiple PoudriereBulk
+# objects can target the same build jail — typical layout has one
+# build jail per (release, architecture) pair.
+#
+# The metadata.name is the -j argument to poudriere(8); keep it short
+# and shell-safe (the poudriere convention is e.g. "14amd64",
+# "13arm64").
 apiVersion: freebsd.nodemanager/v1
 kind: PoudriereJail
 metadata:
   labels:
     app.kubernetes.io/name: nodemanager
     app.kubernetes.io/managed-by: kustomize
-  name: poudrierejail-sample
+  name: 14amd64
+  namespace: nodemanager
 spec:
-  # TODO(user): Add fields here
+  # Release the build jail extracts.  Should match (or be older than)
+  # the host poudriere is running on.  When you bump this, poudriere
+  # tears down and rebuilds the jail on the next reconcile.
+  version: "14.2-RELEASE"
+  # Target architecture passed to poudriere jail -a.  Must match an
+  # architecture poudriere supports on this host (typically the
+  # host's own — cross-builds need additional setup).
+  architecture: "amd64"
+  # Optional makeopts(5) text written into the build jail's
+  # make.conf.  Useful for setting OPTIONS_*, DEFAULT_VERSIONS, etc.
+  # Leave empty if you don't need to override defaults.
+  makeopts: ""
