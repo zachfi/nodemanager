@@ -77,6 +77,22 @@ builds:
       - amd64
       - arm64
     main: './cmd/webhook/'
+  - id: forgejo-trigger
+    binary: forgejo-trigger
+    ldflags:
+      - -X main.version={{.Version}}
+      - -X main.gitCommit={{.Commit}}
+      - -X main.buildDate={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goamd64:
+      - 'v1'
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: './cmd/forgejo-trigger/'
 checksum:
   name_template: 'checksums.txt'
 snapshot:
@@ -101,3 +117,7 @@ archives:
     builds:
       - nodemanager-webhook
     name_template: "nodemanager-webhook_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: forgejo-trigger
+    builds:
+      - forgejo-trigger
+    name_template: "forgejo-trigger_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
