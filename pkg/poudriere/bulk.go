@@ -6,9 +6,15 @@ import (
 
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("poudriere")
+// tracer is the package-level OpenTelemetry tracer for poudriere
+// invocations.  Used by Build and Sync to surface the actual exec
+// calls under the parent reconcile span in Tempo.
+var tracer trace.Tracer = otel.Tracer("pkg/poudriere")
 
 // defaultParallelJobs is the value passed to `poudriere bulk -J`, controlling
 // how many ports build concurrently inside the build jail. Two is a
@@ -46,12 +52,33 @@ func NewBulk(logger *slog.Logger, exec handler.ExecHandler) (*PoudriereBulk, err
 // parallel-job count. Using -j twice is a footgun (last-wins overwrites the
 // jail name with the parallelism number).
 func (p *PoudriereBulk) Build(ctx context.Context, jail string, tree string, ports []string) error {
+	ctx, span := tracer.Start(ctx, "poudriere.Bulk.Build",
+		trace.WithAttributes(
+			attribute.String("bulk.jail", jail),
+			attribute.String("bulk.tree", tree),
+			attribute.Int("bulk.ports", len(ports)),
+			attribute.String("bulk.parallelism", defaultParallelJobs),
+		))
+	defer span.End()
+
 	args := make([]string, 0, 7+len(ports))
 	args = append(args, "bulk", "-p", tree, "-j", jail, "-J", defaultParallelJobs)
 	args = append(args, ports...)
-	return p.exec.SimpleRunCommand(ctx, poudriere, args...)
+	if err := p.exec.SimpleRunCommand(ctx, poudriere, args...); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	return nil
 }
 
 func (p *PoudriereBulk) Sync(ctx context.Context) error {
-	return p.exec.SimpleRunCommand(ctx, portshaker, "-v")
+	ctx, span := tracer.Start(ctx, "poudriere.Bulk.Sync")
+	defer span.End()
+	if err := p.exec.SimpleRunCommand(ctx, portshaker, "-v"); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	return nil
 }

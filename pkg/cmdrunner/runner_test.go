@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -365,6 +367,102 @@ func TestParseRunStatus_IgnoresUnknownFields(t *testing.T) {
 	got, err := ParseRunStatus([]byte(in))
 	require.NoError(t, err)
 	require.Equal(t, BulkRunStateSuccess, got.State)
+}
+
+// TestRun_EmitsSpanWithExitCode is the observability counterpart to
+// the secret-leak test: confirm Run() actually opens a span and tags
+// it with non-secret attributes (program, exit_code, stdout/stderr
+// bytes, truncated).  Pairs with TestRun_SecretValuesNeverAppearInSpan
+// below, which asserts the same span does NOT carry resolved secret
+// values.
+func TestRun_EmitsSpanWithExitCode(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := trace.NewTracerProvider(trace.WithSpanProcessor(rec))
+
+	r, _ := newTestRunner(t)
+	r.tracer = tp.Tracer("test")
+
+	res, err := r.Run(context.Background(), RunSpec{
+		Argv: []string{"/bin/sh", "-c", "echo hi; exit 4"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 4, res.ExitCode)
+
+	spans := rec.Ended()
+	require.Len(t, spans, 1, "Run() should emit exactly one span")
+	span := spans[0]
+	require.Equal(t, "cmdrunner.Run", span.Name())
+
+	attrs := map[string]any{}
+	for _, a := range span.Attributes() {
+		attrs[string(a.Key)] = a.Value.AsInterface()
+	}
+	require.Equal(t, "/bin/sh", attrs["cmdrunner.program"])
+	require.EqualValues(t, 3, attrs["cmdrunner.argc"])
+	require.EqualValues(t, 4, attrs["cmdrunner.exit_code"])
+	require.NotContains(t, attrs, "cmdrunner.env_values",
+		"env_values is a forbidden attribute name; if this exists, somebody added a secret-leaking attribute")
+}
+
+// TestRun_SecretValuesNeverAppearInSpan is the OTEL-side companion to
+// the slog leak test.  Same threat model: stage a sentinel value, run
+// the path, assert the captured span doesn't carry it anywhere
+// (attributes, events, span name).
+func TestRun_SecretValuesNeverAppearInSpan(t *testing.T) {
+	const secretValue = "ULTRA-PRIVATE-SECRET-TOKEN-NOT-IN-SPAN"
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "private", Namespace: "ns"},
+		Data:       map[string][]byte{"token": []byte(secretValue)},
+	}
+
+	rec := tracetest.NewSpanRecorder()
+	tp := trace.NewTracerProvider(trace.WithSpanProcessor(rec))
+
+	r, _ := newTestRunner(t, secret)
+	r.tracer = tp.Tracer("test")
+
+	_, err := r.Run(context.Background(), RunSpec{
+		Argv:      []string{"/bin/sh", "-c", `: "$TOK"; echo done`},
+		Namespace: "ns",
+		SecretEnv: []freebsdv1.CommandSecretEnv{{
+			Name: "TOK",
+			SecretRef: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "private"},
+				Key:                  "token",
+			},
+		}},
+	})
+	require.NoError(t, err)
+
+	spans := rec.Ended()
+	require.Len(t, spans, 1)
+	span := spans[0]
+
+	// Stringify everything observable on the span and assert the
+	// sentinel value doesn't appear anywhere.
+	require.NotContains(t, span.Name(), secretValue, "span name leaks secret")
+	for _, a := range span.Attributes() {
+		s := a.Value.Emit()
+		require.NotContains(t, s, secretValue,
+			"span attribute %q leaks secret value", a.Key)
+	}
+	for _, ev := range span.Events() {
+		for _, a := range ev.Attributes {
+			s := a.Value.Emit()
+			require.NotContains(t, s, secretValue,
+				"span event %q attribute %q leaks secret value", ev.Name, a.Key)
+		}
+	}
+
+	// Sanity: source descriptor should be present (it's metadata, not a value).
+	found := false
+	for _, a := range span.Attributes() {
+		if string(a.Key) == "cmdrunner.secret_sources" {
+			require.Contains(t, a.Value.Emit(), "private#token→TOK")
+			found = true
+		}
+	}
+	require.True(t, found, "secret_sources attribute should be set when SecretEnv is used")
 }
 
 func TestComposeEnv_OrderOfPrecedence(t *testing.T) {

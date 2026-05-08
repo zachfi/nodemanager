@@ -14,6 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -107,6 +111,14 @@ type Runner struct {
 	// Tests in runner_test.go assert this property holds.
 	logger *slog.Logger
 
+	// tracer emits OpenTelemetry spans for each Run() invocation.
+	// Defaults to the global otel.Tracer for this package, which is a
+	// no-op tracer when no provider is registered (test runs).
+	// CRITICAL: span attributes must NEVER include resolved secret
+	// values; only source descriptors ("forgejo-pat#token→FORGEJO_TOKEN")
+	// are safe to record.
+	tracer trace.Tracer
+
 	// hostEnv resolves an inherited env key to its value.  Defaults
 	// to os.Getenv but overridable in tests so the no-leak suite can
 	// run hermetically.
@@ -118,6 +130,7 @@ func New(c client.Reader, logger *slog.Logger) *Runner {
 	return &Runner{
 		client:  c,
 		logger:  logger,
+		tracer:  otel.Tracer("pkg/cmdrunner"),
 		hostEnv: os.Getenv,
 	}
 }
@@ -129,10 +142,36 @@ func New(c client.Reader, logger *slog.Logger) *Runner {
 // reported via RunResult.ExitCode and the caller decides how to
 // react.  This split lets callers distinguish "couldn't even try"
 // from "tried, failed".
-func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
+func (r *Runner) Run(ctx context.Context, spec RunSpec) (res RunResult, retErr error) {
 	if len(spec.Argv) == 0 {
 		return RunResult{}, errors.New("cmdrunner.Run: empty argv")
 	}
+
+	// Open a span for the whole invocation.  Attributes capture
+	// observable metadata only — never the resolved secret values.
+	// The span name uses the program path (argv[0]) so traces are
+	// readable when filtering by command in Tempo / Jaeger.
+	ctx, span := r.tracer.Start(ctx, "cmdrunner.Run",
+		trace.WithAttributes(
+			attribute.String("cmdrunner.program", spec.Argv[0]),
+			attribute.Int("cmdrunner.argc", len(spec.Argv)),
+			attribute.String("cmdrunner.namespace", spec.Namespace),
+			attribute.Int64("cmdrunner.timeout_ms", spec.Timeout.Milliseconds()),
+			attribute.Int("cmdrunner.stdin_bytes", len(spec.Stdin)),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.SetAttributes(
+			attribute.Int("cmdrunner.exit_code", res.ExitCode),
+			attribute.Int("cmdrunner.stdout_bytes", len(res.Stdout)),
+			attribute.Int("cmdrunner.stderr_bytes", len(res.Stderr)),
+			attribute.Bool("cmdrunner.truncated", res.Truncated),
+		)
+		span.End()
+	}()
 
 	// Resolve secrets BEFORE any logging so the structured log line
 	// can reference sources but the values themselves never enter the
@@ -141,12 +180,20 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, fmt.Errorf("cmdrunner.Run: %w", err)
 	}
+	// Source descriptors are NOT secrets — they're "secretname#key→envname"
+	// and operators need them in traces to debug a misconfigured ref.
+	if len(secretSources) > 0 {
+		span.SetAttributes(attribute.StringSlice("cmdrunner.secret_sources", secretSources))
+	}
 
 	env := r.composeEnv(spec.Env, secretValues)
 
 	// envKeys is sorted for deterministic logging; the slice itself
 	// contains only KEY=VALUE strings, but we log NAMES only.
 	envKeys := envNames(env)
+	// Same property holds for the span: env names are operator metadata,
+	// values are secrets.
+	span.SetAttributes(attribute.StringSlice("cmdrunner.env_keys", envKeys))
 
 	// Apply per-invocation timeout if set.  Caller's ctx still
 	// bounds it — whichever fires first wins.
@@ -184,7 +231,7 @@ func (r *Runner) Run(ctx context.Context, spec RunSpec) (RunResult, error) {
 
 	runErr := cmd.Run()
 
-	res := RunResult{
+	res = RunResult{
 		Stdout:    stdout.Bytes(),
 		Stderr:    stderr.Bytes(),
 		ExitCode:  exitCode(cmd, runErr),

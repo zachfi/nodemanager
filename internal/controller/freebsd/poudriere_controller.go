@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -120,13 +122,33 @@ func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger
 // build succeeded AND there's no in-flight Command run, the heavy
 // work is skipped and the reconciler just requeues per
 // Spec.ReconcilePeriod.
-func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	_ = log.FromContext(ctx)
+
+	// Top-level span for the reconcile.  Sub-spans for executor
+	// branches and bridge invocations hang off this one so an operator
+	// can follow a single Bulk's reconcile end-to-end in Tempo.
+	ctx, span := r.tracer.Start(ctx, "PoudriereReconciler.Reconcile",
+		trace.WithAttributes(
+			attribute.String("bulk.name", req.Name),
+			attribute.String("bulk.namespace", req.Namespace),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.SetAttributes(
+			attribute.Float64("result.requeue_after_seconds", result.RequeueAfter.Seconds()),
+		)
+		span.End()
+	}()
 
 	hostname, err := r.system.Node().Hostname()
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	span.SetAttributes(attribute.String("host.hostname", hostname))
 
 	var node commonv1.ManagedNode
 	if err := r.Get(ctx, types.NamespacedName{Name: hostname, Namespace: req.Namespace}, &node); err != nil {
@@ -141,12 +163,14 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// other than "disabled" — meaning the reconciler effectively never ran on
 	// a correctly-configured build host.
 	if labels.LabelGate(labels.Or, node.Labels, map[string]string{labels.PoudriereBuild: "disabled"}) {
+		span.AddEvent("skip: poudriere label disabled")
 		return ctrl.Result{}, nil
 	}
 
 	// Require the poudriere label to be present at all (any non-"disabled"
 	// value opts the node in).
 	if !labels.LabelGate(labels.AnyKey, node.Labels, map[string]string{labels.PoudriereBuild: ""}) {
+		span.AddEvent("skip: poudriere label absent")
 		return ctrl.Result{}, nil
 	}
 
@@ -157,6 +181,13 @@ func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.Get(ctx, req.NamespacedName, &bulk); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	span.SetAttributes(
+		attribute.String("bulk.spec.jail", bulk.Spec.Jail),
+		attribute.String("bulk.spec.tree", bulk.Spec.Tree),
+		attribute.Int("bulk.spec.ports", len(bulk.Spec.Ports)),
+		attribute.String("bulk.spec.executor", string(r.executorType(&bulk))),
+		attribute.Int64("bulk.metadata.generation", bulk.Generation),
+	)
 
 	switch r.executorType(&bulk) {
 	case freebsdv1.BulkExecutorCommand:
@@ -208,12 +239,23 @@ func (r *PoudriereReconciler) computeInputHash(bulk *freebsdv1.PoudriereBulk) st
 // reconcileInProcess is the v0.14.x build path: ensure trees and
 // jails exist on this host, run portshaker + `poudriere bulk`, write
 // status.  Now wrapped in skip-if-unchanged.
-func (r *PoudriereReconciler) reconcileInProcess(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk) (ctrl.Result, error) {
+func (r *PoudriereReconciler) reconcileInProcess(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk) (result ctrl.Result, retErr error) {
 	key := types.NamespacedName{Name: bulk.Name, Namespace: bulk.Namespace}
+
+	ctx, span := r.tracer.Start(ctx, "reconcileInProcess")
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
 
 	// Skip-if-unchanged: identical inputs and last build succeeded → no work.
 	newHash := r.computeInputHash(bulk)
+	span.SetAttributes(attribute.String("bulk.input_hash", newHash))
 	if newHash == bulk.Status.Hash && bulk.Status.LastBuildResult == "Succeeded" {
+		span.AddEvent("skip: inputs unchanged")
 		poudriereBulkRunsTotal.WithLabelValues(hostname, bulk.Name, "skipped").Inc()
 		r.logger.Debug("skipping bulk: inputs unchanged since last successful build", "bulk", bulk.Name, "hash", newHash)
 		return r.requeueAfterReconcilePeriod(bulk), nil
@@ -301,13 +343,23 @@ func (r *PoudriereReconciler) reconcileInProcess(ctx context.Context, hostname s
 // the host running this reconciler is the bridge to a build system,
 // not the build host itself.  Tree/jail provisioning is the build
 // system's concern.
-func (r *PoudriereReconciler) reconcileCommand(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk) (ctrl.Result, error) {
+func (r *PoudriereReconciler) reconcileCommand(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk) (result ctrl.Result, retErr error) {
 	key := types.NamespacedName{Name: bulk.Name, Namespace: bulk.Namespace}
+
+	ctx, span := r.tracer.Start(ctx, "reconcileCommand")
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
 
 	// Validation: Type=Command requires Spec.Executor.Command; otherwise
 	// we have nothing to invoke.
 	if bulk.Spec.Executor == nil || bulk.Spec.Executor.Command == nil {
 		err := fmt.Errorf("executor type Command requires spec.executor.command")
+		span.AddEvent("validation: spec.executor.command missing")
 		r.recordBuildFailure(ctx, key, hostname, "InvalidExecutor", err)
 		return ctrl.Result{}, nil
 	}
@@ -316,18 +368,25 @@ func (r *PoudriereReconciler) reconcileCommand(ctx context.Context, hostname str
 	// In-flight phase: a prior reconcile dispatched, but no terminal
 	// status has been recorded yet.  Poll the Status program.
 	if r.hasInFlightRun(bulk) {
+		span.SetAttributes(
+			attribute.String("phase", "poll"),
+			attribute.String("bulk.run_id", bulk.Status.LastDispatchedRunID),
+		)
 		return r.pollCommandStatus(ctx, hostname, bulk, cmdSpec)
 	}
 
 	// Skip-if-unchanged.
 	newHash := r.computeInputHash(bulk)
+	span.SetAttributes(attribute.String("bulk.input_hash", newHash))
 	if newHash == bulk.Status.Hash && bulk.Status.LastBuildResult == "Succeeded" {
+		span.AddEvent("skip: inputs unchanged")
 		poudriereBulkRunsTotal.WithLabelValues(hostname, bulk.Name, "skipped").Inc()
 		r.logger.Debug("skipping dispatch: inputs unchanged since last successful run", "bulk", bulk.Name, "hash", newHash)
 		return r.requeueAfterReconcilePeriod(bulk), nil
 	}
 
 	// Dispatch a new run.
+	span.SetAttributes(attribute.String("phase", "dispatch"))
 	return r.dispatchCommand(ctx, hostname, bulk, cmdSpec, newHash)
 }
 
@@ -345,8 +404,21 @@ func (r *PoudriereReconciler) hasInFlightRun(bulk *freebsdv1.PoudriereBulk) bool
 // configured, the next reconcile (requeued at statusPollInterval) will
 // poll it; otherwise the run is fire-and-forget and the next periodic
 // reconcile dispatches another.
-func (r *PoudriereReconciler) dispatchCommand(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk, cmdSpec *freebsdv1.CommandExecutor, newHash string) (ctrl.Result, error) {
+func (r *PoudriereReconciler) dispatchCommand(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk, cmdSpec *freebsdv1.CommandExecutor, newHash string) (result ctrl.Result, retErr error) {
 	key := types.NamespacedName{Name: bulk.Name, Namespace: bulk.Namespace}
+
+	ctx, span := r.tracer.Start(ctx, "dispatchCommand",
+		trace.WithAttributes(
+			attribute.String("dispatch.program", firstOrEmpty(cmdSpec.Dispatch)),
+			attribute.Bool("dispatch.has_status_program", len(cmdSpec.Status) > 0),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
 
 	// Build the input document declared by the contract.  See
 	// pkg/cmdrunner/types.go.
@@ -460,9 +532,22 @@ func (r *PoudriereReconciler) dispatchCommand(ctx context.Context, hostname stri
 // state to the bulk's Status when the run finishes.  Transient
 // failures (program exit non-zero, malformed output) are logged and
 // retried; they don't blow up the reconcile.
-func (r *PoudriereReconciler) pollCommandStatus(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk, cmdSpec *freebsdv1.CommandExecutor) (ctrl.Result, error) {
+func (r *PoudriereReconciler) pollCommandStatus(ctx context.Context, hostname string, bulk *freebsdv1.PoudriereBulk, cmdSpec *freebsdv1.CommandExecutor) (result ctrl.Result, retErr error) {
 	key := types.NamespacedName{Name: bulk.Name, Namespace: bulk.Namespace}
 	runID := bulk.Status.LastDispatchedRunID
+
+	ctx, span := r.tracer.Start(ctx, "pollCommandStatus",
+		trace.WithAttributes(
+			attribute.String("status.program", firstOrEmpty(cmdSpec.Status)),
+			attribute.String("bulk.run_id", runID),
+		))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
 
 	if len(cmdSpec.Status) == 0 {
 		// In-flight ID set but no Status program — operator likely
@@ -504,6 +589,10 @@ func (r *PoudriereReconciler) pollCommandStatus(ctx context.Context, hostname st
 			"bulk", bulk.Name, "err", parseErr)
 		return ctrl.Result{RequeueAfter: statusRetryInterval}, nil
 	}
+	span.SetAttributes(
+		attribute.String("status.state", string(status.State)),
+		attribute.Bool("status.terminal", status.State.IsTerminal()),
+	)
 
 	if !status.State.IsTerminal() {
 		// Still running — opportunistically update URL when the
@@ -578,6 +667,16 @@ func parseDurationOrZero(s string) (time.Duration, error) {
 		return 0, nil
 	}
 	return time.ParseDuration(s)
+}
+
+// firstOrEmpty returns argv[0] or "" — used in span attributes to
+// surface "which program got invoked" without dragging the full argv
+// (which can include user-controlled values) into the span.
+func firstOrEmpty(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	return argv[0]
 }
 
 // truncate returns s clipped to at most max bytes, with an ellipsis

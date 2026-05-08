@@ -1,0 +1,160 @@
+# Forgejo Actions workflow paired with the Command-executor bridge
+# scripts in config/samples/scripts/.  Place this file at
+# .forgejo/workflows/poudriere-build.yml in the repo your
+# PoudriereBulk's spec.executor.command.env points at via
+# FORGEJO_REPO and FORGEJO_WORKFLOW.
+#
+# The workflow is intentionally generic: it takes whatever inputs the
+# dispatch script provides and runs `poudriere bulk` with them.  No
+# per-port customisation lives here — that's the job of the
+# PoudriereBulk CR.  One workflow file handles every Bulk in your
+# cluster.
+#
+# Trigger model:
+#
+#   workflow_dispatch  — fired by the bridge dispatch script on every
+#                        nodemanager reconcile that decided to build
+#                        (i.e. inputs changed since the last success,
+#                        or no successful build yet).  This is the
+#                        primary trigger.
+#
+#   on: push           — deliberately NOT included.  Push triggers
+#                        belong on the ports tree's repo, not on this
+#                        build-infra repo.  If you want a "git push to
+#                        ports → rebuild" loop and your ports tree is
+#                        in a separate Forgejo repo, use the
+#                        forgejo-trigger webhook (see
+#                        cmd/forgejo-trigger/) to bump the trigger
+#                        annotation on matching PoudriereBulks; that
+#                        flows through the same workflow_dispatch
+#                        path here.
+#
+#   on: schedule       — deliberately NOT included.  Periodic
+#                        rebuilds are driven by PoudriereBulk
+#                        spec.reconcilePeriod (which the input-hash
+#                        skip-if-unchanged check turns into a no-op
+#                        when nothing has changed).  Letting Forgejo
+#                        also fire scheduled runs would double up.
+
+name: Poudriere Build
+
+# 'on' is quoted because YAML 1.1 (which PyYAML defaults to) parses
+# bare on/yes/no/y/n as booleans.  Forgejo Actions and GitHub Actions
+# tolerate either, but quoting is the unambiguous form.
+"on":
+  workflow_dispatch:
+    inputs:
+      jail:
+        description: 'poudriere build jail name (-j argument)'
+        required: true
+        type: string
+      tree:
+        description: 'poudriere ports tree name (-p argument)'
+        required: true
+        type: string
+      ports:
+        description: 'space-separated port origins to build (e.g. "net/curl shells/zsh")'
+        required: true
+        type: string
+      bulk:
+        description: 'PoudriereBulk metadata.name — used in log lines for correlation'
+        required: false
+        type: string
+        default: ''
+
+# Concurrency: serialize runs of this workflow per (jail, tree) pair.
+# poudriere itself takes a per-(jail, tree) lock and a second
+# concurrent invocation would just sit waiting; making it explicit at
+# the workflow level lets Forgejo's queue handle the ordering and
+# avoids a stuck second runner.
+concurrency:
+  group: poudriere-bulk-${{ inputs.jail }}-${{ inputs.tree }}
+  # Don't cancel a running build when a new dispatch arrives — packages
+  # in-flight should finish; the new dispatch waits its turn.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: poudriere bulk ${{ inputs.bulk || format('{0}/{1}', inputs.jail, inputs.tree) }}
+    # Self-hosted FreeBSD runner with poudriere installed.  Configure a
+    # runner with the labels [self-hosted, freebsd, poudriere] on whatever
+    # host(s) you build on.  Multiple labelled runners give you parallel
+    # capacity across (jail, tree) pairs while the per-pair concurrency
+    # group above keeps any single pair sequential.
+    runs-on: [self-hosted, freebsd, poudriere]
+    # Hard upper bound on a single bulk run.  8 hours fits a full
+    # rebuild of a few hundred ports on modest hardware; tune up for
+    # large lists or older hardware.
+    timeout-minutes: 480
+
+    steps:
+      - name: Identify
+        run: |
+          echo "Bulk:  ${{ inputs.bulk }}"
+          echo "Jail:  ${{ inputs.jail }}"
+          echo "Tree:  ${{ inputs.tree }}"
+          echo "Ports: ${{ inputs.ports }}"
+          poudriere version || true
+
+      # portshaker(1) is the source-of-truth for tree contents when
+      # you blend upstream FreeBSD ports with a private overlay.  If
+      # your PoudrierePorts uses fetchmethod=git+https directly,
+      # poudriere's own `ports -u` already runs on bulk; you can
+      # remove this step.  Either way, running both is harmless —
+      # portshaker is idempotent when there's nothing new upstream.
+      - name: Sync ports tree (portshaker)
+        run: |
+          if command -v portshaker >/dev/null 2>&1; then
+            portshaker -v
+          else
+            echo "portshaker not installed; relying on poudriere ports -u" >&2
+          fi
+
+      # The actual build.  Inputs are passed as separate shell args via
+      # explicit quoting on jail/tree (single values) and unquoted
+      # expansion on ports (intentionally word-split on whitespace —
+      # the dispatch script joins with spaces, matching this contract).
+      #
+      # -J 2 sets the parallel-port build count.  Tune to your build
+      # host's cores and I/O.  This number is intentionally not a
+      # workflow input — it's a host-capacity property, not a
+      # per-build property.
+      - name: poudriere bulk
+        run: |
+          poudriere bulk \
+            -j "${{ inputs.jail }}" \
+            -p "${{ inputs.tree }}" \
+            -J 2 \
+            ${{ inputs.ports }}
+
+      # Build logs land at /usr/local/poudriere/data/logs by default;
+      # the URL is what you'd surface in the Status program's output
+      # via .url so the operator gets a clickable link in
+      # `kubectl describe poudrierebulk`.
+      - name: Locate build log directory
+        if: always()
+        run: |
+          # Print the path; the runner's job page doubles as the
+          # human-readable log location, but this also helps when
+          # you want to grep history on the build host directly.
+          ls -d /usr/local/poudriere/data/logs/bulk/${{ inputs.jail }}-${{ inputs.tree }}/latest 2>/dev/null \
+            || echo "no latest log directory found (build may not have started)"
+
+# Permissions notes for the runner (deployment-side, not workflow-side):
+#
+#   * The runner user needs to execute `poudriere` and `portshaker`.
+#     poudriere mutates ZFS datasets and creates/destroys jails; in
+#     practice the runner runs as root or as a user with
+#     NOPASSWD doas/sudo for these commands.
+#
+#   * If your PoudriereJails or PoudrierePorts are managed by
+#     nodemanager on the same host, there's no extra setup — they're
+#     already provisioned by the time the workflow runs.  Otherwise
+#     ensure `poudriere jail -l` and `poudriere ports -l` show the
+#     names this workflow is given before scheduling builds.
+#
+#   * The runner's output area (/usr/local/poudriere/data/packages)
+#     is typically served by nginx or pkg-mirror; if you want
+#     fresh packages visible immediately after a successful run,
+#     no extra step is needed — poudriere atomically updates the
+#     repository signatures on success.
