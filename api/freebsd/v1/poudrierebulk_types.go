@@ -21,6 +21,29 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// PoudriereBulk-related annotation keys.  Defined here so every code
+// path that reads or writes them references the same constant — the
+// PoudriereReconciler hashes TriggerAnnotation into the input hash,
+// the cmd/forgejo-trigger webhook patches it on push events, and any
+// future client tooling (operator dashboard, kubectl plugin) can rely
+// on these names.  Changing a value here is a CRD-level break.
+const (
+	// TriggerAnnotation, when present and changed, invalidates the
+	// input-hash skip-if-unchanged check on the next reconcile and
+	// causes a fresh build to fire.  External webhook receivers
+	// (cmd/forgejo-trigger) bump it with a commit SHA on push.
+	// Operators can also bump it manually via `kubectl annotate
+	// poudrierebulk/foo freebsd.nodemanager/trigger=<value>`.
+	TriggerAnnotation = "freebsd.nodemanager/trigger"
+
+	// ForgejoRepoAnnotation declares which Forgejo repository's
+	// pushes should trigger this bulk.  Value is the "owner/name"
+	// string from the webhook payload's repository.full_name.  The
+	// cmd/forgejo-trigger webhook matches PoudriereBulks by this
+	// annotation when deciding which to bump.
+	ForgejoRepoAnnotation = "forgejo.nodemanager/repo"
+)
+
 // BulkExecutorType selects how a PoudriereBulk's build is performed.
 //
 // +kubebuilder:validation:Enum=InProcess;Command

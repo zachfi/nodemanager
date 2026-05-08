@@ -1,0 +1,182 @@
+# forgejo-trigger Kubernetes manifests.
+#
+# Single-namespace install: the trigger watches PoudriereBulk objects
+# in `metadata.namespace=nodemanager` and patches their trigger
+# annotations on Forgejo push.  Adjust the namespace fields below
+# (and the --namespace flag in the Deployment) if you keep your bulks
+# elsewhere.
+#
+# Apply with:
+#
+#   kubectl create secret generic forgejo-trigger-hmac \
+#     -n nodemanager \
+#     --from-literal=secret="<your-shared-secret>"
+#
+#   kubectl apply -f config/forgejo-trigger/manifests.yaml
+#
+# Then on the Forgejo side, configure a webhook for each ports tree
+# repository pointing at:
+#
+#   https://forgejo-trigger.example.com/webhook
+#
+# with content type application/json, the same shared secret, and the
+# Push events trigger selected.  Each PoudriereBulk that should
+# rebuild on those pushes carries the matching annotation:
+#
+#   metadata:
+#     annotations:
+#       forgejo.nodemanager/repo: <owner>/<repo>
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: forgejo-trigger
+  namespace: nodemanager
+
+---
+# Namespace-scoped Role: the webhook only needs to list and patch
+# PoudriereBulks in its own namespace.  Cluster-wide installs would
+# substitute ClusterRole + ClusterRoleBinding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: forgejo-trigger
+  namespace: nodemanager
+rules:
+  - apiGroups: ["freebsd.nodemanager"]
+    resources: ["poudrierebulks"]
+    # list to find the matching bulks; get is a kubernetes-best-practice
+    # accompaniment that doesn't change behaviour but lets the
+    # webhook log structured errors when a single Get is needed.
+    # patch to bump the trigger annotation.
+    verbs: ["list", "get", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: forgejo-trigger
+  namespace: nodemanager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: forgejo-trigger
+subjects:
+  - kind: ServiceAccount
+    name: forgejo-trigger
+    namespace: nodemanager
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo-trigger
+  namespace: nodemanager
+  labels:
+    app.kubernetes.io/name: forgejo-trigger
+    app.kubernetes.io/component: webhook-receiver
+spec:
+  selector:
+    app.kubernetes.io/name: forgejo-trigger
+  ports:
+    - name: http
+      port: 80
+      targetPort: webhook
+      protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo-trigger
+  namespace: nodemanager
+  labels:
+    app.kubernetes.io/name: forgejo-trigger
+    app.kubernetes.io/component: webhook-receiver
+spec:
+  # Single-replica is fine: webhook is idempotent and Forgejo retries
+  # on 5xx, so a brief outage during a rolling update is harmless.
+  # Multiple replicas would just mean each bulk gets two patch calls
+  # per push (no harm but no benefit).
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-trigger
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-trigger
+        app.kubernetes.io/component: webhook-receiver
+      annotations:
+        # Propagate Secret rotation as a Pod restart.  When you
+        # `kubectl apply` an updated forgejo-trigger-hmac Secret,
+        # changing this annotation in tandem (e.g. with kustomize's
+        # secretGenerator nameSuffixHash) forces a new ReplicaSet.
+        # Without that, the Pod keeps the old secret in memory until
+        # the next manual restart.
+        forgejo-trigger.nodemanager/rotation-marker: "v1"
+    spec:
+      serviceAccountName: forgejo-trigger
+      # Hardened pod security: read-only root fs, no privilege
+      # escalation, drop all caps.  This binary doesn't need any of
+      # them.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: forgejo-trigger
+          # Replace with the image you publish from this repo's build.
+          image: ghcr.io/zachfi/forgejo-trigger:v0.15.3
+          imagePullPolicy: IfNotPresent
+          args:
+            - --addr=:9090
+            - --namespace=nodemanager
+            - --secret-file=/etc/forgejo-trigger/hmac/secret
+          ports:
+            - name: webhook
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: webhook
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: webhook
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: hmac
+              mountPath: /etc/forgejo-trigger/hmac
+              readOnly: true
+      volumes:
+        - name: hmac
+          secret:
+            secretName: forgejo-trigger-hmac
+            items:
+              - key: secret
+                path: secret
+                # Restrict the file's mode so even a compromised
+                # sidecar (none today) can't slurp the secret with
+                # world-readable permissions.
+                mode: 0o400

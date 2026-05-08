@@ -23,6 +23,7 @@ nav:
     - FreeBSD Jails: freebsd-jails.md
   - Poudriere:
     - Command Executor Contract: poudriere/command-contract.md
+    - Forgejo Push Trigger: poudriere/forgejo-trigger.md
   - Security:
     - Bridge Security: security/poudriere-bridges.md
   - API Reference:

@@ -67,12 +67,11 @@ const (
 	statusRetryInterval = 60 * time.Second
 )
 
-// triggerAnnotation is the metadata.annotation key that downstream
-// triggers (Forgejo push webhooks, manual `kubectl annotate`) bump to
-// force a rebuild.  Including its value in the input hash means an
-// annotation patch alone is sufficient to invalidate the skip-if-
-// unchanged check on the next reconcile.
-const triggerAnnotation = "freebsd.nodemanager/trigger"
+// triggerAnnotation is an alias for freebsdv1.TriggerAnnotation.
+// Defined here for backward-compatibility of the existing call sites;
+// the canonical declaration lives with the CRD so it's reachable from
+// every package that needs it (notably cmd/forgejo-trigger).
+const triggerAnnotation = freebsdv1.TriggerAnnotation
 
 // PoudriereReconciler reconciles a Poudriere object
 type PoudriereReconciler struct {
