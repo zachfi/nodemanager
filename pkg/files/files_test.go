@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -76,6 +77,93 @@ func TestFiles(t *testing.T) {
 
 		// TODO: Can we reasonably test a chown?
 	}
+}
+
+// TestWriteContentFile_AtomicReplace asserts that a concurrent reader of the
+// path sees either the old contents or the full new contents, never an empty
+// or truncated file. The previous implementation did os.Create+Write, which
+// truncated the file before writing — so a reader interleaving with the
+// writer (or a process restart between truncate and write) could observe an
+// empty file. For files like /etc/pam.d/system-auth that broke real
+// PAM-using services on busy hosts.
+func TestWriteContentFile_AtomicReplace(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "pam-stack")
+
+	const oldContent = "auth required pam_unix.so\n"
+	require.NoError(t, os.WriteFile(path, []byte(oldContent), 0o644))
+
+	// Build a payload large enough that any non-atomic implementation would
+	// have a measurable empty/truncated window during the write.
+	newContent := make([]byte, 0, 64*1024)
+	for len(newContent) < 64*1024 {
+		newContent = append(newContent, []byte("session optional pam_systemd.so type=wayland class=greeter\n")...)
+	}
+
+	h := New(logger, "", "")
+
+	// Run a reader and a writer concurrently for a short period and ensure
+	// every observed read is either oldContent or newContent — never empty
+	// and never partial.
+	stop := make(chan struct{})
+	readerErrs := make(chan error, 256)
+
+	go func() {
+		for {
+			select {
+			case <-stop:
+				close(readerErrs)
+				return
+			default:
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				readerErrs <- err
+				continue
+			}
+			if len(b) == 0 {
+				readerErrs <- &atomicWriteError{stage: "empty file observed"}
+				continue
+			}
+			if string(b) != oldContent && string(b) != string(newContent) {
+				readerErrs <- &atomicWriteError{stage: "partial write observed", got: len(b)}
+			}
+		}
+	}()
+
+	deadline := time.Now().Add(150 * time.Millisecond)
+	for i := 0; time.Now().Before(deadline); i++ {
+		// Alternate between the two contents to force frequent rewrites.
+		var payload []byte
+		if i%2 == 0 {
+			payload = newContent
+		} else {
+			payload = []byte(oldContent)
+		}
+		_, err := h.WriteContentFile(context.Background(), path, payload)
+		require.NoError(t, err)
+	}
+	close(stop)
+
+	for err := range readerErrs {
+		t.Fatalf("non-atomic read: %v", err)
+	}
+}
+
+type atomicWriteError struct {
+	stage string
+	got   int
+}
+
+func (e *atomicWriteError) Error() string {
+	if e.got > 0 {
+		return e.stage + " (read " + strconv.Itoa(e.got) + " bytes)"
+	}
+	return e.stage
 }
 
 func TestSaveToFileBucket(t *testing.T) {

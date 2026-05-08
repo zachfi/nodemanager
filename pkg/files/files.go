@@ -226,18 +226,60 @@ func (h *FileHandlerCommon) WriteContentFile(ctx context.Context, path string, d
 		return false, nil
 	}
 
-	f, err := os.Create(path)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = f.Close() }()
-
-	// NOTE: the file has been truncated on the Create() above.
-
 	h.logger.Info("writing file", "path", path, "hash", dataHash, "prev", existingHash)
-	_, err = f.Write(data)
+
+	// Write to a sibling temp file then rename(2) into place so a reader (or
+	// a process killed/restarted mid-write) never observes a half-written or
+	// truncated file. Concretely: the previous os.Create + Write left e.g.
+	// /etc/pam.d/system-auth empty for the window between truncate and write
+	// completing, which on a busy host could race with a PAM open_session and
+	// surface as user@N.service "Failed to set up PAM session: EPERM".
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".nodemanager-write-*")
 	if err != nil {
-		return true, err
+		return false, fmt.Errorf("create temp file in %q: %w", dir, err)
+	}
+	tmpPath := tmp.Name()
+
+	cleanupTmp := func() {
+		_ = os.Remove(tmpPath)
+	}
+
+	if _, err = tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
+		return false, fmt.Errorf("write temp %q: %w", tmpPath, err)
+	}
+	// fsync before rename so a crash leaves either the old file or the full
+	// new one — never a renamed-but-empty file.
+	if err = tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanupTmp()
+		return false, fmt.Errorf("fsync temp %q: %w", tmpPath, err)
+	}
+	if err = tmp.Close(); err != nil {
+		cleanupTmp()
+		return false, fmt.Errorf("close temp %q: %w", tmpPath, err)
+	}
+
+	// Preserve the existing file's mode and ownership when replacing, so the
+	// rename doesn't reset permissions to the temp file's defaults. Chown/
+	// SetMode are applied as a second pass by the caller, but we mirror what's
+	// already on disk to keep the window between rename and Chown safe.
+	if existingInfo, statErr := os.Stat(path); statErr == nil {
+		if chmodErr := os.Chmod(tmpPath, existingInfo.Mode().Perm()); chmodErr != nil {
+			h.logger.Debug("could not preserve mode on temp file before rename", "path", path, "err", chmodErr)
+		}
+		if sys, ok := existingInfo.Sys().(*syscall.Stat_t); ok {
+			if chownErr := os.Chown(tmpPath, int(sys.Uid), int(sys.Gid)); chownErr != nil {
+				h.logger.Debug("could not preserve ownership on temp file before rename", "path", path, "err", chownErr)
+			}
+		}
+	}
+
+	if err = os.Rename(tmpPath, path); err != nil {
+		cleanupTmp()
+		return false, fmt.Errorf("rename %q -> %q: %w", tmpPath, path, err)
 	}
 
 	return true, nil
