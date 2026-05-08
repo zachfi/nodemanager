@@ -21,6 +21,10 @@ nav:
     - Template Data: template-data.md
     - Offline Apply: offline-apply.md
     - FreeBSD Jails: freebsd-jails.md
+  - Poudriere:
+    - Command Executor Contract: poudriere/command-contract.md
+  - Security:
+    - Bridge Security: security/poudriere-bridges.md
   - API Reference:
     - ManagedNode: api/managednode.md
     - ConfigSet: api/configset.md
