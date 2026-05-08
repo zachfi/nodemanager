@@ -72,16 +72,39 @@ kubectl create secret generic forgejo-trigger-hmac \
   --from-literal=secret='<the-shared-secret>'
 ```
 
-### 3. Deploy the service
+### 3. Build and publish the image
+
+The repo ships with a `Dockerfile.forgejo-trigger` and matching make
+targets.  For a one-off build to your local docker daemon:
+
+```sh
+make docker-build-forgejo-trigger
+# → image tagged forgejo-trigger:latest, ~32 MB distroless static
+```
+
+For a versioned build pushed to a registry:
+
+```sh
+make docker-ci-forgejo-trigger REGISTRY=registry.znet/zachfi
+# → builds and pushes:
+#     registry.znet/zachfi/forgejo-trigger:<git-version>
+#     registry.znet/zachfi/forgejo-trigger:main-<short-sha>
+```
+
+The image uses the same versioning ldflags pattern as the
+nodemanager image (`-X main.version=…`), so `--version` reports the
+git tag of the build.
+
+### 4. Deploy the service
 
 ```sh
 kubectl apply -f config/forgejo-trigger/manifests.yaml
 ```
 
-Edit the image reference (`image: ghcr.io/zachfi/forgejo-trigger:vX.Y.Z`)
-to point at wherever you publish builds of this repo.
+Edit the image reference (`image: …/forgejo-trigger:vX.Y.Z`) in the
+manifest to point at the registry path you published to.
 
-### 4. Annotate matching PoudriereBulks
+### 5. Annotate matching PoudriereBulks
 
 For each Bulk that should rebuild on pushes to a particular repo:
 
@@ -115,7 +138,7 @@ spec:
 Multiple Bulks can share a repo annotation — every Bulk pointing at
 `zachfi/personal-ports` rebuilds on every push to that repo.
 
-### 5. Configure the Forgejo webhook
+### 6. Configure the Forgejo webhook
 
 In the source repo (`zachfi/personal-ports` in the example above):
 

@@ -1,0 +1,68 @@
+# Container image for cmd/forgejo-trigger.
+#
+# The forgejo-trigger is a small, single-purpose HTTP service: it
+# receives Forgejo push webhooks and patches the
+# freebsd.nodemanager/trigger annotation on matching PoudriereBulk
+# CRs.  See docs/poudriere/forgejo-trigger.md for the operator-facing
+# setup guide.
+#
+# Build context expectations: this Dockerfile is invoked from the
+# repo root via `make docker-build-forgejo-trigger` (or
+# docker-ci-forgejo-trigger for tagged + pushed builds).  It uses
+# the vendor tree for fully-offline reproducible builds — no network
+# access required during `go build`.
+
+FROM golang:1.25 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+WORKDIR /workspace
+
+# Vendor first so source-only changes don't invalidate the vendor
+# layer.  The vendor directory carries every transitive dep the
+# binary needs (controller-runtime client, OTEL, k8s api machinery).
+COPY go.mod go.sum ./
+COPY vendor/ vendor/
+
+# Source.  cmd/forgejo-trigger imports pkg/forgejotrigger and
+# api/freebsd/v1; copying api/ and pkg/ wholesale is simpler than
+# tracing the dependency graph and only marginally larger in build
+# context.
+COPY cmd/forgejo-trigger/ cmd/forgejo-trigger/
+COPY api/ api/
+COPY pkg/ pkg/
+
+# CGO_ENABLED=0 keeps the binary fully static so it runs in
+# distroless static (no libc).  -mod=vendor is implicit when a
+# vendor/ directory exists with Go 1.14+, but state it explicitly
+# so a future repo-level change to vendoring doesn't silently break
+# the build.
+#
+# -trimpath strips the host-specific path prefix from the binary so
+# stack traces in production logs look like "pkg/forgejotrigger/server.go"
+# rather than "/workspace/...".
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build \
+      -mod=vendor \
+      -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION} -X main.gitCommit=${GIT_COMMIT} -X main.buildDate=${BUILD_DATE}" \
+      -o forgejo-trigger \
+      ./cmd/forgejo-trigger/
+
+# Runtime stage.  distroless/static:nonroot ships ca-certs and
+# tzdata + a non-root user (65532); nothing else.  The binary is
+# fully static so no libc is needed.
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/forgejo-trigger /forgejo-trigger
+USER 65532:65532
+
+# Documentary only; the actual port binding comes from the --addr
+# flag (default :9090).  The Deployment manifest's containerPort
+# is what matters for k8s networking.
+EXPOSE 9090
+
+ENTRYPOINT ["/forgejo-trigger"]

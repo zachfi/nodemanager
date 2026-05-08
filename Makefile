@@ -126,6 +126,10 @@ build-agent: proto-gen fmt vet ## Build agent binary only.
 build-webhook: fmt vet ## Build webhook binary only.
 	go build $(LD_FLAGS) -o bin/nodemanager-webhook ./cmd/webhook/
 
+.PHONY: build-forgejo-trigger
+build-forgejo-trigger: fmt vet ## Build forgejo-trigger binary only.
+	go build $(LD_FLAGS) -o bin/forgejo-trigger ./cmd/forgejo-trigger/
+
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
@@ -152,6 +156,41 @@ docker-ci: ## Build and push versioned image to REGISTRY (e.g. make docker-ci RE
 		.
 	$(CONTAINER_TOOL) push $(REGISTRY)/nodemanager:$(GIT_VERSION)
 	$(CONTAINER_TOOL) push $(REGISTRY)/nodemanager:main-$(shell git rev-parse --short HEAD)
+
+# ---------------------------------------------------------------------------
+# forgejo-trigger image
+# ---------------------------------------------------------------------------
+# Tag in config/forgejo-trigger/manifests.yaml is what the cluster pulls; the
+# default IMG_FORGEJO_TRIGGER below matches it.  Override IMG_FORGEJO_TRIGGER
+# (or REGISTRY for docker-ci-forgejo-trigger) to retarget your registry.
+IMG_FORGEJO_TRIGGER ?= forgejo-trigger:latest
+
+.PHONY: docker-build-forgejo-trigger
+docker-build-forgejo-trigger: ## Build the forgejo-trigger docker image.
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(IMG_FORGEJO_TRIGGER) \
+		-f Dockerfile.forgejo-trigger \
+		.
+
+.PHONY: docker-push-forgejo-trigger
+docker-push-forgejo-trigger: ## Push the forgejo-trigger docker image to its tagged registry.
+	$(CONTAINER_TOOL) push $(IMG_FORGEJO_TRIGGER)
+
+.PHONY: docker-ci-forgejo-trigger
+docker-ci-forgejo-trigger: ## Build + push forgejo-trigger versioned to REGISTRY (e.g. make docker-ci-forgejo-trigger REGISTRY=registry.znet/zachfi).
+	$(CONTAINER_TOOL) build \
+		--build-arg VERSION=$(GIT_VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(REGISTRY)/forgejo-trigger:$(GIT_VERSION) \
+		-t $(REGISTRY)/forgejo-trigger:main-$(shell git rev-parse --short HEAD) \
+		-f Dockerfile.forgejo-trigger \
+		.
+	$(CONTAINER_TOOL) push $(REGISTRY)/forgejo-trigger:$(GIT_VERSION)
+	$(CONTAINER_TOOL) push $(REGISTRY)/forgejo-trigger:main-$(shell git rev-parse --short HEAD)
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
