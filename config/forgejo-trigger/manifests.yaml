@@ -134,7 +134,7 @@ spec:
           # internal registry; mirror this image to your own registry
           # if you don't have access to registry.znet.  Build it from
           # this repo with `make docker-ci-forgejo-trigger REGISTRY=...`.
-          image: registry.znet/zachfi/forgejo-trigger:v0.16.2
+          image: registry.znet/zachfi/forgejo-trigger:v0.16.3
           imagePullPolicy: IfNotPresent
           args:
             - --addr=:9090
