@@ -32,7 +32,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -42,6 +41,16 @@ import (
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/pkg/forgejotrigger"
+)
+
+// Build metadata.  These are package-level vars so the Go linker can
+// override them at build time via -ldflags "-X main.version=…", which
+// is exactly what `make docker-ci-forgejo-trigger` does.  Defaults
+// here are what `go build` from a working tree produces.
+var (
+	version   = "dev"
+	gitCommit = "unknown"
+	buildDate = "unknown"
 )
 
 func main() {
@@ -69,7 +78,9 @@ func run() error {
 	logger.Info("starting forgejo-trigger",
 		"addr", *addr,
 		"namespace", *namespace,
-		"version", buildVersion(),
+		"version", version,
+		"git_commit", gitCommit,
+		"build_date", buildDate,
 	)
 
 	if *secretFile == "" {
@@ -156,14 +167,4 @@ func run() error {
 
 	logger.Info("forgejo-trigger stopped cleanly")
 	return nil
-}
-
-// buildVersion returns the Go module version baked into the binary
-// at build time.  Falls back to "(unknown)" when not available
-// (e.g. `go run` without VCS info).
-func buildVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok {
-		return info.Main.Version
-	}
-	return "(unknown)"
 }
