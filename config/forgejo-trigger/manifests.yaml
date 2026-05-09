@@ -130,8 +130,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: forgejo-trigger
-          # Replace with the image you publish from this repo's build.
-          image: ghcr.io/zachfi/forgejo-trigger:v0.15.3
+          # Override per-deployment.  Default points at the canonical
+          # internal registry; mirror this image to your own registry
+          # if you don't have access to registry.znet.  Build it from
+          # this repo with `make docker-ci-forgejo-trigger REGISTRY=...`.
+          image: registry.znet/zachfi/forgejo-trigger:v0.16.2
           imagePullPolicy: IfNotPresent
           args:
             - --addr=:9090
