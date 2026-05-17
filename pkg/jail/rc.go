@@ -32,11 +32,22 @@ stop_cmd="${name}_stop"
 
 jail_{{ .Name }}_start()
 {
+	# Apply nullfs/fstab mounts before jail(8) starts. jail.conf intentionally
+	# omits mount.fstab — letting jail(8) process the fstab while holding the
+	# jail-root VFS lock deadlocks against ZFS nullfs on FreeBSD. Mounting
+	# externally (here, mirroring the controller's StartJail Go code) keeps
+	# the mounts outside jail(8)'s lock context.
+	if [ -s "{{ .FstabPath }}" ]; then
+		/sbin/mount -F "{{ .FstabPath }}" -a || return 1
+	fi
 	/usr/sbin/jail -c -f "{{ .ConfPath }}" "{{ .Name }}"
 }
 
 jail_{{ .Name }}_stop()
 {
+	# jail(8) triggers exec.poststop in jail.conf, which unmounts declared
+	# mounts (see poststopUnmounts in pkg/jail/conf.go). No explicit umount
+	# needed here.
 	/usr/sbin/jail -r "{{ .Name }}"
 }
 
@@ -47,8 +58,9 @@ run_rc_command "$1"
 `))
 
 type rcServiceData struct {
-	Name     string
-	ConfPath string
+	Name      string
+	ConfPath  string
+	FstabPath string
 }
 
 // ensureJailRCService writes <rcServiceDir>/jail_<name> and enables it
@@ -57,10 +69,12 @@ type rcServiceData struct {
 //
 // rcServiceDir is the destination directory (defaults to /usr/local/etc/rc.d
 // in production; tests pass t.TempDir()).
-func ensureJailRCService(ctx context.Context, exec handler.ExecHandler, rcServiceDir, name, confDir string) error {
+// fstabPath is the per-jail fstab file the rc.d script mounts before jail -c.
+func ensureJailRCService(ctx context.Context, exec handler.ExecHandler, rcServiceDir, name, confDir, fstabPath string) error {
 	data := rcServiceData{
-		Name:     name,
-		ConfPath: filepath.Join(confDir, name+".conf"),
+		Name:      name,
+		ConfPath:  filepath.Join(confDir, name+".conf"),
+		FstabPath: fstabPath,
 	}
 
 	var buf bytes.Buffer

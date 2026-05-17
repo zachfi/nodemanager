@@ -423,7 +423,8 @@ func (m *manager) tracedEnsureRCService(ctx context.Context, jailName string) (e
 		attribute.String("jail.name", jailName),
 	)
 	defer finishSpan(span, &err)
-	return ensureJailRCService(ctx, m.exec, m.rcServiceDir, jailName, m.confDir)
+	fstabPath := filepath.Join(m.basePath, JailRootDir, jailName, "fstab")
+	return ensureJailRCService(ctx, m.exec, m.rcServiceDir, jailName, m.confDir, fstabPath)
 }
 
 // DeleteJail stops the jail (if running), then destroys its ZFS datasets and
