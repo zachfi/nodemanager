@@ -24,7 +24,7 @@
 #   AUR_REMOTE                — override aur clone URL
 #   JSONNET_LIBS_REMOTE       — override jsonnet-libs clone URL
 #   PERSONAL_PORTS_REMOTE     — override personal-ports clone URL
-#   CHECKSUMS_URL             — override checksums download URL (default: GitHub release URL)
+#   PORT_TGZ_URL              — override port source tarball URL (default: GitHub release archive)
 
 set -euo pipefail
 
@@ -47,10 +47,23 @@ else
   PERSONAL_PORTS_DIR="${PERSONAL_PORTS_DIR:-${HOME}/Code/personal-ports}"
 fi
 
-NODEMANAGER_BIN_REMOTE="${NODEMANAGER_BIN_REMOTE:-git@github.com:zachfi/nodemanager-bin.git}"
-AUR_REMOTE="${AUR_REMOTE:-git@github.com:zachfi/aur.git}"
+NODEMANAGER_BIN_REMOTE="${NODEMANAGER_BIN_REMOTE:-git@code.znet:znet/nodemanager-bin.git}"
+AUR_REMOTE="${AUR_REMOTE:-git@code.znet:znet/aur.git}"
 JSONNET_LIBS_REMOTE="${JSONNET_LIBS_REMOTE:-git@github.com:zachfi/jsonnet-libs.git}"
-PERSONAL_PORTS_REMOTE="${PERSONAL_PORTS_REMOTE:-git@github.com:zachfi/personal-ports.git}"
+PERSONAL_PORTS_REMOTE="${PERSONAL_PORTS_REMOTE:-git@code.znet:znet/personal-ports.git}"
+
+# safe_push <repo_dir> <branch> — pull --rebase from origin then push, so a
+# remote that's gained unrelated commits since we last fetched doesn't abort
+# the release. Pushes to every remote configured for the branch (e.g. when a
+# repo has both a code.znet origin and a github mirror).
+safe_push() {
+  local dir="$1" branch="$2"
+  git -C "${dir}" pull --rebase origin "${branch}"
+  while read -r remote; do
+    [[ -z "${remote}" ]] && continue
+    git -C "${dir}" push "${remote}" "${branch}"
+  done < <(git -C "${dir}" remote)
+}
 
 # ── Version ──────────────────────────────────────────────────────────────────
 
@@ -80,45 +93,6 @@ if [[ -n "${GITHUB_TOKEN:-}" && -n "${CI:-}" ]]; then
     url."https://${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 fi
 
-# ── Checksums ─────────────────────────────────────────────────────────────────
-
-DEFAULT_CHECKSUMS_URL="https://github.com/zachfi/nodemanager/releases/download/${VERSION}/checksums.txt"
-CHECKSUMS_URL="${CHECKSUMS_URL:-${DEFAULT_CHECKSUMS_URL}}"
-
-echo "--> Fetching ${CHECKSUMS_URL}"
-CURL_ARGS=(-fsSL)
-[[ -n "${GITHUB_TOKEN:-}" ]] && CURL_ARGS+=(-H "Authorization: token ${GITHUB_TOKEN}")
-curl "${CURL_ARGS[@]}" "${CHECKSUMS_URL}" -o "${WORK_DIR}/checksums.txt"
-
-SHA_AMD64="$(awk "/nodemanager_${VERSION_NO_V}_linux_amd64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
-SHA_ARM64="$(awk "/nodemanager_${VERSION_NO_V}_linux_arm64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
-SHA_ARMV7="$(awk "/nodemanager_${VERSION_NO_V}_linux_armv7\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
-
-AGENT_SHA_AMD64="$(awk "/nodemanager-agent_${VERSION_NO_V}_linux_amd64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
-AGENT_SHA_ARM64="$(awk "/nodemanager-agent_${VERSION_NO_V}_linux_arm64\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
-AGENT_SHA_ARMV7="$(awk "/nodemanager-agent_${VERSION_NO_V}_linux_armv7\\.tar\\.gz/{print \$1}" "${WORK_DIR}/checksums.txt")"
-
-if [[ -z "${SHA_AMD64}" || -z "${SHA_ARM64}" || -z "${SHA_ARMV7}" ]]; then
-  echo "ERROR: one or more nodemanager checksums not found. Contents of checksums.txt:" >&2
-  cat "${WORK_DIR}/checksums.txt" >&2
-  exit 1
-fi
-
-if [[ -z "${AGENT_SHA_AMD64}" || -z "${AGENT_SHA_ARM64}" || -z "${AGENT_SHA_ARMV7}" ]]; then
-  echo "ERROR: one or more nodemanager-agent checksums not found. Contents of checksums.txt:" >&2
-  cat "${WORK_DIR}/checksums.txt" >&2
-  exit 1
-fi
-
-echo "    nodemanager:"
-echo "      amd64:  ${SHA_AMD64}"
-echo "      arm64:  ${SHA_ARM64}"
-echo "      armv7h: ${SHA_ARMV7}"
-echo "    nodemanager-agent:"
-echo "      amd64:  ${AGENT_SHA_AMD64}"
-echo "      arm64:  ${AGENT_SHA_ARM64}"
-echo "      armv7h: ${AGENT_SHA_ARMV7}"
-
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "==> [1/4] nodemanager-bin"
@@ -127,11 +101,12 @@ echo "==> [1/4] nodemanager-bin"
 BIN_DIR="${WORK_DIR}/nodemanager-bin"
 git clone "${NODEMANAGER_BIN_REMOTE}" "${BIN_DIR}"
 
-# Render version + checksums into PKGBUILD
+# Render pkgver into PKGBUILD. The build-from-source PKGBUILD compiles via the
+# sibling 'nodemanager' submodule in the aur repo, so no per-arch tarball
+# checksums are needed here — those live on the GitHub binary-install branch
+# (now defunct). sha256sums=('SKIP') in the template covers nodemanager.service
+# which is shipped via the source= array.
 sed "s/{{ version }}/${VERSION_NO_V}/" "${BIN_DIR}/PKGBUILD.template" > "${BIN_DIR}/PKGBUILD"
-sed -i "s|sha256sums_x86_64=('SKIP' 'SKIP')|sha256sums_x86_64=('${SHA_AMD64}' '${AGENT_SHA_AMD64}')|"   "${BIN_DIR}/PKGBUILD"
-sed -i "s|sha256sums_aarch64=('SKIP' 'SKIP')|sha256sums_aarch64=('${SHA_ARM64}' '${AGENT_SHA_ARM64}')|" "${BIN_DIR}/PKGBUILD"
-sed -i "s|sha256sums_armv7h=('SKIP' 'SKIP')|sha256sums_armv7h=('${SHA_ARMV7}' '${AGENT_SHA_ARMV7}')|"   "${BIN_DIR}/PKGBUILD"
 
 echo "--> PKGBUILD for ${VERSION_NO_V}:"
 grep -E "^pkgver|sha256" "${BIN_DIR}/PKGBUILD"
@@ -144,7 +119,7 @@ else
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "    DRY_RUN: would push nodemanager-bin"
   else
-    git -C "${BIN_DIR}" push origin main
+    safe_push "${BIN_DIR}" main
     echo "    nodemanager-bin pushed"
   fi
 fi
@@ -159,17 +134,22 @@ if [[ ! -d "${AUR_DIR}/.git" ]]; then
   git -C "${AUR_DIR}" submodule update --init --recursive
 fi
 
+# Bump the 'nodemanager' source submodule to the new tag (PKGBUILD builds from
+# this sibling) and the 'nodemanager-bin' PKGBUILD submodule to the commit we
+# just pushed in step 1.
+git -C "${AUR_DIR}/nodemanager" fetch origin --tags
+git -C "${AUR_DIR}/nodemanager" checkout --detach "${VERSION}"
 git -C "${AUR_DIR}" submodule update --remote nodemanager-bin
-git -C "${AUR_DIR}" add nodemanager-bin
+git -C "${AUR_DIR}" add nodemanager nodemanager-bin
 
 if git -C "${AUR_DIR}" diff --staged --quiet; then
-  echo "    nodemanager-bin submodule already at latest — nothing to commit"
+  echo "    nodemanager + nodemanager-bin submodules already at ${VERSION} — nothing to commit"
 else
-  git -C "${AUR_DIR}" commit -m "Update nodemanager-bin to ${VERSION}"
+  git -C "${AUR_DIR}" commit -m "Bump nodemanager + nodemanager-bin to ${VERSION}"
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "    DRY_RUN: would push aur"
   else
-    git -C "${AUR_DIR}" push
+    safe_push "${AUR_DIR}" main
     echo "    aur pushed (Woodpecker will rebuild pacman repo image)"
   fi
 fi
@@ -193,13 +173,17 @@ else
   echo "    Added ${VERSION_NO_V} to config.jsonnet"
 fi
 
+GEN_DIR="${JSONNET_LIBS_DIR}/gen/nodemanager-libsonnet/${VERSION_NO_V}"
+
 if [[ "${DRY_RUN}" == "1" ]]; then
   echo "    DRY_RUN: would run: make -C ${JSONNET_LIBS_DIR} libs/nodemanager"
+elif [[ -d "${GEN_DIR}" ]]; then
+  echo "    ${GEN_DIR} already exists — skipping docker codegen"
+  git -C "${JSONNET_LIBS_DIR}" add "${CONFIG}" "${GEN_DIR}"
 else
   # Regenerate CRD libsonnet (runs Docker image k8s-gen)
   make -C "${JSONNET_LIBS_DIR}" libs/nodemanager OUTPUT_DIR="${JSONNET_LIBS_DIR}/gen"
 
-  GEN_DIR="${JSONNET_LIBS_DIR}/gen/nodemanager-libsonnet/${VERSION_NO_V}"
   if [[ ! -d "${GEN_DIR}" ]]; then
     echo "ERROR: expected generated output at ${GEN_DIR} but it does not exist." >&2
     exit 1
@@ -217,7 +201,7 @@ else
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "    DRY_RUN: would push jsonnet-libs"
   else
-    git -C "${JSONNET_LIBS_DIR}" push
+    safe_push "${JSONNET_LIBS_DIR}" main
     echo "    jsonnet-libs pushed"
   fi
 fi
@@ -226,16 +210,12 @@ fi
 echo ""
 echo "==> [4/4] personal-ports (FreeBSD)"
 # ─────────────────────────────────────────────────────────────────────────────
-# Computes distinfo by fetching from the Go module proxy and GitHub — no
-# FreeBSD toolchain required.  Build validation (poudriere) is left to a
-# dedicated FreeBSD Woodpecker runner once one is available.
+# Fetches the GitHub source tarball and computes its checksum. The port builds
+# with GOPROXY=off -mod=vendor, so the vendored deps already in the tarball are
+# the only distfile required — no proxy.golang.org .mod/.zip needed.
 
 PORT_SUBDIR="sysutils/nodemanager"
 GH_ACCOUNT="zachfi"
-GO_MODULE="github.com/${GH_ACCOUNT}/nodemanager"
-# distinfo path prefix matches the FreeBSD ports convention:
-#   go/<CATEGORIES>_<PORTNAME>/<GH_ACCOUNT>-<GH_PROJECT>-<DISTVERSIONPREFIX><VER>_GH0/
-DIST_PREFIX="go/sysutils_nodemanager/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0"
 
 if [[ ! -d "${PERSONAL_PORTS_DIR}/.git" ]]; then
   git clone "${PERSONAL_PORTS_REMOTE}" "${PERSONAL_PORTS_DIR}"
@@ -243,51 +223,37 @@ fi
 
 PORT_DIR="${PERSONAL_PORTS_DIR}/${PORT_SUBDIR}"
 
-# Check if already at this version
 CURRENT_VER="$(grep '^PORTVERSION' "${PORT_DIR}/Makefile" | awk '{print $NF}')"
 if [[ "${CURRENT_VER}" == "${VERSION_NO_V}" ]]; then
   echo "    ${VERSION_NO_V} already set in port Makefile — skipping"
 else
-  # Bump PORTVERSION and reset PORTREVISION
+  # Resolve the upstream tag commit so GIT_COMMIT in the port Makefile lines up
+  # with the release — `nodemanager version` then prints the real SHA instead
+  # of the unexpanded $$Format:%H$$ placeholder from the archive tarball.
+  RELEASE_COMMIT="$(git -C "${REPO_ROOT}" rev-list -n1 "${VERSION}")"
+
   sed -i "s|^PORTVERSION=.*|PORTVERSION=\t${VERSION_NO_V}|" "${PORT_DIR}/Makefile"
   sed -i "s|^PORTREVISION=.*|PORTREVISION=\t0|"             "${PORT_DIR}/Makefile"
+  sed -i "s|^GIT_COMMIT=.*|GIT_COMMIT=\t${RELEASE_COMMIT}|" "${PORT_DIR}/Makefile"
   echo "    PORTVERSION → ${VERSION_NO_V}"
+  echo "    GIT_COMMIT  → ${RELEASE_COMMIT}"
 
-  # Fetch distfiles and compute SHA256 + SIZE
-  echo "--> Fetching distfiles for ${GO_MODULE}@v${VERSION_NO_V}"
-
-  MOD_FILE="${WORK_DIR}/v${VERSION_NO_V}.mod"
-  ZIP_FILE="${WORK_DIR}/v${VERSION_NO_V}.zip"
+  # Fetch the GitHub source tarball (vendored deps included) and hash it.
   TGZ_FILE="${WORK_DIR}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz"
-
-  PORT_MOD_URL="${PORT_MOD_URL:-https://proxy.golang.org/github.com/${GH_ACCOUNT}/nodemanager/@v/v${VERSION_NO_V}.mod}"
-  PORT_ZIP_URL="${PORT_ZIP_URL:-https://proxy.golang.org/github.com/${GH_ACCOUNT}/nodemanager/@v/v${VERSION_NO_V}.zip}"
   PORT_TGZ_URL="${PORT_TGZ_URL:-https://github.com/${GH_ACCOUNT}/nodemanager/archive/refs/tags/v${VERSION_NO_V}.tar.gz}"
 
-  curl -fsSL "${PORT_MOD_URL}" -o "${MOD_FILE}"
-  curl -fsSL "${PORT_ZIP_URL}" -o "${ZIP_FILE}"
+  echo "--> Fetching ${PORT_TGZ_URL}"
   curl -fsSL "${PORT_TGZ_URL}" -o "${TGZ_FILE}"
 
-  SHA_MOD="$(sha256sum "${MOD_FILE}" | awk '{print $1}')"
-  SZ_MOD="$(wc -c < "${MOD_FILE}")"
-  SHA_ZIP="$(sha256sum "${ZIP_FILE}" | awk '{print $1}')"
-  SZ_ZIP="$(wc -c < "${ZIP_FILE}")"
   SHA_TGZ="$(sha256sum "${TGZ_FILE}" | awk '{print $1}')"
   SZ_TGZ="$(wc -c < "${TGZ_FILE}")"
 
-  echo "    .mod  sha256=${SHA_MOD} size=${SZ_MOD}"
-  echo "    .zip  sha256=${SHA_ZIP} size=${SZ_ZIP}"
   echo "    .tar.gz sha256=${SHA_TGZ} size=${SZ_TGZ}"
 
-  # Write distinfo
   cat > "${PORT_DIR}/distinfo" <<EOF
 TIMESTAMP = $(date +%s)
-SHA256 (${DIST_PREFIX}/v${VERSION_NO_V}.mod) = ${SHA_MOD}
-SIZE (${DIST_PREFIX}/v${VERSION_NO_V}.mod) = ${SZ_MOD}
-SHA256 (${DIST_PREFIX}/v${VERSION_NO_V}.zip) = ${SHA_ZIP}
-SIZE (${DIST_PREFIX}/v${VERSION_NO_V}.zip) = ${SZ_ZIP}
-SHA256 (${DIST_PREFIX}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz) = ${SHA_TGZ}
-SIZE (${DIST_PREFIX}/${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz) = ${SZ_TGZ}
+SHA256 (${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz) = ${SHA_TGZ}
+SIZE (${GH_ACCOUNT}-nodemanager-v${VERSION_NO_V}_GH0.tar.gz) = ${SZ_TGZ}
 EOF
 
   git -C "${PERSONAL_PORTS_DIR}" add "${PORT_DIR}/Makefile" "${PORT_DIR}/distinfo"
@@ -297,7 +263,7 @@ EOF
   if [[ "${DRY_RUN}" == "1" ]]; then
     echo "    DRY_RUN: would push personal-ports"
   else
-    git -C "${PERSONAL_PORTS_DIR}" push
+    safe_push "${PERSONAL_PORTS_DIR}" main
     echo "    personal-ports pushed"
     echo "    NOTE: poudriere build validation requires a FreeBSD Woodpecker runner"
   fi

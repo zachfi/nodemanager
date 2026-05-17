@@ -65,9 +65,6 @@ run_script() {
     JSONNET_LIBS_DIR="${JL_WORK}" \
     PERSONAL_PORTS_REMOTE="${PP_BARE}" \
     PERSONAL_PORTS_DIR="${PP_WORK}" \
-    CHECKSUMS_URL="file://${CHECKSUMS_FILE}" \
-    PORT_MOD_URL="file://${FAKE_MOD_FILE}" \
-    PORT_ZIP_URL="file://${FAKE_ZIP_FILE}" \
     PORT_TGZ_URL="file://${FAKE_TGZ_FILE}" \
     GIT_AUTHOR_NAME="Test" \
     GIT_AUTHOR_EMAIL="test@test" \
@@ -94,41 +91,14 @@ printf '[commit]\n\tgpgsign = false\n[protocol "file"]\n\tallow = always\n[user]
 
 TEST_VERSION="v9.9.9"
 TEST_VERSION_NO_V="9.9.9"
-FAKE_SHA_AMD64="aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111"
-FAKE_SHA_ARM64="bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222"
-FAKE_SHA_ARMV7="cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333"
-FAKE_AGENT_SHA_AMD64="dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444dddd4444"
-FAKE_AGENT_SHA_ARM64="eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555eeee5555"
-FAKE_AGENT_SHA_ARMV7="ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666ffff6666"
 
 echo "==> Setting up test fixtures in ${TMP}"
 
-# ── Fake checksums.txt ────────────────────────────────────────────────────────
+# ── Fake port distfile (stand-in for GitHub archive) ─────────────────────────
 
-CHECKSUMS_FILE="${TMP}/checksums.txt"
-cat > "${CHECKSUMS_FILE}" <<EOF
-${FAKE_SHA_AMD64}  nodemanager_${TEST_VERSION_NO_V}_linux_amd64.tar.gz
-${FAKE_SHA_ARM64}  nodemanager_${TEST_VERSION_NO_V}_linux_arm64.tar.gz
-${FAKE_SHA_ARMV7}  nodemanager_${TEST_VERSION_NO_V}_linux_armv7.tar.gz
-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  nodemanager_${TEST_VERSION_NO_V}_freebsd_amd64.tar.gz
-${FAKE_AGENT_SHA_AMD64}  nodemanager-agent_${TEST_VERSION_NO_V}_linux_amd64.tar.gz
-${FAKE_AGENT_SHA_ARM64}  nodemanager-agent_${TEST_VERSION_NO_V}_linux_arm64.tar.gz
-${FAKE_AGENT_SHA_ARMV7}  nodemanager-agent_${TEST_VERSION_NO_V}_linux_armv7.tar.gz
-EOF
-
-# ── Fake port distfiles (stand-ins for Go proxy + GitHub) ────────────────────
-
-FAKE_MOD_FILE="${TMP}/fake-v${TEST_VERSION_NO_V}.mod"
-FAKE_ZIP_FILE="${TMP}/fake-v${TEST_VERSION_NO_V}.zip"
 FAKE_TGZ_FILE="${TMP}/fake-v${TEST_VERSION_NO_V}.tar.gz"
-echo "module github.com/zachfi/nodemanager" > "${FAKE_MOD_FILE}"
-echo "fake zip content"                     > "${FAKE_ZIP_FILE}"
-echo "fake tarball content"                 > "${FAKE_TGZ_FILE}"
+echo "fake tarball content" > "${FAKE_TGZ_FILE}"
 
-EXPECTED_SHA_MOD="$(sha256sum "${FAKE_MOD_FILE}" | awk '{print $1}')"
-EXPECTED_SZ_MOD="$(wc -c < "${FAKE_MOD_FILE}")"
-EXPECTED_SHA_ZIP="$(sha256sum "${FAKE_ZIP_FILE}" | awk '{print $1}')"
-EXPECTED_SZ_ZIP="$(wc -c < "${FAKE_ZIP_FILE}")"
 EXPECTED_SHA_TGZ="$(sha256sum "${FAKE_TGZ_FILE}" | awk '{print $1}')"
 EXPECTED_SZ_TGZ="$(wc -c < "${FAKE_TGZ_FILE}")"
 
@@ -141,31 +111,24 @@ git init -b main "${BIN_WORK}" -q
 git -C "${BIN_WORK}" config user.email "test@test"
 git -C "${BIN_WORK}" config user.name "Test"
 
-# Copy PKGBUILD.template and nodemanager.service from the real nodemanager-bin
-# checkout if present; otherwise create minimal stubs.
-NM_BIN_SRC="${HOME}/go/src/github.com/zachfi/nodemanager-bin"
-if [[ -f "${NM_BIN_SRC}/PKGBUILD.template" ]]; then
-  cp "${NM_BIN_SRC}/PKGBUILD.template" "${BIN_WORK}/PKGBUILD.template"
-else
-  cat > "${BIN_WORK}/PKGBUILD.template" <<'TMPL'
+# Build-from-source PKGBUILD template — mirrors the live code.znet template
+# (pkgver placeholder only; no per-arch tarball sums needed).
+cat > "${BIN_WORK}/PKGBUILD.template" <<'TMPL'
 pkgname=nodemanager-bin
+_realname=nodemanager
 pkgver={{ version }}
 pkgrel=1
-arch=(aarch64 armv7h x86_64)
-source_x86_64=("https://example.com/nodemanager_${pkgver}_linux_amd64.tar.gz")
-source_aarch64=("https://example.com/nodemanager_${pkgver}_linux_arm64.tar.gz")
-source_armv7h=("https://example.com/nodemanager_${pkgver}_linux_armv7.tar.gz")
-sha256sums_x86_64=('SKIP' 'SKIP')
-sha256sums_aarch64=('SKIP' 'SKIP')
-sha256sums_armv7h=('SKIP' 'SKIP')
-TMPL
-fi
+arch=(x86_64 aarch64)
+source=("nodemanager.service")
+sha256sums=('SKIP')
 
-if [[ -f "${NM_BIN_SRC}/nodemanager.service" ]]; then
-  cp "${NM_BIN_SRC}/nodemanager.service" "${BIN_WORK}/nodemanager.service"
-else
-  echo "[Unit]" > "${BIN_WORK}/nodemanager.service"
-fi
+build() {
+  cd "${startdir}/../nodemanager"
+  go build -mod=vendor -buildvcs=false -ldflags "-X main.version=${pkgver}" -o bin/${_realname} ./cmd/
+}
+TMPL
+
+echo "[Unit]" > "${BIN_WORK}/nodemanager.service"
 
 git -C "${BIN_WORK}" add .
 git -C "${BIN_WORK}" commit -m "initial" -q
@@ -197,16 +160,38 @@ git -C "${JL_WORK}" commit -m "initial" -q
 git -C "${JL_WORK}" remote add origin "${JL_BARE}"
 git -C "${JL_WORK}" push origin HEAD:main -q
 
-# ── aur bare repo (nodemanager-bin as submodule) ──────────────────────────────
+# ── Fake nodemanager source repo (sibling submodule that aur builds from) ────
+
+NM_SRC_BARE="${TMP}/nodemanager-src.git"
+NM_SRC_WORK="${TMP}/nodemanager-src-work"
+git init --bare -b main "${NM_SRC_BARE}" -q
+git init -b main "${NM_SRC_WORK}" -q
+git -C "${NM_SRC_WORK}" config user.email "test@test"
+git -C "${NM_SRC_WORK}" config user.name "Test"
+echo "fake source" > "${NM_SRC_WORK}/README.md"
+git -C "${NM_SRC_WORK}" add .
+git -C "${NM_SRC_WORK}" commit -m "release ${TEST_VERSION}" -q
+git -C "${NM_SRC_WORK}" tag "${TEST_VERSION}"
+# Advance main past the tag so the AUR fixture's submodule starts ahead of
+# the release commit. The script's `checkout --detach ${TEST_VERSION}` then
+# moves the submodule pointer (verifying the bump actually happened).
+echo "post-release work" >> "${NM_SRC_WORK}/README.md"
+git -C "${NM_SRC_WORK}" commit -am "post-${TEST_VERSION} progress" -q
+git -C "${NM_SRC_WORK}" remote add origin "${NM_SRC_BARE}"
+git -C "${NM_SRC_WORK}" push origin HEAD:main -q
+git -C "${NM_SRC_WORK}" push origin "${TEST_VERSION}" -q
+
+# ── aur bare repo (nodemanager + nodemanager-bin as submodules) ──────────────
 
 AUR_BARE="${TMP}/aur.git"
 AUR_WORK="${TMP}/aur-work"
-git init --bare "${AUR_BARE}" -q
-git init "${AUR_WORK}" -q
+git init --bare -b main "${AUR_BARE}" -q
+git init -b main "${AUR_WORK}" -q
 git -C "${AUR_WORK}" config user.email "test@test"
 git -C "${AUR_WORK}" config user.name "Test"
 
 git -C "${AUR_WORK}" -c protocol.file.allow=always submodule add -q "${BIN_BARE}" nodemanager-bin
+git -C "${AUR_WORK}" -c protocol.file.allow=always submodule add -q "${NM_SRC_BARE}" nodemanager
 git -C "${AUR_WORK}" commit -m "initial" -q
 git -C "${AUR_WORK}" remote add origin "${AUR_BARE}"
 git -C "${AUR_WORK}" push origin HEAD:main -q
@@ -298,13 +283,25 @@ VERIFY_WORK="${SCRIPT_WORK_DIR}/nodemanager-bin"
 # PKGBUILD version
 assert_contains "${VERIFY_WORK}/PKGBUILD" "pkgver=${TEST_VERSION_NO_V}" "PKGBUILD: pkgver updated"
 
-# Checksums
-assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_x86_64=('${FAKE_SHA_AMD64}' '${FAKE_AGENT_SHA_AMD64}')" "PKGBUILD: sha256sums_x86_64 correct"
-assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_aarch64=('${FAKE_SHA_ARM64}' '${FAKE_AGENT_SHA_ARM64}')" "PKGBUILD: sha256sums_aarch64 correct"
-assert_contains "${VERIFY_WORK}/PKGBUILD" "sha256sums_armv7h=('${FAKE_SHA_ARMV7}' '${FAKE_AGENT_SHA_ARMV7}')" "PKGBUILD: sha256sums_armv7h correct"
-
 # Template placeholder should be gone
 assert_not_contains "${VERIFY_WORK}/PKGBUILD" "{{ version }}" "PKGBUILD: no leftover template tokens"
+
+# aur step: nodemanager submodule advanced to the new tag
+NM_SUBMODULE_AT_TAG="$(git -C "${AUR_WORK}/nodemanager" rev-parse HEAD)"
+NM_TAG_COMMIT="$(git -C "${NM_SRC_WORK}" rev-list -n1 "${TEST_VERSION}")"
+if [[ "${NM_SUBMODULE_AT_TAG}" == "${NM_TAG_COMMIT}" ]]; then
+  pass "aur: nodemanager submodule checked out at ${TEST_VERSION}"
+else
+  fail "aur: nodemanager submodule at ${NM_SUBMODULE_AT_TAG}, expected ${NM_TAG_COMMIT}"
+fi
+
+# aur: commit message mentions both submodule names
+LAST_AUR_MSG="$(git -C "${AUR_WORK}" log -1 --pretty=%s)"
+if [[ "${LAST_AUR_MSG}" == *"nodemanager"*"nodemanager-bin"* ]]; then
+  pass "aur: commit references both submodules"
+else
+  fail "aur: commit message was '${LAST_AUR_MSG}'"
+fi
 
 # config.jsonnet new version inserted
 assert_contains "${JL_WORK}/libs/nodemanager/config.jsonnet" "'${TEST_VERSION_NO_V}'" "config.jsonnet: new version present"
@@ -326,19 +323,18 @@ assert_contains "${PP_WORK}/sysutils/nodemanager/Makefile" "PORTVERSION=	${TEST_
 # port: PORTREVISION reset
 assert_contains "${PP_WORK}/sysutils/nodemanager/Makefile" "PORTREVISION=	0" "port: PORTREVISION reset to 0"
 
-# port: distinfo path format correct
-DIST_PREFIX="go/sysutils_nodemanager/zachfi-nodemanager-v${TEST_VERSION_NO_V}_GH0"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "${DIST_PREFIX}/v${TEST_VERSION_NO_V}.mod" "port: distinfo .mod path correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "${DIST_PREFIX}/v${TEST_VERSION_NO_V}.zip" "port: distinfo .zip path correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "${DIST_PREFIX}/zachfi-nodemanager-v${TEST_VERSION_NO_V}_GH0.tar.gz" "port: distinfo .tar.gz path correct"
+# port: GIT_COMMIT updated to the release tag's commit
+TAG_COMMIT="$(git -C "${REPO_ROOT}" rev-list -n1 "${TEST_VERSION}")"
+assert_contains "${PP_WORK}/sysutils/nodemanager/Makefile" "GIT_COMMIT=	${TAG_COMMIT}" "port: GIT_COMMIT bumped to tag commit"
 
-# port: distinfo checksums match what we fed in
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SHA256 (${DIST_PREFIX}/v${TEST_VERSION_NO_V}.mod) = ${EXPECTED_SHA_MOD}" "port: distinfo .mod sha256 correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SIZE (${DIST_PREFIX}/v${TEST_VERSION_NO_V}.mod) = ${EXPECTED_SZ_MOD}" "port: distinfo .mod size correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SHA256 (${DIST_PREFIX}/v${TEST_VERSION_NO_V}.zip) = ${EXPECTED_SHA_ZIP}" "port: distinfo .zip sha256 correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SIZE (${DIST_PREFIX}/v${TEST_VERSION_NO_V}.zip) = ${EXPECTED_SZ_ZIP}" "port: distinfo .zip size correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SHA256 (${DIST_PREFIX}/zachfi-nodemanager-v${TEST_VERSION_NO_V}_GH0.tar.gz) = ${EXPECTED_SHA_TGZ}" "port: distinfo .tar.gz sha256 correct"
-assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SIZE (${DIST_PREFIX}/zachfi-nodemanager-v${TEST_VERSION_NO_V}_GH0.tar.gz) = ${EXPECTED_SZ_TGZ}" "port: distinfo .tar.gz size correct"
+# port: distinfo uses simple GH-archive form (no GO_OFFLINE proxy entries)
+assert_not_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "go/sysutils_nodemanager" "port: distinfo has no GO_OFFLINE prefix"
+assert_not_contains "${PP_WORK}/sysutils/nodemanager/distinfo" ".mod" "port: distinfo has no .mod entry"
+assert_not_contains "${PP_WORK}/sysutils/nodemanager/distinfo" ".zip" "port: distinfo has no .zip entry"
+
+# port: distinfo checksum matches the fake tarball we served
+assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SHA256 (zachfi-nodemanager-v${TEST_VERSION_NO_V}_GH0.tar.gz) = ${EXPECTED_SHA_TGZ}" "port: distinfo .tar.gz sha256 correct"
+assert_contains "${PP_WORK}/sysutils/nodemanager/distinfo" "SIZE (zachfi-nodemanager-v${TEST_VERSION_NO_V}_GH0.tar.gz) = ${EXPECTED_SZ_TGZ}" "port: distinfo .tar.gz size correct"
 
 # port: changes were committed
 if git -C "${PP_WORK}" diff --quiet HEAD; then
