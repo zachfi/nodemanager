@@ -38,8 +38,6 @@ type Data struct {
 	Nodes []NodeInfo
 }
 
-var poudriereLabelGate map[string]string = map[string]string{"poudriere.freebsd.nodemanager/builder": "true"}
-
 // createOrGetNode will query for the current node in the requested namespace.  If the node does not exist, it will be created.  Node results are returned, or an error.
 func createOrGetNode(ctx context.Context, log *slog.Logger, r client.Reader, w client.Writer, req ctrl.Request) (commonv1.ManagedNode, error) {
 	hostname, err := os.Hostname()

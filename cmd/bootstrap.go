@@ -436,10 +436,6 @@ func defaultNodeKubeconfigPath() string {
 // using an anonymous struct so the TypeMeta fields appear at the top level in
 // the marshalled output.
 func withTypeMeta(obj any, apiVersion, kind string) any {
-	type typeMeta struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
-	}
 	// Marshal the object to a map, inject TypeMeta, return the merged map.
 	data, _ := json.Marshal(obj)
 	var m map[string]any

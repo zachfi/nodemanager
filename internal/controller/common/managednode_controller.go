@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"reflect"
 	"slices"
@@ -249,9 +250,7 @@ func (r *ManagedNodeReconciler) updateNodeLabels(ctx context.Context, node *comm
 			if freshLabels == nil {
 				freshLabels = make(map[string]string)
 			}
-			for k, v := range nodeLabels {
-				freshLabels[k] = v
-			}
+			maps.Copy(freshLabels, nodeLabels)
 			fresh.SetLabels(freshLabels)
 			return r.Update(ctx, &fresh)
 		}); err != nil {
@@ -435,7 +434,7 @@ func collectSSHHostKeys(ctx context.Context, exec handler.ExecHandler, hostname 
 	}
 
 	var keys []commonv1.SSHHostKey
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
 		// Expected: <name> IN SSHFP <alg> <fp-type> <fingerprint>
 		if len(fields) != 6 || fields[2] != "SSHFP" {
@@ -1042,11 +1041,8 @@ func (r *ManagedNodeReconciler) pruneStaleConfigSetStatus(ctx context.Context, n
 	}
 
 	var pruned []string
-	kept := make([]commonv1.ConfigSetApplyStatus, 0, len(node.Status.ConfigSets))
 	for _, cs := range node.Status.ConfigSets {
-		if _, ok := matching[cs.Name]; ok {
-			kept = append(kept, cs)
-		} else {
+		if _, ok := matching[cs.Name]; !ok {
 			pruned = append(pruned, cs.Name)
 		}
 	}

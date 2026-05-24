@@ -8,12 +8,9 @@ import (
 
 	"github.com/zachfi/nodemanager/pkg/common/info"
 	"github.com/zachfi/nodemanager/pkg/handler"
-	"go.opentelemetry.io/otel"
 )
 
 var _ handler.NodeHandler = (*Alpine)(nil)
-
-var tracer = otel.Tracer("nodes/alpine")
 
 type Alpine struct {
 	logger *slog.Logger

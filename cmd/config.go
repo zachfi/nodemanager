@@ -98,7 +98,7 @@ func loadConfig() (*Config, bool, error) {
 	return config, configVerify, nil
 }
 
-func configIsValid(config *Config) bool {
+func configIsValid(_ *Config) bool {
 	// Warn the user for suspect configurations
 	// if warnings := config.CheckConfig(); len(warnings) != 0 {
 	// 	level.Warn(log.Logger).Log("msg", "-- CONFIGURATION WARNINGS --")

@@ -32,7 +32,7 @@ func (m *mockNotifier) CancelApproval(_ string) {}
 
 var systemHandler = &mockSystemHandler{}
 
-var hostname, err = systemHandler.Node().Hostname()
+var hostname, _ = systemHandler.Node().Hostname()
 
 var (
 	_ handler.PackageHandler = (*mockPackageHandler)(nil)

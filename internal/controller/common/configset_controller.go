@@ -527,13 +527,11 @@ func (r *ConfigSetReconciler) removeConfigSetStatus(ctx context.Context, configS
 
 	// Remove from ManagedNode status.
 	found := false
-	filtered := make([]commonv1.ConfigSetApplyStatus, 0, len(node.Status.ConfigSets))
 	for _, cs := range node.Status.ConfigSets {
 		if cs.Name == configSetName {
 			found = true
-			continue
+			break
 		}
-		filtered = append(filtered, cs)
 	}
 	if found {
 		err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
@@ -1286,9 +1284,7 @@ func (r *ConfigSetReconciler) updateFileBackups(ctx context.Context, nodeName, n
 		if node.Status.FileBackups == nil {
 			node.Status.FileBackups = make(map[string]string, len(updates))
 		}
-		for path, hash := range updates {
-			node.Status.FileBackups[path] = hash
-		}
+		maps.Copy(node.Status.FileBackups, updates)
 
 		return r.Status().Update(ctx, &node)
 	})
