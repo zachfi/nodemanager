@@ -95,7 +95,7 @@ func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logg
 //+kubebuilder:rbac:groups=common.nodemanager.nodemanager,resources=configsets,verbs=list
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;patch
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list
-//+kubebuilder:rbac:groups="policy",resources=pods/eviction,verbs=create
+//+kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to keep the k8s resource in sync with the current state of the node.
