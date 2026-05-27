@@ -347,7 +347,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	shutdownTracer, err := installTracer(logger, "nodemanager", versionString())
+	shutdownTracer, err := installTracer(logger, cfg.ControllerConfig.Tracing.Enabled, "nodemanager", versionString())
 	if err != nil {
 		setupLog.Error(err, "error initializing tracer")
 		os.Exit(1)
@@ -363,8 +363,14 @@ func main() {
 
 // installTracer configures the OpenTelemetry OTLP gRPC exporter using standard
 // SDK environment variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL,
-// OTEL_EXPORTER_OTLP_HEADERS). Returns a no-op shutdown if the endpoint is not set.
-func installTracer(logger *slog.Logger, appName, version string) (func(), error) {
+// OTEL_EXPORTER_OTLP_HEADERS). Returns a no-op shutdown if the endpoint is not set
+// or if tracingEnabled is false.
+func installTracer(logger *slog.Logger, tracingEnabled bool, appName, version string) (func(), error) {
+	if !tracingEnabled {
+		logger.Info("tracing disabled via -tracing.enabled=false")
+		return func() {}, nil
+	}
+
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
 		return func() {}, nil
@@ -385,7 +391,15 @@ func installTracer(logger *slog.Logger, appName, version string) (func(), error)
 		return nil, fmt.Errorf("failed to create trace resource: %w", err)
 	}
 
-	traceExporter, err := otlptracegrpc.New(ctx)
+	traceExporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithTimeout(3*time.Second),
+		otlptracegrpc.WithRetry(otlptracegrpc.RetryConfig{
+			Enabled:         true,
+			InitialInterval: 500 * time.Millisecond,
+			MaxInterval:     1 * time.Second,
+			MaxElapsedTime:  3 * time.Second,
+		}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
@@ -393,13 +407,16 @@ func installTracer(logger *slog.Logger, appName, version string) (func(), error)
 	tracerProvider := sdktrace.NewTracerProvider(
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithResource(res),
-		sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExporter)),
+		sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(traceExporter,
+			sdktrace.WithBatchTimeout(2*time.Second),
+			sdktrace.WithExportTimeout(5*time.Second),
+		)),
 	)
 	otel.SetTracerProvider(tracerProvider)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
 	return func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := tracerProvider.Shutdown(ctx); err != nil {
 			logger.Error("OpenTelemetry trace provider failed to shutdown", "err", err)
