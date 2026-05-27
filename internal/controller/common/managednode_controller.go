@@ -72,9 +72,10 @@ type ManagedNodeReconciler struct {
 	clientset    kubernetes.Interface
 	agentVersion string
 	notifier     notification.Notifier
+	watchdog     *Watchdog
 }
 
-func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface, agentVersion string, notifier notification.Notifier) *ManagedNodeReconciler {
+func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ManagedNodeConfig, system handler.System, locker locker.Locker, clientset kubernetes.Interface, agentVersion string, notifier notification.Notifier, watchdog *Watchdog) *ManagedNodeReconciler {
 	return &ManagedNodeReconciler{
 		Client:       client,
 		Scheme:       scheme,
@@ -86,6 +87,7 @@ func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logg
 		clientset:    clientset,
 		agentVersion: agentVersion,
 		notifier:     notifier,
+		watchdog:     watchdog,
 	}
 }
 
@@ -100,6 +102,8 @@ func NewManagedNodeReconciler(client client.Client, scheme *runtime.Scheme, logg
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to keep the k8s resource in sync with the current state of the node.
 func (r *ManagedNodeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	defer r.watchdog.Track("controller.common.managednode", req.NamespacedName.String())()
+
 	var (
 		err  error
 		next time.Time
