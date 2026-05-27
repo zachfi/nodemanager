@@ -102,10 +102,12 @@ Defaults: 10m stale, 15m slow. Both non-zero (always-on); both individually disa
 
 ```
 nodemanager_reconcile_in_flight_duration_seconds (gauge)
-  Labels: controller, key
+  Labels: node, controller, key
   Set to the current age of any in-flight Reconcile older than WatchdogSlowThreshold.
-  Cleared by the next watchdog tick if the Reconcile completed.
+  Cleared by the next watchdog tick if the Reconcile completed (DeleteLabelValues).
 ```
+
+The `node` label matches the convention of every other `nodemanager_*` metric — these agents run off-cluster on bare-metal/jails, so Prometheus's `instance` label isn't reliable.
 
 Cardinality bound: at most `MaxConcurrentReconciles` × number of controllers concurrently slow. In steady state, zero series. During an incident, a handful.
 
@@ -150,6 +152,10 @@ Queue size + max-batch stay at SDK defaults. Drop-on-full is already the default
 
 5s → 2s. The daemon should exit promptly when supervisor or `os.Exit(74)` says so; a broken backend must not extend that.
 
+### Tracing flag groups
+
+Place the new tracing flags under a `TracingConfig` struct rooted at `ControllerConfig`, mirroring existing groups (`FileBucketConfig`, `WatchdogConfig`). Flag prefix `tracing.`.
+
 ### Disable knob
 
 ```
@@ -159,6 +165,75 @@ Queue size + max-batch stay at SDK defaults. Drop-on-full is already the default
 When `false`, skip the exporter + processor + provider setup entirely. The global `TracerProvider` stays as the SDK's default noop. All existing `r.tracer.Start(...)` calls compile and run; they just produce zero spans. No goroutines, no connections, no shutdown work needed.
 
 This is the recovery escape hatch: if the trace backend is what nodemanager is trying to fix, an operator can deploy with `-tracing.enabled=false` on the affected hosts, push the fix, then re-enable.
+
+---
+
+## Part 3 — Mixin coverage
+
+### New alerts in `monitoring/alerts/nodemanager.libsonnet`
+
+Added to the existing "Service operation metrics" section (after `NodeManagerServiceStartLoop`) or in a new "Agent health" section — operator preference. Two alerts:
+
+**`NodeManagerReconcileStuck`** — fires when the in-flight gauge has any series for 5 minutes (single tick of the watchdog at `slow=15m` is enough to set it; the 5m `for:` requires sustained, not transient).
+
+```jsonnet
+{
+  alert: 'NodeManagerReconcileStuck',
+  expr: |||
+    nodemanager_reconcile_in_flight_duration_seconds > 0
+  |||,
+  'for': '5m',
+  labels: { severity: 'warning' },
+  annotations: {
+    summary: 'reconcile stuck on {{ $labels.node }} ({{ $labels.controller }} / {{ $labels.key }}).',
+    description: |||
+      A reconcile in controller {{ $labels.controller }} for {{ $labels.key }} has
+      been in-flight on {{ $labels.node }} for {{ $value | humanizeDuration }}.
+      Likely an uncancellable syscall, deadlock, or upstream service hang.
+      Before restarting: capture goroutine dump via /debug/pprof/goroutine?debug=2.
+    |||,
+  },
+},
+```
+
+**`NodeManagerAgentRestartLoop`** — surrogate for "watchdog fired and supervisor restarted us repeatedly." Prometheus alone can't observe `exit(74)` directly (the process is gone before the next scrape), but a restart-loop manifests as `process_start_time_seconds` jumping more than a few times within 30m. Cross-references the controller-runtime metric which is already scraped.
+
+```jsonnet
+{
+  alert: 'NodeManagerAgentRestartLoop',
+  expr: |||
+    changes(process_start_time_seconds{job=~".*nodemanager.*"}[30m]) > 3
+  |||,
+  'for': '5m',
+  labels: { severity: 'warning' },
+  annotations: {
+    summary: 'nodemanager on {{ $labels.instance }} has restarted >3 times in 30 minutes.',
+    description: |||
+      Likely the watchdog firing (exit code 74 — check supervisor logs for
+      "watchdog: stale; exiting"). Investigate why Reconcile is not running:
+      controller-runtime reflector health, apiserver connectivity, agent kubeconfig.
+    |||,
+  },
+},
+```
+
+Note this alert uses `instance` rather than `node` because `process_start_time_seconds` is emitted by the Go runtime, not by nodemanager code — Prometheus's per-target labels apply.
+
+### New dashboard `monitoring/dashboards/nodemanager-agent-health.libsonnet`
+
+A separate dashboard from the existing `nodemanager-configset` one — different audience (agent operators vs ConfigSet rollout operators).
+
+Panels (single row, 4 panels):
+
+1. **Agent uptime** — `time() - process_start_time_seconds{job=~".*nodemanager.*"}` per `instance`. Stat panel. Red threshold at < 10m (indicates a recent restart).
+
+2. **In-flight reconciles** — `nodemanager_reconcile_in_flight_duration_seconds`. Time-series panel grouped by `node, controller`. Empty in steady state; spikes during incidents.
+
+3. **Reconcile rate** — `sum by (node) (rate(controller_runtime_reconcile_total{job=~".*nodemanager.*"}[5m]))`. Time-series. Indicator for "loop alive": a healthy agent ticks events through; a wedged one flatlines at zero. Distinct signal from the watchdog (which uses an internal atomic), provides a Prometheus-visible cross-check.
+
+4. **Trace export drops (best-effort)** — `rate(otel_trace_span_processor_dropped_spans_total[5m])` if the OTel SDK exposes it (Go SDK v1.x does via the meter provider). If not present, skip this panel rather than fabricate a metric we don't emit.
+
+Cross-link from each panel description to the relevant runbook section.
 
 ---
 
@@ -175,6 +250,10 @@ This is the recovery escape hatch: if the trace backend is what nodemanager is t
 | `cmd/main.go` | (a) Wire `mgr.Add(common.NewWatchdog(...))`; (b) gate exporter setup on `cfg.Tracing.Enabled`; (c) apply bounded options when enabled. |
 | `internal/controller/common/watchdog_test.go` (new) | Tests with injectable exit fn + clock. |
 | `cmd/main_test.go` | If tractable, integration smoke test of `tracing.enabled=false` path. (May skip if the existing test harness doesn't cover main; out of scope if so.) |
+| `monitoring/alerts/nodemanager.libsonnet` | Add `NodeManagerReconcileStuck` and `NodeManagerAgentRestartLoop`. |
+| `monitoring/dashboards/nodemanager-agent-health.libsonnet` (new) | Four-panel agent-health dashboard. |
+| `monitoring/dashboards.libsonnet` (if it exists; otherwise the mixin entry point) | Register the new dashboard. |
+| `docs/monitoring/metrics.md` | New row for `nodemanager_reconcile_in_flight_duration_seconds`. |
 
 ### Where the InFlightTracker lives
 
