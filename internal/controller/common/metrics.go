@@ -43,6 +43,16 @@ var (
 		Help: "Total number of service manager operations.",
 	}, []string{"node", "service", "operation", "result"})
 
+	// execOperationsTotal counts ConfigSet Exec runs. The `command` label is
+	// filepath.Base(exe.Command) — bounded cardinality (~30 distinct
+	// executables across the fleet) and operator-readable. The `result` enum
+	// is success, error, validate_failed, or skipped (subscribe_files set
+	// but no triggering file changed this reconcile).
+	execOperationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "nodemanager_exec_operations_total",
+		Help: "Total number of ConfigSet Exec runs.",
+	}, []string{"node", "command", "result"})
+
 	// fileChangesTotal counts files that were changed during a ConfigSet apply.
 	// The "path" label attributes a change to the exact managed file so an operator
 	// can tell flapping (same path every reconcile) from one-off (n paths once).
@@ -104,6 +114,7 @@ func init() {
 		configSetApplyDuration,
 		packageOperationsTotal,
 		serviceOperationsTotal,
+		execOperationsTotal,
 		fileChangesTotal,
 		upgradeTotal,
 		upgradeDuration,
