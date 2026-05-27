@@ -17,6 +17,8 @@ limitations under the License.
 package v1
 
 import (
+	"time"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -91,12 +93,57 @@ type File struct {
 	// ConfigSet matching this node. Only meaningful when ensure is "directory".
 	// Subdirectories are never removed, only plain files.
 	Purge bool `json:"purge,omitempty"`
+	// Validate gates this file's commit on an external validator. When set,
+	// nodemanager renders content into a temp file adjacent to Path, runs
+	// the validator against ${STAGED}, and only renames the temp into Path
+	// on validator exit 0. See type Validate for failure semantics.
+	Validate *Validate `json:"validate,omitempty"`
 }
 
 type Exec struct {
 	Command         string   `json:"command,omitempty"`
 	Args            []string `json:"args,omitempty"`
 	SusbscribeFiles []string `json:"subscribe_files,omitempty"`
+	// Validate gates this exec body on an external validator. When set,
+	// nodemanager runs the validator first; on non-zero exit it records
+	// result="validate_failed" and skips the body (or aborts the ConfigSet,
+	// depending on OnFailure).
+	Validate *Validate `json:"validate,omitempty"`
+}
+
+// Validate gates the application of a File or Exec on the exit code of an
+// external command. On non-zero exit, OnFailure decides whether to skip this
+// item (rollback) or halt the whole ConfigSet (abort).
+//
+// For File validators, ${STAGED} in Command and Args substitutes to the temp
+// file path containing the rendered content; ${TARGET} substitutes to the
+// final destination path. For Exec validators, no substitution applies.
+type Validate struct {
+	// Command is the executable (absolute path or PATH-resolved name).
+	Command string `json:"command,omitempty"`
+	// Args are positional arguments. ${STAGED} and ${TARGET} are substituted
+	// in each element (File validators only).
+	Args []string `json:"args,omitempty"`
+	// TimeoutSeconds caps the validator runtime. 0 means default (30s).
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+	// OnFailure selects the failure semantics. "rollback" (default) skips this
+	// item and continues the ConfigSet; "abort" halts the ConfigSet apply.
+	OnFailure string `json:"onFailure,omitempty"`
+}
+
+// Timeout returns the validator timeout, defaulting to 30s when unset.
+func (v *Validate) Timeout() time.Duration {
+	if v.TimeoutSeconds <= 0 {
+		return 30 * time.Second
+	}
+	return time.Duration(v.TimeoutSeconds) * time.Second
+}
+
+// Abort reports whether validator failures should halt the ConfigSet.
+// Any value other than "abort" (including the empty string and "rollback") is
+// treated as rollback.
+func (v *Validate) Abort() bool {
+	return v.OnFailure == "abort"
 }
 
 // ConfigSetStatus defines the observed state of ConfigSet

@@ -52,6 +52,34 @@ spec:
                       items:
                         type: string
                       type: array
+                    validate:
+                      description: |-
+                        Validate gates this exec body on an external validator. When set,
+                        nodemanager runs the validator first; on non-zero exit it records
+                        result="validate_failed" and skips the body (or aborts the ConfigSet,
+                        depending on OnFailure).
+                      properties:
+                        args:
+                          description: |-
+                            Args are positional arguments. ${STAGED} and ${TARGET} are substituted
+                            in each element (File validators only).
+                          items:
+                            type: string
+                          type: array
+                        command:
+                          description: Command is the executable (absolute path or
+                            PATH-resolved name).
+                          type: string
+                        onFailure:
+                          description: |-
+                            OnFailure selects the failure semantics. "rollback" (default) skips this
+                            item and continues the ConfigSet; "abort" halts the ConfigSet apply.
+                          type: string
+                        timeoutSeconds:
+                          description: TimeoutSeconds caps the validator runtime.
+                            0 means default (30s).
+                          type: integer
+                      type: object
                   type: object
                 type: array
               files:
@@ -102,6 +130,34 @@ spec:
                       type: string
                     template:
                       type: string
+                    validate:
+                      description: |-
+                        Validate gates this file's commit on an external validator. When set,
+                        nodemanager renders content into a temp file adjacent to Path, runs
+                        the validator against ${STAGED}, and only renames the temp into Path
+                        on validator exit 0. See type Validate for failure semantics.
+                      properties:
+                        args:
+                          description: |-
+                            Args are positional arguments. ${STAGED} and ${TARGET} are substituted
+                            in each element (File validators only).
+                          items:
+                            type: string
+                          type: array
+                        command:
+                          description: Command is the executable (absolute path or
+                            PATH-resolved name).
+                          type: string
+                        onFailure:
+                          description: |-
+                            OnFailure selects the failure semantics. "rollback" (default) skips this
+                            item and continues the ConfigSet; "abort" halts the ConfigSet apply.
+                          type: string
+                        timeoutSeconds:
+                          description: TimeoutSeconds caps the validator runtime.
+                            0 means default (30s).
+                          type: integer
+                      type: object
                   type: object
                 type: array
               notifies:
