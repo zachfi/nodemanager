@@ -102,15 +102,21 @@ func (v *Validate) Abort() bool {
 
 ## File validation flow
 
-The current `writeFileContent` does **content → chown → chmod** with three potentially-in-place mutations. To validate atomically we need a staged temp file. New flow inside `writeFileContent`:
+The current `writeFileContent` does **content → chown → chmod** directly on the final target path. The handler functions' built-in change-detection saves work when the file already matches spec. The new staged flow preserves both properties (atomicity AND skip-when-unchanged) by checking equivalence BEFORE staging:
 
 ```
 1. Render content (template + secrets + configmaps as today).
-2. tempPath := <Path>.nm-staged-<rand6>  (in the SAME directory as Path so rename stays on one filesystem)
-3. handler.WriteContentFile(tempPath, content)
-4. handler.Chown(tempPath, owner, group)
-5. handler.SetMode(tempPath, mode)
-6. If file.Validate != nil:
+2. Skip-when-unchanged short-circuit:
+     desiredSHA  := sha256(rendered content)
+     currentSHA  := sha256 of file.Path's current bytes (if it exists; 0 otherwise)
+     currentOwner, currentMode := stat(file.Path)
+     if currentSHA == desiredSHA && currentOwner matches spec && currentMode matches spec:
+        return changed=false, "", nil   // nothing to do; validator NOT run
+3. tempPath := os.CreateTemp(dir(file.Path), base(file.Path)+".nm-staged-")
+   // os.CreateTemp creates with mode 0600 owned by the agent (root).
+4. handler.WriteContentFile(tempPath, content)
+   // tempPath is still mode 0600 — restrictive while the validator runs.
+5. If file.Validate != nil:
      ctx2, cancel := context.WithTimeout(ctx, file.Validate.Timeout())
      command, args := substitute(file.Validate.Command, file.Validate.Args, tempPath, file.Path)
      output, exit, err := r.system.Exec().RunCommand(ctx2, command, args...)
@@ -126,15 +132,55 @@ The current `writeFileContent` does **content → chown → chmod** with three p
          fileChangesTotal.WithLabelValues(nodeName, configSetName, file.Path, "validate_failed").Inc()
          setStatusCondition(...)
          return changed=false, backupHash="", validationErr{Abort: file.Validate.Abort()}
-7. os.Rename(tempPath, file.Path)         // atomic on POSIX, same fs
-8. return changed=true, backupHash, nil
+6. handler.Chown(tempPath, owner, group)    // apply operator spec — only after validator pass
+7. handler.SetMode(tempPath, mode)
+8. os.Rename(tempPath, file.Path)            // atomic on POSIX, same fs
+9. return changed=true, backupHash, nil
 ```
+
+**Security properties:**
+- The temp file is born mode 0600 (root). It stays 0600 throughout content write and validator run. The operator-specified owner/mode are only applied between steps 6 and 8 — a microsecond-scale window adjacent to the rename.
+- The temp file lives in the same directory as `file.Path`, NOT `/tmp`. This makes rename atomic (same filesystem) AND avoids the cross-directory permissions concern entirely. If `file.Path` is `/usr/local/etc/nsd/znet.zone`, the temp is `/usr/local/etc/nsd/znet.zone.nm-staged-XXXXXX`.
+- On any failure between steps 3 and 8, the temp file is removed; the existing target is never touched.
+
+**Change-detection note:** because the temp file is brand new each time, calling `handler.Chown` and `handler.SetMode` will always report `changed=true` (they're comparing against fresh state). That return value becomes informational only; the real "skip when unchanged" check happens in step 2 at the start. Operators don't notice a behavior change — the metric increments and log lines remain attached to whether the FINAL target's content/perms differed from spec.
+
+**Validator user:** the validator runs as the agent (root). No `User` field on `Validate` — if an operator needs the validator to run as a specific user, they sudo within the command (e.g. `sudo -u nsd nsd-checkzone znet ${STAGED}`). This keeps the temp permissions concern simple: root can always read its own 0600 file.
+
+**Invariant:** the existing on-disk file is untouched until step 8. Render error, mkstemp failure, content-write failure, validator failure, validator timeout, chown failure, setmode failure — all leave the original intact. This is actually stronger than today's behavior (today a write failure can leave a half-written file).
 
 `handleFileSet` checks the returned error: if it's a `validationErr` with `Abort=false`, it logs but does NOT add the path to `changedFiles` and continues to the next file. If `Abort=true`, the error propagates up so the ConfigSet halts.
 
-**Invariant:** the existing on-disk file is untouched until step 7. Render error, mkstemp failure, chown failure, validator failure, validator timeout — all leave the original intact. This is actually stronger than today's behavior (today a write failure can leave a half-written file).
+### Substitution — what `${STAGED}` and `${TARGET}` mean
 
-### Substitution
+The validator command needs a way to point at the file it should validate. That file is at the temp path during validation — the final target still holds the OLD content. The tokens expose this distinction:
+
+- `${STAGED}` → the temp file path with the freshly rendered content (e.g. `/usr/local/etc/nsd/znet.zone.nm-staged-Abc123`).
+- `${TARGET}` → the final destination path (e.g. `/usr/local/etc/nsd/znet.zone`). Included for the uncommon case where a validator needs to read the previous file to check the new one against it.
+
+Example: validating an nsd zone before commit.
+
+```yaml
+- path: /usr/local/etc/nsd/znet.zone
+  template: nsd-zone.tmpl
+  validate:
+    command: nsd-checkzone
+    args:
+      - znet
+      - ${STAGED}
+```
+
+At runtime nodemanager renders the template into the temp path, substitutes `${STAGED}`, and executes:
+
+```
+nsd-checkzone znet /usr/local/etc/nsd/znet.zone.nm-staged-Abc123
+```
+
+On exit 0 → rename temp → `znet.zone`. On non-zero → remove temp, never touch `znet.zone`.
+
+Without `${STAGED}`, an operator can't write a meaningful validator — they'd have nothing to point at. The token is the entire interface between the validator and the staged file.
+
+Implementation:
 
 ```go
 func substitute(cmd string, args []string, staged, target string) (string, []string) {
@@ -147,7 +193,7 @@ func substitute(cmd string, args []string, staged, target string) (string, []str
 }
 ```
 
-Applied to both `Command` and each `Args` element.
+Applied to both `Command` and each `Args` element. Exec validators don't get substitution (there's no staged file); `${STAGED}` / `${TARGET}` in an Exec's `Validate.Args` would pass through literally — operators shouldn't use them there.
 
 ---
 
