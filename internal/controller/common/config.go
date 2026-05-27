@@ -30,6 +30,33 @@ func (c *FileBucketConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.
 	f.DurationVar(&c.MaxAge, prefix+".max-age", 7*24*time.Hour, "Remove blobs from the filebucket older than this duration (0 = keep forever)")
 }
 
+// WatchdogConfig controls the agent self-watchdog: catches "Reconcile loop
+// stopped" by exiting the process, and "Reconcile stuck in-flight" by
+// surfacing a metric + WARN log. Both signals are independently disable-able.
+type WatchdogConfig struct {
+	// StaleThreshold: exit if no Reconcile entry in this duration. 0 disables.
+	StaleThreshold time.Duration `json:"staleThreshold,omitempty"`
+	// SlowThreshold: WARN + metric if a single Reconcile has been in-flight
+	// longer than this. 0 disables.
+	SlowThreshold time.Duration `json:"slowThreshold,omitempty"`
+}
+
+func (c *WatchdogConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+	f.DurationVar(&c.StaleThreshold, prefix+".stale-threshold", 10*time.Minute, "Exit the agent (code 74) if no Reconcile entry occurs in this duration. 0 disables. Requires configset.reconcile-period > 0 when enabled.")
+	f.DurationVar(&c.SlowThreshold, prefix+".slow-threshold", 15*time.Minute, "Surface a WARN log and metric series when a single Reconcile has been in-flight longer than this. 0 disables.")
+}
+
+// TracingConfig controls OTLP trace export. Setting Enabled=false skips all
+// exporter and processor setup so the agent never blocks on a broken trace
+// backend — recovery escape hatch when nodemanager itself is the fix.
+type TracingConfig struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+func (c *TracingConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
+	f.BoolVar(&c.Enabled, prefix+".enabled", true, "Emit OTLP traces. Set false when the trace backend is the thing nodemanager is trying to fix.")
+}
+
 type ControllerConfig struct {
 	MetricsAddr          string
 	EnableLeaderElection bool
@@ -46,6 +73,8 @@ type ControllerConfig struct {
 	Locker       locker.Config
 	FreeBSD      freebsd.ControllerConfig
 	Notification notification.Config
+	Watchdog     WatchdogConfig
+	Tracing      TracingConfig
 }
 
 func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
@@ -66,6 +95,8 @@ func (c *ControllerConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.
 	c.FreeBSD.RegisterFlagsAndApplyDefaults("freebsd", f)
 
 	c.Notification.RegisterFlagsAndApplyDefaults("notification", f)
+	c.Watchdog.RegisterFlagsAndApplyDefaults("watchdog", f)
+	c.Tracing.RegisterFlagsAndApplyDefaults("tracing", f)
 }
 
 type ManagedNodeConfig struct {
