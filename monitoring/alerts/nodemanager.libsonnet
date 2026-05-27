@@ -212,6 +212,28 @@
       },
     },
 
+    {
+      alert: 'NodeManagerServiceStartLoop',
+      expr: |||
+        sum by (node, service) (rate(nodemanager_service_operations_total{result="exited"}[10m])) > 0
+        or
+        sum by (node, service) (rate(nodemanager_service_operations_total{operation="start"}[10m])) > (0.5/60)
+      |||,
+      'for': '15m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'nodemanager keeps (re)starting {{ $labels.service }} on {{ $labels.node }}.',
+        description: |||
+          {{ $labels.service }} on {{ $labels.node }} either exits shortly
+          after start (result="exited"), or has been started more than
+          0.5/min for 15 minutes. Almost always a broken config file —
+          inspect the service's recent stdout/journal and the
+          nodemanager controller logs for "service exited shortly after"
+          warnings.
+        |||,
+      },
+    },
+
     // ── Poudriere build metrics (FreeBSD) ────────────────────────────────────
 
     {
