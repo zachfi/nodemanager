@@ -44,6 +44,7 @@ import (
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/internal/controller/limits"
+	"github.com/zachfi/nodemanager/internal/controller/watchdog"
 	"github.com/zachfi/nodemanager/pkg/cmdrunner"
 	"github.com/zachfi/nodemanager/pkg/common/labels"
 	"github.com/zachfi/nodemanager/pkg/handler"
@@ -83,18 +84,20 @@ type PoudriereReconciler struct {
 	cfg    PoudriereConfig
 	// runner executes Command-mode dispatch/status programs.  Carries no
 	// per-invocation state; safe to share across reconciles.
-	runner *cmdrunner.Runner
+	runner   *cmdrunner.Runner
+	watchdog *watchdog.Watchdog
 }
 
-func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg PoudriereConfig, system handler.System) *PoudriereReconciler {
+func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg PoudriereConfig, system handler.System, wd *watchdog.Watchdog) *PoudriereReconciler {
 	return &PoudriereReconciler{
-		Client: client,
-		Scheme: scheme,
-		tracer: otel.Tracer("controller.freebsd.poudriere"),
-		logger: logger.With("controller", "poudriere"),
-		system: system,
-		cfg:    cfg,
-		runner: cmdrunner.New(client, logger.With("component", "cmdrunner")),
+		Client:   client,
+		Scheme:   scheme,
+		tracer:   otel.Tracer("controller.freebsd.poudriere"),
+		logger:   logger.With("controller", "poudriere"),
+		system:   system,
+		cfg:      cfg,
+		runner:   cmdrunner.New(client, logger.With("component", "cmdrunner")),
+		watchdog: wd,
 	}
 }
 
@@ -122,6 +125,8 @@ func NewPoudriereReconciler(client client.Client, scheme *runtime.Scheme, logger
 // work is skipped and the reconciler just requeues per
 // Spec.ReconcilePeriod.
 func (r *PoudriereReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
+	defer r.watchdog.Track("controller.freebsd.poudriere", req.NamespacedName.String())()
+
 	_ = log.FromContext(ctx)
 
 	// Top-level span for the reconcile.  Sub-spans for executor

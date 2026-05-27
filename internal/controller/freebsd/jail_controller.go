@@ -47,6 +47,7 @@ import (
 
 	freebsdv1 "github.com/zachfi/nodemanager/api/freebsd/v1"
 	"github.com/zachfi/nodemanager/internal/controller/limits"
+	"github.com/zachfi/nodemanager/internal/controller/watchdog"
 	"github.com/zachfi/nodemanager/pkg/handler"
 	"github.com/zachfi/nodemanager/pkg/jail"
 	"github.com/zachfi/nodemanager/pkg/locker"
@@ -73,11 +74,12 @@ type JailReconciler struct {
 	hostname       string
 	locker         locker.Locker
 	controllerName string // defaults to "freebsd-jail"; override in tests to avoid metric name conflicts
+	watchdog       *watchdog.Watchdog
 
 	manager jail.Manager
 }
 
-func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System, lkr locker.Locker) (*JailReconciler, error) {
+func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg JailConfig, system handler.System, lkr locker.Locker, wd *watchdog.Watchdog) (*JailReconciler, error) {
 	hostname, err := system.Node().Hostname()
 	if err != nil {
 		return nil, fmt.Errorf("getting local hostname: %w", err)
@@ -97,6 +99,7 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 		cfg:      cfg,
 		hostname: hostname,
 		locker:   lkr,
+		watchdog: wd,
 		manager:  manager,
 	}, nil
 }
@@ -107,6 +110,8 @@ func NewJailReconciler(ctx context.Context, client client.Client, scheme *runtim
 // +kubebuilder:rbac:groups=freebsd.nodemanager,resources=jailtemplates,verbs=get;list;watch
 
 func (r *JailReconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
+	defer r.watchdog.Track("controller.freebsd.jail", req.NamespacedName.String())()
+
 	_ = logf.FromContext(ctx)
 
 	// Open a top-level span for the reconcile.  Sub-spans for each step inside

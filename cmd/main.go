@@ -290,7 +290,7 @@ func main() {
 		}
 
 		if cfg.ControllerConfig.FreeBSD.Poudriere.Enabled.IsEnabled(isJailed) {
-			poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys)
+			poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys, nil)
 			if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
 				setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
 				os.Exit(1)
@@ -300,7 +300,7 @@ func main() {
 		}
 
 		if cfg.ControllerConfig.FreeBSD.Jail.Enabled.IsEnabled(isJailed) {
-			jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys, locker)
+			jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys, locker, nil)
 			if jailErr != nil {
 				setupLog.Error(jailErr, "unable to create controller", "controller", "Jail")
 				os.Exit(1)

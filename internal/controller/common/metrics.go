@@ -89,16 +89,6 @@ var (
 		Name: "nodemanager_configset_applied_resource_version",
 		Help: "Unix timestamp of the last successful ConfigSet apply, labelled by resource version. Use to track rollout convergence across nodes.",
 	}, []string{"node", "configset", "resource_version"})
-
-	// reconcileInFlightDuration exposes the age of any Reconcile call that
-	// has been running longer than WatchdogSlowThreshold. Empty in steady
-	// state; a small handful of series during incidents. Watchdog ticker
-	// resets the gauge each tick and re-populates from current in-flight
-	// scan, so series for resolved reconciles disappear.
-	reconcileInFlightDuration = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "nodemanager_reconcile_in_flight_duration_seconds",
-		Help: "Age of an in-flight Reconcile call exceeding the watchdog slow threshold.",
-	}, []string{"node", "controller", "key"})
 )
 
 // SetBuildInfo sets the build info metric to 1 with the given labels.
@@ -121,6 +111,5 @@ func init() {
 		lastConfigSetApplyTimestamp,
 		configSetConflictsTotal,
 		configSetAppliedResourceVersion,
-		reconcileInFlightDuration,
 	)
 }

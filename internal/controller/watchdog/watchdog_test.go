@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 */
 
-package common
+package watchdog
 
 import (
 	"context"
@@ -15,6 +15,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Test-only accessors on Watchdog. Defined in the test file so the production
@@ -34,6 +37,20 @@ func (w *Watchdog) lastHeartbeatNanos() int64 {
 	return w.heartbeat.Load()
 }
 
+// gaugeValue reads the float64 value of a GaugeVec series. Returns 0 when
+// the series does not exist or cannot be encoded.
+func gaugeValue(v *prometheus.GaugeVec, labels ...string) float64 {
+	m, err := v.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		return 0
+	}
+	var pb dto.Metric
+	if err := m.Write(&pb); err != nil {
+		return 0
+	}
+	return pb.GetGauge().GetValue()
+}
+
 func TestWatchdog_NilReceiverNoOp(t *testing.T) {
 	var w *Watchdog
 	done := w.Track("ctrl", "ns/name")
@@ -45,7 +62,7 @@ func TestWatchdog_NilReceiverNoOp(t *testing.T) {
 
 func TestWatchdog_TrackAndClear(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-	w := NewWatchdog(WatchdogConfig{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", time.Minute, logger)
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", time.Minute, logger)
 	if got := w.inFlightCount(); got != 0 {
 		t.Fatalf("expected 0 in-flight, got %d", got)
 	}
@@ -63,7 +80,7 @@ func TestWatchdog_TrackAndClear(t *testing.T) {
 
 func TestWatchdog_HeartbeatBumped(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-	w := NewWatchdog(WatchdogConfig{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", time.Minute, logger)
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", time.Minute, logger)
 	if got := w.lastHeartbeatNanos(); got != 0 {
 		t.Fatalf("expected 0 heartbeat before any Track, got %d", got)
 	}
@@ -77,7 +94,7 @@ func TestWatchdog_HeartbeatBumped(t *testing.T) {
 
 func TestWatchdog_ConcurrentTrack(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-	w := NewWatchdog(WatchdogConfig{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", time.Minute, logger)
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", time.Minute, logger)
 	var wg sync.WaitGroup
 	for i := range 100 {
 		wg.Add(1)
@@ -95,7 +112,7 @@ func TestWatchdog_ConcurrentTrack(t *testing.T) {
 
 func TestWatchdog_PreflightRejectsStaleWithoutReconcilePeriod(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-	w := NewWatchdog(WatchdogConfig{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", 0, logger)
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", 0, logger)
 	w.exit = func(int) {}
 	w.interval = 10 * time.Millisecond
 
@@ -114,8 +131,8 @@ func TestWatchdog_PreflightRejectsStaleWithoutReconcilePeriod(t *testing.T) {
 func TestWatchdog_StartupGraceNoExit(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	exitCalls := make(chan int, 1)
-	w := NewWatchdog(
-		WatchdogConfig{StaleThreshold: 50 * time.Millisecond, SlowThreshold: time.Minute},
+	w := New(
+		Config{StaleThreshold: 50 * time.Millisecond, SlowThreshold: time.Minute},
 		"test-node", time.Minute, logger,
 	)
 	w.exit = func(c int) { exitCalls <- c }
@@ -136,8 +153,8 @@ func TestWatchdog_StartupGraceNoExit(t *testing.T) {
 func TestWatchdog_ExitsOnStaleHeartbeat(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	exitCalls := make(chan int, 1)
-	w := NewWatchdog(
-		WatchdogConfig{StaleThreshold: 30 * time.Millisecond, SlowThreshold: time.Minute},
+	w := New(
+		Config{StaleThreshold: 30 * time.Millisecond, SlowThreshold: time.Minute},
 		"test-node", time.Minute, logger,
 	)
 	w.exit = func(c int) { exitCalls <- c }
@@ -161,8 +178,8 @@ func TestWatchdog_ExitsOnStaleHeartbeat(t *testing.T) {
 
 func TestWatchdog_SlowGaugeSetAndCleared(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-	w := NewWatchdog(
-		WatchdogConfig{StaleThreshold: 0, SlowThreshold: 20 * time.Millisecond},
+	w := New(
+		Config{StaleThreshold: 0, SlowThreshold: 20 * time.Millisecond},
 		"test-node", time.Minute, logger,
 	)
 	w.exit = func(int) {}
@@ -211,8 +228,8 @@ func TestWatchdog_SlowGaugeSetAndCleared(t *testing.T) {
 func TestWatchdog_DisabledStaleNeverExits(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	exitCalls := make(chan int, 1)
-	w := NewWatchdog(
-		WatchdogConfig{StaleThreshold: 0, SlowThreshold: time.Minute},
+	w := New(
+		Config{StaleThreshold: 0, SlowThreshold: time.Minute},
 		"test-node", time.Minute, logger,
 	)
 	w.exit = func(c int) { exitCalls <- c }
