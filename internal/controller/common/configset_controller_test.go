@@ -20,6 +20,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -32,6 +33,7 @@ import (
 
 	commonv1 "github.com/zachfi/nodemanager/api/common/v1"
 	"github.com/zachfi/nodemanager/pkg/locker"
+	"github.com/zachfi/nodemanager/pkg/services"
 )
 
 var _ = Describe("ConfigSet Controller", func() {
@@ -471,6 +473,60 @@ var _ = Describe("ConfigSet Controller", func() {
 
 			svcMock := sys.Service().(*mockServiceHandler)
 			Expect(svcMock.disableCalls).NotTo(HaveKey("myservice"), "Disable must not be called when rc.conf.d file is managed")
+		})
+	})
+
+	Context("Service start verification", func() {
+		ctx := context.Background()
+
+		It("records result=exited when the daemon is not Running after StartVerifyDelay", func() {
+			sys := &mockSystemHandler{}
+			// Pre-Start status is Stopped (mock default), so handleServiceSet
+			// calls Start; after Start, the daemon is still Stopped, simulating
+			// the nslcd parse-error case where rc.d returns 0 but the daemon
+			// self-aborted.
+			svc := sys.Service().(*mockServiceHandler)
+			svc.serviceStatus = map[string]services.ServiceStatus{"badd": services.Stopped}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+				cfg:    ConfigSetConfig{StartVerifyDelay: 5 * time.Millisecond},
+			}
+
+			svcs := []commonv1.Service{
+				{Name: "badd", Enable: true, Ensure: "running"},
+			}
+
+			err := r.handleServiceSet(ctx, "test-node", "default", svcs, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(svc.startCalls).To(HaveKeyWithValue("badd", 1), "Start should have been called once")
+			Expect(svc.statusCalls["badd"]).To(BeNumerically(">=", 2),
+				"Status must be polled at least twice: pre-Start check and post-Start verify")
+		})
+
+		It("does not re-poll Status when StartVerifyDelay is zero", func() {
+			sys := &mockSystemHandler{}
+			svc := sys.Service().(*mockServiceHandler)
+			svc.serviceStatus = map[string]services.ServiceStatus{"badd": services.Stopped}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+				cfg:    ConfigSetConfig{StartVerifyDelay: 0},
+			}
+
+			svcs := []commonv1.Service{
+				{Name: "badd", Enable: true, Ensure: "running"},
+			}
+
+			err := r.handleServiceSet(ctx, "test-node", "default", svcs, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(svc.startCalls).To(HaveKeyWithValue("badd", 1))
+			Expect(svc.statusCalls["badd"]).To(Equal(1),
+				"with StartVerifyDelay=0, only the pre-Start status check should happen")
 		})
 	})
 })

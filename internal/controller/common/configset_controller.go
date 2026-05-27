@@ -831,9 +831,23 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 			if status != services.Running {
 				startErr := svcHandler.Start(svcCtx, svc.Name)
 				result := "success"
-				if startErr != nil {
+				switch {
+				case startErr != nil:
 					result = "error"
 					errs = append(errs, fmt.Errorf("failed to start service %q: %w", svc.Name, startErr))
+				case r.cfg.StartVerifyDelay > 0:
+					select {
+					case <-time.After(r.cfg.StartVerifyDelay):
+					case <-svcCtx.Done():
+					}
+					if postStatus, _ := svcHandler.Status(svcCtx, svc.Name); postStatus != services.Running {
+						result = "exited"
+						r.logger.Warn("service exited shortly after start",
+							"service", svc.Name,
+							"post_status", postStatus.String(),
+							"verify_delay", r.cfg.StartVerifyDelay.String(),
+						)
+					}
 				}
 				serviceOperationsTotal.WithLabelValues(nodeName, svc.Name, "start", result).Inc()
 			}
