@@ -8,7 +8,11 @@ you may not use this file except in compliance with the License.
 package common
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -63,4 +67,111 @@ func (w *Watchdog) Track(controller, name string) func() {
 	return func() {
 		w.inFlight.Delete(key)
 	}
+}
+
+// Start implements controller-runtime's manager.Runnable. Returns nil when
+// the ctx is cancelled (normal shutdown), or an error if the preflight
+// check fails.
+func (w *Watchdog) Start(ctx context.Context) error {
+	if w.cfg.StaleThreshold > 0 && w.reconcilePeriod == 0 {
+		return fmt.Errorf("watchdog.stale-threshold > 0 requires configset.reconcile-period > 0; otherwise an idle fleet false-positives")
+	}
+
+	if w.cfg.StaleThreshold == 0 && w.cfg.SlowThreshold == 0 {
+		w.logger.Info("both thresholds 0; watchdog disabled")
+		<-ctx.Done()
+		return nil
+	}
+
+	rawExit := w.exit
+	if rawExit == nil {
+		rawExit = os.Exit
+	}
+
+	// Wrap exitFn so that after it fires the ticker loop also stops — in
+	// production os.Exit terminates the process; in tests the injected func
+	// merely records the call and returns, so we need an explicit stop signal.
+	exitDone := make(chan struct{})
+	exitFn := func(code int) {
+		rawExit(code)
+		// Only reached in tests (os.Exit never returns).
+		select {
+		case <-exitDone: // already closed
+		default:
+			close(exitDone)
+		}
+	}
+
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+
+	w.logger.Info("watchdog started",
+		"stale_threshold", w.cfg.StaleThreshold.String(),
+		"slow_threshold", w.cfg.SlowThreshold.String(),
+		"interval", w.interval.String(),
+	)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-exitDone:
+			return nil
+		case <-ticker.C:
+			w.tick(exitFn)
+		}
+	}
+}
+
+// tick runs the per-interval check. The exit func is threaded through so
+// tests can capture it without touching os.Exit.
+func (w *Watchdog) tick(exitFn func(int)) {
+	now := w.now()
+
+	// Signal 1: heartbeat staleness.
+	if w.cfg.StaleThreshold > 0 {
+		hb := w.heartbeat.Load()
+		if hb != 0 {
+			since := now.Sub(time.Unix(0, hb))
+			if since > w.cfg.StaleThreshold {
+				w.logger.Error("watchdog: no reconcile entry in threshold; exiting for supervisor restart",
+					"since", since.String(),
+					"threshold", w.cfg.StaleThreshold.String(),
+				)
+				exitFn(74)
+				return
+			}
+		}
+	}
+
+	// Signal 2: in-flight slow scan. Reset the gauge each tick and rebuild
+	// from current in-flight entries — anything that resolved between ticks
+	// disappears from the gauge cleanly.
+	reconcileInFlightDuration.Reset()
+	if w.cfg.SlowThreshold == 0 {
+		return
+	}
+	w.inFlight.Range(func(k, v any) bool {
+		key := k.(string)
+		startedAt := v.(time.Time)
+		age := now.Sub(startedAt)
+		if age <= w.cfg.SlowThreshold {
+			return true
+		}
+		controller, name := splitTrackKey(key)
+		w.logger.Warn("reconcile in-flight longer than expected",
+			"controller", controller,
+			"key", name,
+			"age", age.String(),
+			"threshold", w.cfg.SlowThreshold.String(),
+		)
+		reconcileInFlightDuration.WithLabelValues(w.nodeName, controller, name).Set(age.Seconds())
+		return true
+	})
+}
+
+// splitTrackKey reverses the format used in Track: "controller/key".
+func splitTrackKey(s string) (controller, name string) {
+	controller, name, _ = strings.Cut(s, "/")
+	return controller, name
 }

@@ -30,6 +30,20 @@ func counterValue(v *prometheus.CounterVec, labels ...string) float64 {
 	return pb.GetCounter().GetValue()
 }
 
+// gaugeValue reads the float64 value of a GaugeVec series. Returns 0 when
+// the series does not exist or cannot be encoded.
+func gaugeValue(v *prometheus.GaugeVec, labels ...string) float64 {
+	m, err := v.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		return 0
+	}
+	var pb dto.Metric
+	if err := m.Write(&pb); err != nil {
+		return 0
+	}
+	return pb.GetGauge().GetValue()
+}
+
 var _ notification.Notifier = (*mockNotifier)(nil)
 
 type mockNotifier struct {
