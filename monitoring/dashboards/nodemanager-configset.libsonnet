@@ -115,7 +115,7 @@
           {
             id: 'organize',
             options: {
-              excludeByName: { Time: true, '__name__': true },
+              excludeByName: { Time: true, __name__: true },
               renameByName: {},
               indexByName: { node: 0, configset: 1, resource_version: 2, Value: 3 },
             },
