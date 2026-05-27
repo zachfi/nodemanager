@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/zachfi/nodemanager/internal/notification"
@@ -12,6 +14,21 @@ import (
 	notificationv1 "github.com/zachfi/nodemanager/pkg/notification/v1"
 	"github.com/zachfi/nodemanager/pkg/services"
 )
+
+// counterValue reads the float64 value of a CounterVec series. Returns 0 when
+// the series does not yet exist or cannot be encoded; tests that want to
+// distinguish "missing" from "zero" should check that they incremented first.
+func counterValue(v *prometheus.CounterVec, labels ...string) float64 {
+	m, err := v.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		return 0
+	}
+	var pb dto.Metric
+	if err := m.Write(&pb); err != nil {
+		return 0
+	}
+	return pb.GetCounter().GetValue()
+}
 
 var _ notification.Notifier = (*mockNotifier)(nil)
 

@@ -27,10 +27,12 @@ var (
 	}, []string{"node", "configset"})
 
 	// packageOperationsTotal counts package manager operations (install/remove/upgrade).
+	// The "package" label scopes a failure to the offending package; install/remove
+	// pass the package name, while whole-node upgrades use the sentinel "all".
 	packageOperationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "nodemanager_package_operations_total",
 		Help: "Total number of package manager operations.",
-	}, []string{"node", "operation", "result"})
+	}, []string{"node", "package", "operation", "result"})
 
 	// serviceOperationsTotal counts service manager operations (start/stop/restart/enable/disable).
 	// The "service" label scopes a runaway-restart signal to the offending daemon.
@@ -42,10 +44,12 @@ var (
 	}, []string{"node", "service", "operation", "result"})
 
 	// fileChangesTotal counts files that were changed during a ConfigSet apply.
+	// The "path" label attributes a change to the exact managed file so an operator
+	// can tell flapping (same path every reconcile) from one-off (n paths once).
 	fileChangesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "nodemanager_file_changes_total",
 		Help: "Total number of file changes applied by ConfigSet reconciliation.",
-	}, []string{"node", "configset", "result"})
+	}, []string{"node", "configset", "path", "result"})
 
 	// upgradeTotal counts node upgrade attempts.
 	upgradeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

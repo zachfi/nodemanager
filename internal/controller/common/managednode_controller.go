@@ -649,10 +649,10 @@ func (r *ManagedNodeReconciler) handleUpgrade(ctx context.Context, node *commonv
 	if err != nil {
 		upgradeDuration.WithLabelValues(node.Name).Observe(time.Since(upgradeStart).Seconds())
 		upgradeTotal.WithLabelValues(node.Name, "error").Inc()
-		packageOperationsTotal.WithLabelValues(node.Name, "upgrade", "error").Inc()
+		packageOperationsTotal.WithLabelValues(node.Name, "all", "upgrade", "error").Inc()
 		return next.Add(delay), err
 	}
-	packageOperationsTotal.WithLabelValues(node.Name, "upgrade", "success").Inc()
+	packageOperationsTotal.WithLabelValues(node.Name, "all", "upgrade", "success").Inc()
 
 	err = r.system.Node().Upgrade(ctx)
 	if err != nil {

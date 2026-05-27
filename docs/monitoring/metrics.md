@@ -26,13 +26,13 @@ Custom metrics emitted by nodemanager itself.
 | `nodemanager_configset_apply_total` | `node`, `configset`, `result` | ConfigSet apply attempts (`success` / `error`). |
 | `nodemanager_configset_apply_duration_seconds` | `node`, `configset` | How long each ConfigSet apply takes. |
 | `nodemanager_last_configset_apply_timestamp_seconds` | `node`, `configset` | Unix timestamp of the last successful apply. Used for staleness alerts. |
-| `nodemanager_file_changes_total` | `node`, `configset`, `result` | Files changed during a ConfigSet apply. |
+| `nodemanager_file_changes_total` | `node`, `configset`, `path`, `result` | Files changed during a ConfigSet apply. One series per managed `path`, so flapping (same path increments every reconcile) is distinguishable from one-off churn. |
 
 ### Packages
 
 | Metric | Labels | Description |
 |---|---|---|
-| `nodemanager_package_operations_total` | `node`, `operation`, `result` | Package manager operations. `operation` is `install`, `remove`, or `upgrade`. |
+| `nodemanager_package_operations_total` | `node`, `package`, `operation`, `result` | Package manager operations. `operation` is `install`, `remove`, or `upgrade`. `package` carries the package name for install/remove and the sentinel `"all"` for whole-node `upgrade`. |
 
 ### Services
 

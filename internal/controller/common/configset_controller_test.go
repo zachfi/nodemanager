@@ -562,4 +562,51 @@ var _ = Describe("ConfigSet Controller", func() {
 				"Status must be polled after Restart to verify the daemon stayed Running")
 		})
 	})
+
+	Context("Metric label attribution", func() {
+		ctx := context.Background()
+
+		It("threads the package name into nodemanager_package_operations_total", func() {
+			sys := &mockSystemHandler{}
+			pkgs := sys.Package().(*mockPackageHandler)
+			// List() returns this map; "vim" looks present (Ensure=absent → remove) and "git" looks absent (Ensure=installed → install).
+			pkgs.packageList = map[string]string{"vim": ""}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			packageSet := []commonv1.Package{
+				{Name: "git", Ensure: "installed"},
+				{Name: "vim", Ensure: "absent"},
+			}
+
+			Expect(r.handlePackageSet(ctx, "test-node-pkg-label", packageSet)).To(Succeed())
+			Expect(counterValue(packageOperationsTotal, "test-node-pkg-label", "git", "install", "success")).To(Equal(1.0))
+			Expect(counterValue(packageOperationsTotal, "test-node-pkg-label", "vim", "remove", "success")).To(Equal(1.0))
+		})
+
+		It("emits one nodemanager_file_changes_total series per changed path", func() {
+			sys := &mockSystemHandler{}
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			fileSet := []commonv1.File{
+				{Path: "/tmp/nm-test-a", Ensure: "file", Content: "alpha"},
+				{Path: "/tmp/nm-test-b", Ensure: "file", Content: "beta"},
+			}
+
+			node := commonv1.ManagedNode{}
+			changed, _, err := r.handleFileSet(ctx, "test-node-path-label", "cs-path-label", "default", fileSet, node)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(changed).To(ConsistOf("/tmp/nm-test-a", "/tmp/nm-test-b"))
+			Expect(counterValue(fileChangesTotal, "test-node-path-label", "cs-path-label", "/tmp/nm-test-a", "success")).To(Equal(1.0))
+			Expect(counterValue(fileChangesTotal, "test-node-path-label", "cs-path-label", "/tmp/nm-test-b", "success")).To(Equal(1.0))
+		})
+	})
 })

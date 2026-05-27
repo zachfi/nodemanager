@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -561,8 +562,7 @@ func (r *ConfigSetReconciler) removeConfigSetStatus(ctx context.Context, configS
 	configSetApplyDuration.DeleteLabelValues(nodeName, configSetName)
 	configSetApplyTotal.DeleteLabelValues(nodeName, configSetName, "success")
 	configSetApplyTotal.DeleteLabelValues(nodeName, configSetName, "error")
-	fileChangesTotal.DeleteLabelValues(nodeName, configSetName, "success")
-	fileChangesTotal.DeleteLabelValues(nodeName, configSetName, "error")
+	fileChangesTotal.DeletePartialMatch(prometheus.Labels{"node": nodeName, "configset": configSetName})
 
 	r.lastResourceVersionMu.Lock()
 	key := nodeName + "/" + configSetName
@@ -709,7 +709,7 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName str
 					result = "error"
 					errs = append(errs, installErr)
 				}
-				packageOperationsTotal.WithLabelValues(nodeName, "install", result).Inc()
+				packageOperationsTotal.WithLabelValues(nodeName, pkg.Name, "install", result).Inc()
 			}
 		case packages.Absent:
 			if _, installed := pkgs[pkg.Name]; installed {
@@ -720,7 +720,7 @@ func (r *ConfigSetReconciler) handlePackageSet(ctx context.Context, nodeName str
 					result = "error"
 					errs = append(errs, removeErr)
 				}
-				packageOperationsTotal.WithLabelValues(nodeName, "remove", result).Inc()
+				packageOperationsTotal.WithLabelValues(nodeName, pkg.Name, "remove", result).Inc()
 			}
 		default:
 			errs = append(errs, fmt.Errorf("unhandled Ensure value %q for package %q", pkg.Ensure, pkg.Name))
@@ -1168,7 +1168,9 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 		}
 	}
 
-	fileChangesTotal.WithLabelValues(nodeName, configSetName, "success").Add(float64(len(changedFiles)))
+	for _, path := range changedFiles {
+		fileChangesTotal.WithLabelValues(nodeName, configSetName, path, "success").Inc()
+	}
 
 	return changedFiles, fileBackupUpdates, errors.Join(errs...)
 }
