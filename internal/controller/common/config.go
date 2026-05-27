@@ -89,6 +89,11 @@ type ConfigSetConfig struct {
 	// reconcilePeriod for consistent convergence behaviour.  Zero means
 	// event-driven only.
 	ReconcilePeriod time.Duration `json:"reconcilePeriod,omitempty"`
+	// StartVerifyDelay is how long to wait after a Start/Restart before
+	// re-polling Status to confirm the daemon is still Running. Catches the
+	// case where rc.d / systemctl returns 0 but the daemon self-aborts on a
+	// parse error or port-bind error within ~1s. Zero disables verification.
+	StartVerifyDelay time.Duration `json:"startVerifyDelay,omitempty"`
 	// GomplatePath is propagated from ControllerConfig at startup; not a CLI flag.
 	GomplatePath string `json:"-"`
 }
@@ -96,4 +101,5 @@ type ConfigSetConfig struct {
 func (c *ConfigSetConfig) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	c.FileBucket.RegisterFlagsAndApplyDefaults(prefix+".file-bucket", f)
 	f.DurationVar(&c.ReconcilePeriod, prefix+".reconcile-period", 0, "How often to re-apply ConfigSets regardless of events (0 = event-driven only).")
+	f.DurationVar(&c.StartVerifyDelay, prefix+".start-verify-delay", 3*time.Second, "After Start/Restart, wait this long then re-poll Status to confirm the daemon stayed Running. Records result=\"exited\" if not. Zero disables verification.")
 }
