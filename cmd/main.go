@@ -247,6 +247,17 @@ func main() {
 
 	controller.SetBuildInfo(version, gitCommit, buildDate, goarch, goos)
 
+	watchdog := controller.NewWatchdog(
+		cfg.ControllerConfig.Watchdog,
+		hostname,
+		cfg.ControllerConfig.ConfigSet.ReconcilePeriod,
+		logger,
+	)
+	if err := mgr.Add(watchdog); err != nil {
+		setupLog.Error(err, "unable to add watchdog runnable")
+		os.Exit(1)
+	}
+
 	// Set up notification server if enabled; the Notifier interface is passed
 	// to reconcilers so they can gate upgrades and send backup events.
 	var notifier notification.Notifier
@@ -259,7 +270,7 @@ func main() {
 		notifier = notifServer
 	}
 
-	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker, clientset, version, notifier, nil)
+	managedNodeReconciler := controller.NewManagedNodeReconciler(client, scheme, logger, cfg.ControllerConfig.ManagedNode, sys, locker, clientset, version, notifier, watchdog)
 	if err = (managedNodeReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedNode")
 		os.Exit(1)
@@ -267,7 +278,7 @@ func main() {
 
 	cfg.ControllerConfig.ConfigSet.Namespace = cfg.ControllerConfig.Namespace
 	cfg.ControllerConfig.ConfigSet.GomplatePath = cfg.ControllerConfig.GomplatePath
-	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker, nil)
+	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker, watchdog)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")
@@ -290,7 +301,7 @@ func main() {
 		}
 
 		if cfg.ControllerConfig.FreeBSD.Poudriere.Enabled.IsEnabled(isJailed) {
-			poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys, nil)
+			poudriereReconciler := freebsd.NewPoudriereReconciler(client, scheme, logger, cfg.ControllerConfig.FreeBSD.Poudriere, sys, watchdog)
 			if err = poudriereReconciler.SetupWithManager(mgr); err != nil {
 				setupLog.Error(err, "unable to create controller", "controller", "Poudriere")
 				os.Exit(1)
@@ -300,7 +311,7 @@ func main() {
 		}
 
 		if cfg.ControllerConfig.FreeBSD.Jail.Enabled.IsEnabled(isJailed) {
-			jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys, locker, nil)
+			jailReconciler, jailErr := freebsd.NewJailReconciler(ctx, client, scheme, logger, cfg.ControllerConfig.FreeBSD.Jail, sys, locker, watchdog)
 			if jailErr != nil {
 				setupLog.Error(jailErr, "unable to create controller", "controller", "Jail")
 				os.Exit(1)
