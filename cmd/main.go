@@ -267,7 +267,7 @@ func main() {
 
 	cfg.ControllerConfig.ConfigSet.Namespace = cfg.ControllerConfig.Namespace
 	cfg.ControllerConfig.ConfigSet.GomplatePath = cfg.ControllerConfig.GomplatePath
-	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker)
+	configSetReconciler := controller.NewConfigSetReconciler(client, scheme, logger, cfg.ControllerConfig.ConfigSet, sys, locker, nil)
 
 	if err = (configSetReconciler).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ConfigSet")

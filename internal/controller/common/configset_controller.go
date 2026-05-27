@@ -73,6 +73,8 @@ type ConfigSetReconciler struct {
 	locker locker.Locker
 	cfg    ConfigSetConfig
 
+	watchdog *Watchdog
+
 	// lastResourceVersion tracks the resource_version label most recently recorded
 	// for each (node, configset) pair so stale label sets can be deleted from the
 	// configSetAppliedResourceVersion gauge.
@@ -80,7 +82,7 @@ type ConfigSetReconciler struct {
 	lastResourceVersion   map[string]string // key: "node/configset"
 }
 
-func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker) *ConfigSetReconciler {
+func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker, watchdog *Watchdog) *ConfigSetReconciler {
 	return &ConfigSetReconciler{
 		Client:              client,
 		Scheme:              scheme,
@@ -89,6 +91,7 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 		locker:              locker,
 		system:              system,
 		cfg:                 cfg,
+		watchdog:            watchdog,
 		lastResourceVersion: make(map[string]string),
 	}
 }
@@ -102,6 +105,8 @@ func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger
 // Reconcile is part of the main kubernetes reconciliation loop which aims to handle changes to a ConfigSet object.
 func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	r.logger.Debug("reconciling configset", "configset", req.Name)
+
+	defer r.watchdog.Track("controller.common.configset", req.NamespacedName.String())()
 
 	// Prevent a single stuck reconcile from blocking the worker indefinitely.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
