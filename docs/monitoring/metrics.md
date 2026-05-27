@@ -40,6 +40,12 @@ Custom metrics emitted by nodemanager itself.
 |---|---|---|
 | `nodemanager_service_operations_total` | `node`, `service`, `operation`, `result` | Service manager operations. `operation` is `start`, `stop`, `restart`, `enable`, or `disable`. `result` is `success`, `error`, or `exited` (start/restart only — daemon exited within `StartVerifyDelay` of the call). |
 
+### Agent health
+
+| Metric | Labels | Description |
+|---|---|---|
+| `nodemanager_reconcile_in_flight_duration_seconds` | `node`, `controller`, `key` | Age (seconds) of an in-flight Reconcile that has exceeded `watchdog.slow-threshold`. Empty in steady state; bounded handful of series during incidents. Reset and rebuilt on every watchdog tick (~1m). |
+
 ### Jails (FreeBSD)
 
 | Metric | Labels | Description |
