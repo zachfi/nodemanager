@@ -903,9 +903,23 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 		restartHandler := withUserContext(handler, restartCtx)
 		err = restartHandler.Restart(restartCtx, restart)
 		result := "success"
-		if err != nil {
+		switch {
+		case err != nil:
 			result = "error"
 			restartSpan.SetStatus(codes.Error, err.Error())
+		case r.cfg.StartVerifyDelay > 0:
+			select {
+			case <-time.After(r.cfg.StartVerifyDelay):
+			case <-restartCtx.Done():
+			}
+			if postStatus, _ := restartHandler.Status(restartCtx, restart); postStatus != services.Running {
+				result = "exited"
+				r.logger.Warn("service exited shortly after restart",
+					"service", restart,
+					"post_status", postStatus.String(),
+					"verify_delay", r.cfg.StartVerifyDelay.String(),
+				)
+			}
 		}
 		serviceOperationsTotal.WithLabelValues(nodeName, restart, "restart", result).Inc()
 		if err != nil {

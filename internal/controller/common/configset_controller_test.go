@@ -528,5 +528,38 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(svc.statusCalls["badd"]).To(Equal(1),
 				"with StartVerifyDelay=0, only the pre-Start status check should happen")
 		})
+
+		It("records result=exited on Restart when the daemon is not Running afterward", func() {
+			sys := &mockSystemHandler{}
+			svc := sys.Service().(*mockServiceHandler)
+			// Pre-Restart status is Running (so the inline-Start branch is NOT taken;
+			// the restart path is exercised via changedFiles intersecting SubscribeFiles).
+			// After Restart returns, the daemon is Stopped — simulating the broken-config case.
+			svc.serviceStatus = map[string]services.ServiceStatus{"badd": services.Running}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+				cfg:    ConfigSetConfig{StartVerifyDelay: 5 * time.Millisecond},
+				locker: &noopLocker{},
+			}
+
+			svcs := []commonv1.Service{
+				{Name: "badd", Enable: true, Ensure: "running", SusbscribeFiles: []string{"/etc/badd.conf"}},
+			}
+
+			// Mock Restart sets status to Stopped via the test hook below.
+			svc.onRestart = func(_ context.Context, name string) {
+				svc.serviceStatus[name] = services.Stopped
+			}
+
+			err := r.handleServiceSet(ctx, "test-node", "default", svcs, nil, []string{"/etc/badd.conf"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(svc.restartCalls).To(HaveKeyWithValue("badd", 1))
+			// Status calls: 1 pre-loop check (line 826) + 1 post-Restart verify = 2.
+			Expect(svc.statusCalls["badd"]).To(BeNumerically(">=", 2),
+				"Status must be polled after Restart to verify the daemon stayed Running")
+		})
 	})
 })

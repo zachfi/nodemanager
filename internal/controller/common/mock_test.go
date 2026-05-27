@@ -2,9 +2,13 @@ package common
 
 import (
 	"context"
+	"time"
+
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/zachfi/nodemanager/internal/notification"
 	"github.com/zachfi/nodemanager/pkg/handler"
+	"github.com/zachfi/nodemanager/pkg/locker"
 	notificationv1 "github.com/zachfi/nodemanager/pkg/notification/v1"
 	"github.com/zachfi/nodemanager/pkg/services"
 )
@@ -100,6 +104,11 @@ type mockServiceHandler struct {
 	daemonReloadCalls int
 
 	serviceStatus map[string]services.ServiceStatus // Simulated service status
+
+	// onRestart, when non-nil, is invoked from Restart() before it returns.
+	// Tests use this to mutate serviceStatus, simulating a daemon that exits
+	// immediately after a successful Restart returns.
+	onRestart func(ctx context.Context, service string)
 }
 
 func (m *mockServiceHandler) Start(ctx context.Context, service string) error {
@@ -125,8 +134,10 @@ func (m *mockServiceHandler) Restart(ctx context.Context, service string) error 
 		m.restartCalls = make(map[string]int)
 	}
 	m.restartCalls[service]++
-	// Simulate restarting the service
-	return nil // Return nil to indicate success
+	if m.onRestart != nil {
+		m.onRestart(ctx, service)
+	}
+	return nil
 }
 
 func (m *mockServiceHandler) Status(ctx context.Context, service string) (services.ServiceStatus, error) {
@@ -339,3 +350,16 @@ func (m *mockExecHandler) SimpleRunCommand(ctx context.Context, command string, 
 func (m *mockExecHandler) RunCommandWithInput(ctx context.Context, stdin string, command string, arg ...string) (string, int, error) {
 	return m.RunCommand(ctx, command, arg...)
 }
+
+// noopLocker is a no-op implementation of the locker.Locker interface for use in unit tests
+// that do not exercise distributed locking.
+type noopLocker struct{}
+
+var _ locker.Locker = (*noopLocker)(nil)
+
+func (noopLocker) Lock(_ context.Context, _ types.NamespacedName) error { return nil }
+func (noopLocker) LockFor(_ context.Context, _ types.NamespacedName, _ time.Duration) error {
+	return nil
+}
+func (noopLocker) Unlock(_ context.Context, _ types.NamespacedName) error { return nil }
+func (noopLocker) Locked(_ context.Context, _ types.NamespacedName) bool  { return false }
