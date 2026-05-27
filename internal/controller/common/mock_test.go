@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,20 +29,6 @@ func counterValue(v *prometheus.CounterVec, labels ...string) float64 {
 		return 0
 	}
 	return pb.GetCounter().GetValue()
-}
-
-// gaugeValue reads the float64 value of a GaugeVec series. Returns 0 when
-// the series does not exist or cannot be encoded.
-func gaugeValue(v *prometheus.GaugeVec, labels ...string) float64 {
-	m, err := v.GetMetricWithLabelValues(labels...)
-	if err != nil {
-		return 0
-	}
-	var pb dto.Metric
-	if err := m.Write(&pb); err != nil {
-		return 0
-	}
-	return pb.GetGauge().GetValue()
 }
 
 var _ notification.Notifier = (*mockNotifier)(nil)
@@ -356,21 +343,31 @@ func (m *mockNodeHandler) Hostname() (string, error) {
 	return m.hostname, nil // Return the simulated hostname
 }
 
+// execResponse is the simulated result of a single mockExecHandler.RunCommand
+// invocation, keyed by filepath.Base of the command.
+type execResponse struct {
+	Output string
+	Exit   int
+	Err    error
+}
+
 // mockExecHandler implements the ExecHandler interface for testing.
 type mockExecHandler struct {
-	execCalls map[string]int
+	runCommandCalls map[string]int
+	// responses[basename] returns the canned response for that command.
+	// Default (zero-value) means {Output:"", Exit:0, Err:nil}.
+	responses map[string]execResponse
 }
 
 func (m *mockExecHandler) RunCommand(ctx context.Context, command string, arg ...string) (string, int, error) {
-	if m.execCalls == nil {
-		m.execCalls = make(map[string]int)
+	if m.runCommandCalls == nil {
+		m.runCommandCalls = make(map[string]int)
 	}
-	// TODO: record the command and its arguments
-
-	m.execCalls[command]++
-
-	// Simulate command execution
-	return "output", 0, nil // Return simulated output and exit code
+	m.runCommandCalls[command]++
+	if r, ok := m.responses[filepath.Base(command)]; ok {
+		return r.Output, r.Exit, r.Err
+	}
+	return "", 0, nil
 }
 
 func (m *mockExecHandler) SimpleRunCommand(ctx context.Context, command string, arg ...string) error {

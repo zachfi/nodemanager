@@ -609,4 +609,100 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(counterValue(fileChangesTotal, "test-node-path-label", "cs-path-label", "/tmp/nm-test-b", "success")).To(Equal(1.0))
 		})
 	})
+
+	Context("Exec validator gate", func() {
+		ctx := context.Background()
+
+		It("runs the exec body when the validator passes", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			execs := []commonv1.Exec{{
+				Command:         "/usr/local/sbin/bgpd-preflight.sh",
+				SusbscribeFiles: []string{"/etc/bgpd.conf"},
+				Validate: &commonv1.Validate{
+					Command: "bgpd",
+					Args:    []string{"-nf", "/etc/bgpd.conf"},
+				},
+			}}
+
+			err := r.handleExecutions(ctx, "test-node", execs, []string{"/etc/bgpd.conf"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(exe.runCommandCalls).To(HaveKey("bgpd"))
+			Expect(exe.runCommandCalls).To(HaveKey("/usr/local/sbin/bgpd-preflight.sh"))
+		})
+
+		It("skips the body when the validator fails (rollback)", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+			exe.responses = map[string]execResponse{
+				"bgpd": {Output: "bgpd: parse error at line 4\n", Exit: 1, Err: nil},
+			}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			execs := []commonv1.Exec{{
+				Command:         "/usr/local/sbin/bgpd-preflight.sh",
+				SusbscribeFiles: []string{"/etc/bgpd.conf"},
+				Validate: &commonv1.Validate{
+					Command:   "bgpd",
+					Args:      []string{"-nf", "/etc/bgpd.conf"},
+					OnFailure: "rollback",
+				},
+			}}
+
+			err := r.handleExecutions(ctx, "test-node", execs, []string{"/etc/bgpd.conf"})
+			Expect(err).NotTo(HaveOccurred(), "rollback must not return an error")
+			Expect(exe.runCommandCalls).To(HaveKey("bgpd"))
+			Expect(exe.runCommandCalls).NotTo(HaveKey("/usr/local/sbin/bgpd-preflight.sh"),
+				"body must NOT run when validator fails with rollback")
+			Expect(counterValue(execOperationsTotal, "test-node", "bgpd-preflight.sh", "validate_failed")).To(Equal(1.0))
+		})
+
+		It("halts further execs when validator fails with abort", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+			exe.responses = map[string]execResponse{
+				"bgpd": {Output: "parse error\n", Exit: 1, Err: nil},
+			}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			execs := []commonv1.Exec{
+				{
+					Command:         "/usr/local/sbin/bgpd-preflight.sh",
+					SusbscribeFiles: []string{"/etc/bgpd.conf"},
+					Validate: &commonv1.Validate{
+						Command:   "bgpd",
+						Args:      []string{"-nf", "/etc/bgpd.conf"},
+						OnFailure: "abort",
+					},
+				},
+				{
+					Command:         "/bin/echo",
+					Args:            []string{"second"},
+					SusbscribeFiles: []string{"/etc/bgpd.conf"},
+				},
+			}
+
+			err := r.handleExecutions(ctx, "test-node", execs, []string{"/etc/bgpd.conf"})
+			Expect(err).To(HaveOccurred())
+			Expect(exe.runCommandCalls).NotTo(HaveKey("/bin/echo"),
+				"second exec must NOT run after abort")
+		})
+	})
 })

@@ -27,6 +27,7 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -224,7 +225,7 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	r.logger.Debug("services handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "err", svcErr)
 
 	phaseStart = time.Now()
-	execErr = r.handleExecutions(ctx, configSet.Spec.Executions, changedFiles)
+	execErr = r.handleExecutions(ctx, nodeName, configSet.Spec.Executions, changedFiles)
 	r.logger.Debug("executions handled", "configset", configSet.Name, "duration", time.Since(phaseStart), "err", execErr)
 
 	err = errors.Join(pkgErr, fileErr, svcErr, execErr)
@@ -1180,11 +1181,11 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 	return changedFiles, fileBackupUpdates, errors.Join(errs...)
 }
 
-func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet []commonv1.Exec, changedFiles []string) error {
+func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, nodeName string, serviceSet []commonv1.Exec, changedFiles []string) error {
 	ctx, span := r.tracer.Start(ctx, "handleExecutions")
 	defer span.End()
 
-	handler := r.system.Exec()
+	execer := r.system.Exec()
 
 	var totalErrs error
 	var runExec []commonv1.Exec
@@ -1200,11 +1201,34 @@ func (r *ConfigSetReconciler) handleExecutions(ctx context.Context, serviceSet [
 	}
 
 	for _, exe := range runExec {
-		_, _, err := handler.RunCommand(ctx, exe.Command, exe.Args...)
-		r.logger.Info("running exec", "command", exe.Command)
-		if err != nil {
-			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
+		cmdLabel := filepath.Base(exe.Command)
+
+		if exe.Validate != nil {
+			output, exit, validateErr := runValidator(ctx, execer, exe.Validate, "", "")
+			if exit != 0 || validateErr != nil {
+				r.logger.Warn("exec validator failed",
+					"command", exe.Command,
+					"validator", exe.Validate.Command,
+					"exit", exit,
+					"stderr", lastKB(output),
+					"err", validateErr,
+				)
+				execOperationsTotal.WithLabelValues(nodeName, cmdLabel, "validate_failed").Inc()
+				if exe.Validate.Abort() {
+					return fmt.Errorf("validator aborted exec %q: exit=%d", exe.Command, exit)
+				}
+				continue
+			}
 		}
+
+		r.logger.Info("running exec", "command", exe.Command)
+		_, _, err := execer.RunCommand(ctx, exe.Command, exe.Args...)
+		if err != nil {
+			execOperationsTotal.WithLabelValues(nodeName, cmdLabel, "error").Inc()
+			totalErrs = fmt.Errorf("%w: %s", totalErrs, err.Error())
+			continue
+		}
+		execOperationsTotal.WithLabelValues(nodeName, cmdLabel, "success").Inc()
 	}
 
 	return totalErrs
