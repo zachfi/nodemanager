@@ -33,10 +33,13 @@ var (
 	}, []string{"node", "operation", "result"})
 
 	// serviceOperationsTotal counts service manager operations (start/stop/restart/enable/disable).
+	// The "service" label scopes a runaway-restart signal to the offending daemon.
+	// Per-node cardinality is bounded by distinct service names on that node;
+	// across the fleet today the ceiling is ~30 distinct names.
 	serviceOperationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "nodemanager_service_operations_total",
 		Help: "Total number of service manager operations.",
-	}, []string{"node", "operation", "result"})
+	}, []string{"node", "service", "operation", "result"})
 
 	// fileChangesTotal counts files that were changed during a ConfigSet apply.
 	fileChangesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

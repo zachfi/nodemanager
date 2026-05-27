@@ -805,7 +805,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 					result = "error"
 					errs = append(errs, fmt.Errorf("failed to enable service %q: %w", svc.Name, enableErr))
 				}
-				serviceOperationsTotal.WithLabelValues(nodeName, "enable", result).Inc()
+				serviceOperationsTotal.WithLabelValues(nodeName, svc.Name, "enable", result).Inc()
 			} else {
 				disableErr := svcHandler.Disable(svcCtx, svc.Name)
 				result := "success"
@@ -813,7 +813,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 					result = "error"
 					errs = append(errs, fmt.Errorf("failed to disable service %q: %w", svc.Name, disableErr))
 				}
-				serviceOperationsTotal.WithLabelValues(nodeName, "disable", result).Inc()
+				serviceOperationsTotal.WithLabelValues(nodeName, svc.Name, "disable", result).Inc()
 			}
 
 			if svc.Arguments != "" {
@@ -835,7 +835,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 					result = "error"
 					errs = append(errs, fmt.Errorf("failed to start service %q: %w", svc.Name, startErr))
 				}
-				serviceOperationsTotal.WithLabelValues(nodeName, "start", result).Inc()
+				serviceOperationsTotal.WithLabelValues(nodeName, svc.Name, "start", result).Inc()
 			}
 		case services.Stopped:
 			if status != services.Stopped {
@@ -845,7 +845,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 					result = "error"
 					errs = append(errs, fmt.Errorf("failed to stop service %q: %w", svc.Name, stopErr))
 				}
-				serviceOperationsTotal.WithLabelValues(nodeName, "stop", result).Inc()
+				serviceOperationsTotal.WithLabelValues(nodeName, svc.Name, "stop", result).Inc()
 			}
 		}
 	}
@@ -893,7 +893,7 @@ func (r *ConfigSetReconciler) handleServiceSet(ctx context.Context, nodeName str
 			result = "error"
 			restartSpan.SetStatus(codes.Error, err.Error())
 		}
-		serviceOperationsTotal.WithLabelValues(nodeName, "restart", result).Inc()
+		serviceOperationsTotal.WithLabelValues(nodeName, restart, "restart", result).Inc()
 		if err != nil {
 			return fmt.Errorf("failed to restart service %q: %w", restart, err)
 		}

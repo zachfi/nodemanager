@@ -38,7 +38,7 @@ Custom metrics emitted by nodemanager itself.
 
 | Metric | Labels | Description |
 |---|---|---|
-| `nodemanager_service_operations_total` | `node`, `operation`, `result` | Service manager operations. `operation` is `start`, `stop`, `restart`, `enable`, or `disable`. |
+| `nodemanager_service_operations_total` | `node`, `service`, `operation`, `result` | Service manager operations. `operation` is `start`, `stop`, `restart`, `enable`, or `disable`. `result` is `success`, `error`, or `exited` (start/restart only — daemon exited within `StartVerifyDelay` of the call). |
 
 ### Jails (FreeBSD)
 
