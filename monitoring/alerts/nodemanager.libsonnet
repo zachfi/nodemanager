@@ -234,6 +234,43 @@
       },
     },
 
+    // ── Agent health (watchdog) ──────────────────────────────────────────────
+
+    {
+      alert: 'NodeManagerReconcileStuck',
+      expr: |||
+        nodemanager_reconcile_in_flight_duration_seconds > 0
+      |||,
+      'for': '5m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'reconcile stuck on {{ $labels.node }} ({{ $labels.controller }} / {{ $labels.key }}).',
+        description: |||
+          A reconcile in controller {{ $labels.controller }} for {{ $labels.key }} has
+          been in-flight on {{ $labels.node }} for {{ $value | humanizeDuration }}.
+          Likely an uncancellable syscall, deadlock, or upstream service hang.
+          Before restarting: capture goroutine dump via /debug/pprof/goroutine?debug=2.
+        |||,
+      },
+    },
+
+    {
+      alert: 'NodeManagerAgentRestartLoop',
+      expr: |||
+        changes(process_start_time_seconds{job=~".*nodemanager.*"}[30m]) > 3
+      |||,
+      'for': '5m',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'nodemanager on {{ $labels.instance }} has restarted >3 times in 30 minutes.',
+        description: |||
+          Likely the watchdog firing (exit code 74 — check supervisor logs for
+          "watchdog: stale; exiting"). Investigate why Reconcile is not running:
+          controller-runtime reflector health, apiserver connectivity, agent kubeconfig.
+        |||,
+      },
+    },
+
     // ── Poudriere build metrics (FreeBSD) ────────────────────────────────────
 
     {
