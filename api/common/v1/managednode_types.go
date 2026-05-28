@@ -69,6 +69,9 @@ type ConfigSetApplyStatus struct {
 	// ConfigSet, e.g. ["file:/etc/nginx/nginx.conf (also in configset \"web-base\")"].
 	// When non-empty, this ConfigSet was not applied on this reconcile.
 	Conflicts []string `json:"conflicts,omitempty"`
+	// Conditions records observed states like ValidationFailed when one or more
+	// validators failed during the last apply. Cleared on the next clean reconcile.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // WireGuardInterface holds the identity information for a WireGuard interface

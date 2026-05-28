@@ -1017,6 +1017,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 	changedFiles := make([]string, 0, len(fileSet))
 	fileBackupUpdates := make(map[string]string)
 	var errs []error
+	var validationFailures []string
 
 	for _, file := range fileSet {
 		switch files.FileEnsureFromString(file.Ensure) {
@@ -1051,8 +1052,10 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 				if writeErr != nil {
 					var verr *validationErr
 					if errors.As(writeErr, &verr) {
+						validationFailures = append(validationFailures, verr.Path)
 						if verr.Abort {
 							errs = append(errs, writeErr)
+							r.setValidationFailedCondition(ctx, nodeName, configSetName, validationFailures)
 							return changedFiles, fileBackupUpdates, errors.Join(errs...)
 						}
 						r.logger.Info("validation failed; skipping file (rollback)",
@@ -1208,6 +1211,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 		fileChangesTotal.WithLabelValues(nodeName, configSetName, path, "success").Inc()
 	}
 
+	r.setValidationFailedCondition(ctx, nodeName, configSetName, validationFailures)
 	return changedFiles, fileBackupUpdates, errors.Join(errs...)
 }
 
@@ -1521,6 +1525,70 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, configSetNam
 	}
 
 	return true, backupHash, nil
+}
+
+// setValidationFailedCondition records a Ready=False ValidationFailed condition
+// for the given ConfigSet on the local ManagedNode's status. Cleared (not set)
+// on the next reconcile if no validator fails. Failure to write the status
+// update is logged WARN but does not gate the apply result.
+func (r *ConfigSetReconciler) setValidationFailedCondition(ctx context.Context, nodeName, configSetName string, failedPaths []string) {
+	if len(failedPaths) == 0 {
+		return
+	}
+	if r.Client == nil {
+		return
+	}
+	var node commonv1.ManagedNode
+	if err := r.Get(ctx, client.ObjectKey{Name: nodeName, Namespace: r.cfg.Namespace}, &node); err != nil {
+		r.logger.Warn("failed to fetch ManagedNode to set ValidationFailed condition",
+			"node", nodeName,
+			"configset", configSetName,
+			"err", err,
+		)
+		return
+	}
+
+	// Find or create the per-ConfigSet entry.
+	var entry *commonv1.ConfigSetApplyStatus
+	for i := range node.Status.ConfigSets {
+		if node.Status.ConfigSets[i].Name == configSetName {
+			entry = &node.Status.ConfigSets[i]
+			break
+		}
+	}
+	if entry == nil {
+		node.Status.ConfigSets = append(node.Status.ConfigSets, commonv1.ConfigSetApplyStatus{Name: configSetName})
+		entry = &node.Status.ConfigSets[len(node.Status.ConfigSets)-1]
+	}
+
+	cond := metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionFalse,
+		Reason:             "ValidationFailed",
+		Message:            fmt.Sprintf("validation failed for %d file(s): %s", len(failedPaths), strings.Join(failedPaths, ", ")),
+		LastTransitionTime: metav1.Now(),
+	}
+
+	// Replace any existing Ready condition rather than appending duplicates.
+	replaced := false
+	for i := range entry.Conditions {
+		if entry.Conditions[i].Type == "Ready" {
+			entry.Conditions[i] = cond
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		entry.Conditions = append(entry.Conditions, cond)
+	}
+
+	if err := r.Status().Update(ctx, &node); err != nil {
+		r.logger.Warn("failed to update ManagedNode status with ValidationFailed condition",
+			"node", nodeName,
+			"configset", configSetName,
+			"err", err,
+		)
+	}
 }
 
 // recordResourceVersion sets configSetAppliedResourceVersion for the given
