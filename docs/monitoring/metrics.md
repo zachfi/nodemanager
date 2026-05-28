@@ -26,7 +26,7 @@ Custom metrics emitted by nodemanager itself.
 | `nodemanager_configset_apply_total` | `node`, `configset`, `result` | ConfigSet apply attempts (`success` / `error`). |
 | `nodemanager_configset_apply_duration_seconds` | `node`, `configset` | How long each ConfigSet apply takes. |
 | `nodemanager_last_configset_apply_timestamp_seconds` | `node`, `configset` | Unix timestamp of the last successful apply. Used for staleness alerts. |
-| `nodemanager_file_changes_total` | `node`, `configset`, `path`, `result` | Files changed during a ConfigSet apply. One series per managed `path`, so flapping (same path increments every reconcile) is distinguishable from one-off churn. |
+| `nodemanager_file_changes_total` | `node`, `configset`, `path`, `result` | Files changed during a ConfigSet apply. One series per managed `path`, so flapping (same path increments every reconcile) is distinguishable from one-off churn. `result` ∈ `success`, `error`, `validate_failed` (preflight validator returned non-zero — target was not modified). |
 
 ### Packages
 
@@ -39,6 +39,12 @@ Custom metrics emitted by nodemanager itself.
 | Metric | Labels | Description |
 |---|---|---|
 | `nodemanager_service_operations_total` | `node`, `service`, `operation`, `result` | Service manager operations. `operation` is `start`, `stop`, `restart`, `enable`, or `disable`. `result` is `success`, `error`, or `exited` (start/restart only — daemon exited within `StartVerifyDelay` of the call). |
+
+### Execs
+
+| Metric | Labels | Description |
+|---|---|---|
+| `nodemanager_exec_operations_total` | `node`, `command`, `result` | ConfigSet Exec runs. `command` is `filepath.Base(exe.Command)`. `result` ∈ `success`, `error`, `validate_failed` (preflight validator returned non-zero — body did not run). |
 
 ### Agent health
 
