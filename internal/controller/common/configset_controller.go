@@ -64,6 +64,25 @@ import (
 	"github.com/zachfi/nodemanager/pkg/services/systemd"
 )
 
+// validationErr is returned by writeFileContent when a Validate gate trips.
+// handleFileSet uses errors.As to detect it and decide whether to add the
+// file's path to changedFiles (no — validation failed) and whether to halt
+// the rest of the ConfigSet apply (yes if Abort is set).
+type validationErr struct {
+	Path  string
+	Abort bool
+	Inner error
+}
+
+func (e *validationErr) Error() string {
+	if e.Inner != nil {
+		return fmt.Sprintf("validation failed for %s: %v", e.Path, e.Inner)
+	}
+	return fmt.Sprintf("validation failed for %s", e.Path)
+}
+
+func (e *validationErr) Unwrap() error { return e.Inner }
+
 // ConfigSetReconciler reconciles a ConfigSet object
 type ConfigSetReconciler struct {
 	client.Client
@@ -1028,7 +1047,7 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 					}
 				}
 
-				changed, backupHash, writeErr := r.writeFileContent(ctx, file, handler)
+				changed, backupHash, writeErr := r.writeFileContent(ctx, configSetName, file, handler)
 				if writeErr != nil {
 					errs = append(errs, writeErr)
 					continue
@@ -1380,7 +1399,9 @@ func (r *ConfigSetReconciler) updateLastGCTimestamp(ctx context.Context, node co
 // writeFileContent is responsible for ensuring a file on disk matches the desired state.
 // It returns whether anything changed, the SHA256 hash of any pre-write backup (empty
 // string if no backup was taken), and any error.
-func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv1.File, handler handler.FileHandler) (changed bool, backupHash string, err error) {
+// When file.Validate is non-nil the new content is written to an adjacent temp file,
+// the validator runs, and only on pass do we apply Chown/SetMode and rename into place.
+func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, configSetName string, file commonv1.File, fhandler handler.FileHandler) (changed bool, backupHash string, err error) {
 	// Filebucket: back up the existing file before overwriting it.
 	if r.cfg.FileBucket.Enabled {
 		info, statErr := os.Stat(file.Path)
@@ -1410,26 +1431,85 @@ func (r *ConfigSetReconciler) writeFileContent(ctx context.Context, file commonv
 		}
 	}
 
-	var contentChanged, ownerChanged, modeChanged bool
+	// Fast path: no validator → direct write/chown/setmode.
+	if file.Validate == nil {
+		var contentChanged, ownerChanged, modeChanged bool
 
-	contentChanged, err = handler.WriteContentFile(ctx, file.Path, []byte(file.Content))
-	if err != nil {
-		return false, backupHash, fmt.Errorf("failed to write content to file: %w", err)
-	}
-
-	ownerChanged, err = handler.Chown(ctx, file.Path, file.Owner, file.Group)
-	if err != nil {
-		return true, backupHash, fmt.Errorf("failed to chown file: %w", err)
-	}
-
-	if file.Mode != "" {
-		modeChanged, err = handler.SetMode(ctx, file.Path, file.Mode)
+		contentChanged, err = fhandler.WriteContentFile(ctx, file.Path, []byte(file.Content))
 		if err != nil {
-			return true, backupHash, fmt.Errorf("failed to set file mode: %w", err)
+			return false, backupHash, fmt.Errorf("failed to write content to file: %w", err)
+		}
+
+		ownerChanged, err = fhandler.Chown(ctx, file.Path, file.Owner, file.Group)
+		if err != nil {
+			return true, backupHash, fmt.Errorf("failed to chown file: %w", err)
+		}
+
+		if file.Mode != "" {
+			modeChanged, err = fhandler.SetMode(ctx, file.Path, file.Mode)
+			if err != nil {
+				return true, backupHash, fmt.Errorf("failed to set file mode: %w", err)
+			}
+		}
+
+		return contentChanged || ownerChanged || modeChanged, backupHash, nil
+	}
+
+	// Staged path: validator configured. Adjacent temp, validate, then rename.
+	dir := filepath.Dir(file.Path)
+	base := filepath.Base(file.Path)
+	tempFile, tempErr := os.CreateTemp(dir, base+".nm-staged-")
+	if tempErr != nil {
+		return false, backupHash, fmt.Errorf("failed to create staged temp file: %w", tempErr)
+	}
+	tempPath := tempFile.Name()
+	_ = tempFile.Close()
+	cleanup := func() {
+		_ = os.Remove(tempPath)
+	}
+
+	if _, writeErr := fhandler.WriteContentFile(ctx, tempPath, []byte(file.Content)); writeErr != nil {
+		cleanup()
+		return false, backupHash, fmt.Errorf("failed to write content to staged temp: %w", writeErr)
+	}
+
+	output, exit, runErr := runValidator(ctx, r.system.Exec(), file.Validate, tempPath, file.Path)
+	if exit != 0 || runErr != nil {
+		cleanup()
+		r.logger.Warn("validator failed",
+			"path", file.Path,
+			"validator", file.Validate.Command,
+			"exit", exit,
+			"stderr", lastKB(output),
+			"err", runErr,
+		)
+		nodeName, _ := r.system.Node().Hostname()
+		fileChangesTotal.WithLabelValues(nodeName, configSetName, file.Path, "validate_failed").Inc()
+		return false, backupHash, &validationErr{
+			Path:  file.Path,
+			Abort: file.Validate.Abort(),
+			Inner: runErr,
 		}
 	}
 
-	return contentChanged || ownerChanged || modeChanged, backupHash, nil
+	if _, chownErr := fhandler.Chown(ctx, tempPath, file.Owner, file.Group); chownErr != nil {
+		cleanup()
+		return false, backupHash, fmt.Errorf("failed to chown staged temp: %w", chownErr)
+	}
+
+	if file.Mode != "" {
+		if _, modeErr := fhandler.SetMode(ctx, tempPath, file.Mode); modeErr != nil {
+			cleanup()
+			return false, backupHash, fmt.Errorf("failed to set mode on staged temp: %w", modeErr)
+		}
+	}
+
+	if renameErr := os.Rename(tempPath, file.Path); renameErr != nil {
+		cleanup()
+		return false, backupHash, fmt.Errorf("failed to rename staged temp into target: %w", renameErr)
+	}
+
+	return true, backupHash, nil
 }
 
 // recordResourceVersion sets configSetAppliedResourceVersion for the given

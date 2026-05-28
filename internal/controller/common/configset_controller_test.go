@@ -18,6 +18,7 @@ package common
 
 import (
 	"context"
+	stderrors "errors"
 	"log/slog"
 	"os"
 	"time"
@@ -703,6 +704,99 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(exe.runCommandCalls).NotTo(HaveKey("/bin/echo"),
 				"second exec must NOT run after abort")
+		})
+	})
+
+	Context("File validator gate", func() {
+		ctx := context.Background()
+
+		It("renames the temp into the target when the validator passes", func() {
+			sys := &mockSystemHandler{}
+			fil := sys.File().(*mockFileHandler)
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			f := commonv1.File{
+				Path:    "/tmp/nm-validate-pass",
+				Ensure:  "file",
+				Content: "good content",
+				Validate: &commonv1.Validate{
+					Command: "/bin/true",
+				},
+			}
+
+			changed, _, err := r.writeFileContent(ctx, "test-cs", f, sys.File())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(changed).To(BeTrue())
+			Expect(fil.fileWriteCalls).NotTo(BeEmpty(),
+				"WriteContentFile must be called at least once during the staged flow")
+		})
+
+		It("leaves the target untouched when the validator fails (rollback)", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+			exe.responses = map[string]execResponse{
+				"nsd-checkzone": {Output: "bad zone\n", Exit: 1, Err: nil},
+			}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			f := commonv1.File{
+				Path:    "/tmp/nm-validate-fail",
+				Ensure:  "file",
+				Content: "broken zone",
+				Validate: &commonv1.Validate{
+					Command:   "nsd-checkzone",
+					Args:      []string{"znet", "${STAGED}"},
+					OnFailure: "rollback",
+				},
+			}
+
+			changed, _, err := r.writeFileContent(ctx, "test-cs", f, sys.File())
+			Expect(err).To(HaveOccurred())
+			var verr *validationErr
+			Expect(stderrors.As(err, &verr)).To(BeTrue(), "error must be *validationErr")
+			Expect(verr.Abort).To(BeFalse())
+			Expect(changed).To(BeFalse())
+		})
+
+		It("propagates an abort error when OnFailure=abort", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+			exe.responses = map[string]execResponse{
+				"nsd-checkzone": {Output: "bad zone\n", Exit: 1, Err: nil},
+			}
+
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			f := commonv1.File{
+				Path:    "/tmp/nm-validate-abort",
+				Ensure:  "file",
+				Content: "broken zone",
+				Validate: &commonv1.Validate{
+					Command:   "nsd-checkzone",
+					Args:      []string{"znet", "${STAGED}"},
+					OnFailure: "abort",
+				},
+			}
+
+			_, _, err := r.writeFileContent(ctx, "test-cs", f, sys.File())
+			Expect(err).To(HaveOccurred())
+			var verr *validationErr
+			Expect(stderrors.As(err, &verr)).To(BeTrue())
+			Expect(verr.Abort).To(BeTrue())
 		})
 	})
 })
