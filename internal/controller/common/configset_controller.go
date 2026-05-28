@@ -1049,6 +1049,17 @@ func (r *ConfigSetReconciler) handleFileSet(ctx context.Context, nodeName string
 
 				changed, backupHash, writeErr := r.writeFileContent(ctx, configSetName, file, handler)
 				if writeErr != nil {
+					var verr *validationErr
+					if errors.As(writeErr, &verr) {
+						if verr.Abort {
+							errs = append(errs, writeErr)
+							return changedFiles, fileBackupUpdates, errors.Join(errs...)
+						}
+						r.logger.Info("validation failed; skipping file (rollback)",
+							"path", file.Path,
+						)
+						continue
+					}
 					errs = append(errs, writeErr)
 					continue
 				}

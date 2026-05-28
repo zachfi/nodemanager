@@ -798,5 +798,71 @@ var _ = Describe("ConfigSet Controller", func() {
 			Expect(stderrors.As(err, &verr)).To(BeTrue())
 			Expect(verr.Abort).To(BeTrue())
 		})
+
+		It("does not add the path to changedFiles on rollback (subscribers not notified)", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+			exe.responses = map[string]execResponse{
+				"nsd-checkzone": {Output: "bad\n", Exit: 1, Err: nil},
+			}
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			files := []commonv1.File{{
+				Path:    "/tmp/nm-rollback.zone",
+				Ensure:  "file",
+				Content: "broken",
+				Validate: &commonv1.Validate{
+					Command:   "nsd-checkzone",
+					Args:      []string{"z", "${STAGED}"},
+					OnFailure: "rollback",
+				},
+			}}
+
+			changed, _, err := r.handleFileSet(ctx, "test-node", "test-cs", "default", files, commonv1.ManagedNode{})
+			Expect(err).NotTo(HaveOccurred(), "rollback must not propagate")
+			Expect(changed).To(BeEmpty(), "rollback must not add path to changedFiles")
+		})
+
+		It("aborts the file set when OnFailure=abort", func() {
+			sys := &mockSystemHandler{}
+			exe := sys.Exec().(*mockExecHandler)
+			exe.responses = map[string]execResponse{
+				"nsd-checkzone": {Output: "bad\n", Exit: 1, Err: nil},
+			}
+			r := &ConfigSetReconciler{
+				tracer: noop.NewTracerProvider().Tracer("test"),
+				logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{})),
+				system: sys,
+			}
+
+			files := []commonv1.File{
+				{
+					Path:    "/tmp/nm-abort.zone",
+					Ensure:  "file",
+					Content: "broken",
+					Validate: &commonv1.Validate{
+						Command:   "nsd-checkzone",
+						Args:      []string{"z", "${STAGED}"},
+						OnFailure: "abort",
+					},
+				},
+				{
+					Path:    "/tmp/nm-after-abort",
+					Ensure:  "file",
+					Content: "should not be written",
+				},
+			}
+
+			changed, _, err := r.handleFileSet(ctx, "test-node", "test-cs", "default", files, commonv1.ManagedNode{})
+			Expect(err).To(HaveOccurred())
+			Expect(changed).To(BeEmpty())
+			fil := sys.File().(*mockFileHandler)
+			Expect(fil.fileWriteCalls).NotTo(HaveKey("/tmp/nm-after-abort"),
+				"files after the aborting one must not be written")
+		})
 	})
 })
