@@ -23,6 +23,17 @@ const (
 	dbusNotifyIface = "org.freedesktop.Notifications"
 )
 
+// NotificationClosed reason codes from the freedesktop notification spec.
+const (
+	closeReasonExpired   uint32 = 1 // the notification expired
+	closeReasonDismissed uint32 = 2 // the notification was dismissed by the user
+)
+
+// actionKeyDismiss is the sentinel action key passed to a notification's
+// callback when the user explicitly dismisses it, so the upstream handler can
+// map a dismiss to an explicit response instead of silently dropping it.
+const actionKeyDismiss = "dismiss"
+
 // desktop wraps the org.freedesktop.Notifications D-Bus interface.
 type desktop struct {
 	conn   *dbus.Conn
@@ -101,12 +112,35 @@ func (d *desktop) listenSignals() {
 			if len(sig.Body) < 1 {
 				continue
 			}
-			if id, ok := sig.Body[0].(uint32); ok {
-				d.actionMu.Lock()
-				delete(d.actions, id)
-				d.actionMu.Unlock()
+			id, ok := sig.Body[0].(uint32)
+			if !ok {
+				continue
 			}
+			var reason uint32
+			if len(sig.Body) >= 2 {
+				reason, _ = sig.Body[1].(uint32)
+			}
+			d.handleClose(id, reason)
 		}
+	}
+}
+
+// handleClose processes a NotificationClosed signal. When the user explicitly
+// dismissed the notification (reason 2), the registered callback is invoked
+// with actionKeyDismiss so the upstream handler can map it to an explicit
+// response; for all other reasons (expiry, programmatic close) the callback is
+// dropped and the controller's deadline handling owns the no-response path.
+// The callback is always removed from the pending set.
+func (d *desktop) handleClose(id, reason uint32) {
+	d.actionMu.Lock()
+	cb, exists := d.actions[id]
+	if exists {
+		delete(d.actions, id)
+	}
+	d.actionMu.Unlock()
+
+	if exists && reason == closeReasonDismissed {
+		go cb(actionKeyDismiss)
 	}
 }
 

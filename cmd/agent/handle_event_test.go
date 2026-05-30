@@ -298,3 +298,43 @@ func TestHandleEvent_UpgradeApprovalDeny(t *testing.T) {
 		t.Fatal("timed out waiting for deny response on server")
 	}
 }
+
+// TestHandleEvent_UpgradeApprovalDismiss verifies that dismissing the
+// notification (the dismiss sentinel from a NotificationClosed signal) is
+// reported to the controller as an explicit DELAY rather than being dropped.
+func TestHandleEvent_UpgradeApprovalDismiss(t *testing.T) {
+	srv, client, cleanup := startTestServer(t)
+	defer cleanup()
+
+	mock := &mockDesktop{}
+
+	event := &notificationv1.Event{
+		Id:        "dismiss-1",
+		Timestamp: timestamppb.Now(),
+		Payload: &notificationv1.Event_UpgradeApprovalRequest{
+			UpgradeApprovalRequest: &notificationv1.UpgradeApprovalRequest{
+				Description: "system upgrade",
+				Schedule:    timestamppb.Now(),
+				Deadline:    timestamppb.New(time.Now().Add(30 * time.Second)),
+			},
+		},
+	}
+
+	approvalCh := srv.WaitForApproval("dismiss-1")
+
+	handleEvent(context.Background(), slog.Default(), mock, client, "testuser", event)
+
+	calls := mock.getActionCalls()
+	require.Len(t, calls, 1)
+
+	// Simulate the user dismissing the notification.
+	calls[0].cb(actionKeyDismiss)
+
+	select {
+	case resp := <-approvalCh:
+		require.Equal(t, notificationv1.ApprovalAction_APPROVAL_ACTION_DELAY, resp.GetAction())
+		require.Equal(t, "testuser", resp.GetUser())
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dismiss/delay response on server")
+	}
+}

@@ -36,6 +36,10 @@ var _ notification.Notifier = (*mockNotifier)(nil)
 type mockNotifier struct {
 	hasSubscribers bool
 	events         []*notificationv1.Event
+	// approvalCh, when non-nil, is returned by WaitForApproval so tests can
+	// inject an approval response. When nil a fresh never-delivering channel
+	// is returned, exercising the deadline path.
+	approvalCh chan *notificationv1.ApprovalResponse
 }
 
 func (m *mockNotifier) Notify(event *notificationv1.Event) {
@@ -47,6 +51,9 @@ func (m *mockNotifier) HasSubscribers() bool {
 }
 
 func (m *mockNotifier) WaitForApproval(_ string) <-chan *notificationv1.ApprovalResponse {
+	if m.approvalCh != nil {
+		return m.approvalCh
+	}
 	return make(chan *notificationv1.ApprovalResponse, 1)
 }
 

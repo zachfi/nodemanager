@@ -732,7 +732,7 @@ func (r *ManagedNodeReconciler) requestUpgradeApproval(ctx context.Context, node
 				Description:   fmt.Sprintf("system upgrade on %s", node.Name),
 				Schedule:      timestamppb.New(scheduledTime),
 				Deadline:      timestamppb.New(deadline),
-				DefaultAction: notificationv1.ApprovalAction_APPROVAL_ACTION_APPROVE,
+				DefaultAction: notificationv1.ApprovalAction_APPROVAL_ACTION_DELAY,
 			},
 		},
 	})
@@ -759,8 +759,11 @@ func (r *ManagedNodeReconciler) requestUpgradeApproval(ctx context.Context, node
 			return true, nil
 		}
 	case <-timer.C:
-		r.logger.Info("upgrade approval deadline reached, proceeding with default action (approve)")
-		return true, nil
+		// Fail-safe: a subscriber was prompted (HasSubscribers gated this call)
+		// but never responded before the deadline. Do not auto-approve an
+		// upgrade behind the user's back — delay and retry next cycle.
+		r.logger.Info("upgrade approval deadline reached with no response, delaying upgrade")
+		return false, nil
 	case <-ctx.Done():
 		return false, ctx.Err()
 	}
