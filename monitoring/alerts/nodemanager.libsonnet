@@ -110,6 +110,33 @@
       },
     },
 
+    // ── Fleet version skew ───────────────────────────────────────────────────
+
+    {
+      alert: 'NodeManagerVersionSkew',
+      // Fires when more than one distinct agent version is reporting across the
+      // fleet. Agents are installed via the node package / FreeBSD port (not a
+      // single cluster image tag), so they drift independently; this gives a
+      // single-pane signal that a rollout is incomplete. Requires every node's
+      // local alloy to scrape the nodemanager metrics endpoint — nodes that are
+      // not scraped are invisible here (see the scrape-coverage gap).
+      expr: |||
+        count(count by (version) (nodemanager_build_info)) > 1
+      |||,
+      'for': '1h',
+      labels: { severity: 'warning' },
+      annotations: {
+        summary: 'nodemanager fleet is running {{ $value }} distinct agent versions.',
+        description: |||
+          {{ $value }} distinct nodemanager versions are reporting via
+          nodemanager_build_info. Agents drift independently because they ship in
+          the node package / FreeBSD port rather than a single image tag.
+          Reconcile the fleet to a single version:
+          count by (version) (nodemanager_build_info).
+        |||,
+      },
+    },
+
     // ── Jail operation metrics (FreeBSD) ────────────────────────────────────
 
     {
