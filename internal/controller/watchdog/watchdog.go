@@ -83,6 +83,14 @@ type Watchdog struct {
 	now      func() time.Time
 	interval time.Duration
 
+	// probe, when non-nil, is run each tick to confirm API connectivity
+	// independent of reconcile activity. It should perform a DIRECT, UNCACHED
+	// API read so it fails on a real connection break rather than succeeding
+	// against the informer cache. Success bumps the heartbeat; nil preserves
+	// the legacy reconcile-only heartbeat.
+	probe        func(context.Context) error
+	probeTimeout time.Duration
+
 	heartbeat atomic.Int64 // unix nanos; 0 means never bumped (startup grace)
 	inFlight  sync.Map     // key: "<controller>/<name>" → value: time.Time
 }
@@ -98,6 +106,14 @@ func New(cfg Config, nodeName string, reconcilePeriod time.Duration, logger *slo
 		now:             time.Now,
 		interval:        time.Minute,
 	}
+}
+
+// SetProbe installs a connectivity probe and its per-call timeout. Call before
+// Start (it is not safe to call concurrently with the running ticker). A zero
+// timeout means the probe runs without an explicit deadline.
+func (w *Watchdog) SetProbe(probe func(context.Context) error, timeout time.Duration) {
+	w.probe = probe
+	w.probeTimeout = timeout
 }
 
 // Track records a Reconcile entry. Bumps the heartbeat, registers the
