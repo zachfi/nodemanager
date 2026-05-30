@@ -9,6 +9,7 @@ package watchdog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
