@@ -43,11 +43,14 @@ type Config struct {
 	// SlowThreshold: WARN + metric if a single Reconcile has been in-flight
 	// longer than this. 0 disables.
 	SlowThreshold time.Duration `json:"slowThreshold,omitempty"`
+	// ProbeTimeout bounds each connectivity-probe API call. 0 = no deadline.
+	ProbeTimeout time.Duration `json:"probeTimeout,omitempty"`
 }
 
 func (c *Config) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	f.DurationVar(&c.StaleThreshold, prefix+".stale-threshold", 10*time.Minute, "Exit the agent (code 74) if no Reconcile entry occurs in this duration. 0 disables. Auto-disabled (with a warning) when configset.reconcile-period is 0, since an idle fleet would otherwise false-positive.")
 	f.DurationVar(&c.SlowThreshold, prefix+".slow-threshold", 15*time.Minute, "Surface a WARN log and metric series when a single Reconcile has been in-flight longer than this. 0 disables.")
+	f.DurationVar(&c.ProbeTimeout, prefix+".probe-timeout", 10*time.Second, "Timeout for the watchdog's direct API connectivity probe each tick. 0 disables the deadline.")
 }
 
 var (
