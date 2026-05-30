@@ -58,7 +58,9 @@ PERSONAL_PORTS_REMOTE="${PERSONAL_PORTS_REMOTE:-git@code.znet:znet/personal-port
 # repo has both a code.znet origin and a github mirror).
 safe_push() {
   local dir="$1" branch="$2"
-  git -C "${dir}" pull --rebase origin "${branch}"
+  # --autostash so leftover unstaged changes (e.g. incidental codegen churn)
+  # don't abort the rebase. Only committed history is pushed regardless.
+  git -C "${dir}" pull --rebase --autostash origin "${branch}"
   while read -r remote; do
     [[ -z "${remote}" ]] && continue
     git -C "${dir}" push "${remote}" "${branch}"
@@ -193,6 +195,12 @@ else
 fi
 
 git -C "${JSONNET_LIBS_DIR}" add "${CONFIG}"
+
+# The k8s-gen codegen also reformats previously-generated versions; we commit
+# only the new version (the CONFIG + GEN_DIR staged above), so revert that
+# incidental churn. Without this the leftover unstaged changes made the
+# safe_push 'git pull --rebase' abort with "You have unstaged changes".
+git -C "${JSONNET_LIBS_DIR}" checkout -- .
 
 if git -C "${JSONNET_LIBS_DIR}" diff --staged --quiet; then
   echo "    No changes to commit in jsonnet-libs"

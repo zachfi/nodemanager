@@ -384,6 +384,63 @@ else
   fail "idempotency: version appears ${VERSION_COUNT} times in config.jsonnet (expected 1)"
 fi
 
+# ── safe_push resilience (regression for the jsonnet-libs codegen-churn bug) ──
+echo ""
+echo "==> safe_push tolerates leftover unstaged changes"
+
+# A real release leaves incidental codegen churn — unstaged modifications to
+# already-tracked files — in the working tree. Before the fix, safe_push's plain
+# 'git pull --rebase' aborted with "You have unstaged changes", killing the run
+# after earlier repos had already pushed. Pull the function straight out of the
+# release script and exercise it against a local bare remote.
+source <(sed -n '/^safe_push()/,/^}/p' "${SCRIPT}")
+
+SP_REMOTE="${TMP}/safepush-remote.git"
+SP_WORK="${TMP}/safepush-work"
+SP_OTHER="${TMP}/safepush-other"
+git init -q --bare "${SP_REMOTE}"
+git clone -q "${SP_REMOTE}" "${SP_WORK}"
+git -C "${SP_WORK}" config user.email "test@test"
+git -C "${SP_WORK}" config user.name "Test"
+echo base > "${SP_WORK}/tracked.txt"
+git -C "${SP_WORK}" add tracked.txt
+git -C "${SP_WORK}" commit -qm init
+git -C "${SP_WORK}" branch -M main
+git -C "${SP_WORK}" push -q origin main
+
+# Advance the remote from a second clone so safe_push's rebase has real work to
+# do — that is what makes git enforce a clean tree (a no-op pull skips the
+# check and would mask the bug).
+git clone -q "${SP_REMOTE}" "${SP_OTHER}"
+git -C "${SP_OTHER}" config user.email "test@test"
+git -C "${SP_OTHER}" config user.name "Test"
+echo upstream > "${SP_OTHER}/upstream.txt"
+git -C "${SP_OTHER}" add upstream.txt
+git -C "${SP_OTHER}" commit -qm "upstream advance"
+git -C "${SP_OTHER}" push -q origin main
+
+# In the work clone: commit the intended change, then leave an unstaged
+# modification to a tracked file — exactly the shape the codegen leaves behind.
+echo newversion > "${SP_WORK}/release.txt"
+git -C "${SP_WORK}" add release.txt
+git -C "${SP_WORK}" commit -qm "add release.txt"
+echo churn >> "${SP_WORK}/tracked.txt"
+
+if safe_push "${SP_WORK}" main >/dev/null 2>&1; then
+  pass "safe_push succeeded despite leftover unstaged changes"
+else
+  fail "safe_push aborted on leftover unstaged changes (the codegen-churn bug)"
+fi
+
+# Both our commit and the upstream advance must be on the remote — proving the
+# rebase actually ran and pushed.
+if git -C "${SP_REMOTE}" cat-file -e main:release.txt 2>/dev/null \
+   && git -C "${SP_REMOTE}" cat-file -e main:upstream.txt 2>/dev/null; then
+  pass "safe_push rebased onto the advanced remote and pushed the commit"
+else
+  fail "safe_push did not land the commit atop the advanced remote"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
