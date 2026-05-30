@@ -269,6 +269,29 @@ func TestTickProbeFailureDoesNotBumpHeartbeat(t *testing.T) {
 	}
 }
 
+func TestSustainedProbeFailureExits(t *testing.T) {
+	w := New(Config{StaleThreshold: 5 * time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	current := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return current }
+	w.SetProbe(func(context.Context) error { return errors.New("api unreachable") }, 0)
+
+	// First tick: probe fails but heartbeat is still 0 (startup grace) → no exit.
+	exited := -1
+	w.tick(func(code int) { exited = code })
+	if exited != -1 {
+		t.Fatalf("must not exit during startup grace, exited=%d", exited)
+	}
+
+	// Establish a heartbeat (simulate one earlier successful reconcile/probe),
+	// then let the clock advance past the stale threshold with probes failing.
+	w.heartbeat.Store(current.UnixNano())
+	current = current.Add(6 * time.Minute)
+	w.tick(func(code int) { exited = code })
+	if exited != 74 {
+		t.Fatalf("sustained probe failure past stale threshold should exit(74), got %d", exited)
+	}
+}
+
 func TestWatchdog_DisabledStaleNeverExits(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	exitCalls := make(chan int, 1)
