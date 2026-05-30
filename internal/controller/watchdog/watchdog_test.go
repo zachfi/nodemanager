@@ -292,6 +292,36 @@ func TestSustainedProbeFailureExits(t *testing.T) {
 	}
 }
 
+func TestStaleCheckStaysEnabledWithProbeAndZeroPeriod(t *testing.T) {
+	w := New(Config{StaleThreshold: 5 * time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	w.SetProbe(func(context.Context) error { return nil }, 0)
+
+	// reconcilePeriod is 0, but a probe is installed, so Start must NOT disable
+	// the stale check. Drive Start briefly with an injected exit + a cancelled
+	// context so it returns immediately after the preflight branch.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.exit = func(int) {}
+	_ = w.Start(ctx)
+
+	if w.cfg.StaleThreshold == 0 {
+		t.Fatal("stale check must remain enabled when a probe is installed")
+	}
+}
+
+func TestStaleCheckDisabledWithoutProbeAndZeroPeriod(t *testing.T) {
+	w := New(Config{StaleThreshold: 5 * time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	// No probe, reconcilePeriod 0 → legacy fail-open disable still applies.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.exit = func(int) {}
+	_ = w.Start(ctx)
+
+	if w.cfg.StaleThreshold != 0 {
+		t.Fatal("legacy fail-open: stale check should be disabled without a probe and with zero period")
+	}
+}
+
 func TestWatchdog_DisabledStaleNeverExits(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	exitCalls := make(chan int, 1)

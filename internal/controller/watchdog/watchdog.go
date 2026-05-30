@@ -150,14 +150,15 @@ func (w *Watchdog) Track(controller, name string) func() {
 // unusable stale check is disabled (fail-open) rather than aborting startup,
 // so the watchdog can never brick the agent it is meant to guard.
 func (w *Watchdog) Start(ctx context.Context) error {
-	// Fail open: the stale check needs a periodic reconcile to bump the
-	// heartbeat on an otherwise-idle, event-driven fleet; without one it would
-	// false-positive and exit a healthy agent. Rather than refuse to start —
-	// which bricks the agent into a crash loop, the very outage a watchdog
-	// exists to prevent — disable just the stale check and keep everything else
-	// (the slow-threshold signal, normal reconciliation) running.
-	if w.cfg.StaleThreshold > 0 && w.reconcilePeriod == 0 {
-		w.logger.Warn("watchdog stale check disabled: it requires configset.reconcile-period > 0 to avoid false-positives on an idle fleet; set --configset.reconcile-period (recommended > stale-threshold) to enable",
+	// Fail open ONLY when there is no other liveness source. The stale check
+	// needs *something* to bump the heartbeat on an idle fleet: either a
+	// periodic reconcile or a connectivity probe. With a probe installed the
+	// heartbeat stays fresh regardless of reconcile-period, so the stale check
+	// stays enabled (and reconcile-period may safely be 0). Without either, a
+	// stale check would false-positive and exit a healthy agent — so disable it
+	// rather than brick the agent into a crash loop.
+	if w.cfg.StaleThreshold > 0 && w.reconcilePeriod == 0 && w.probe == nil {
+		w.logger.Warn("watchdog stale check disabled: no liveness source (set a connectivity probe or configset.reconcile-period > 0)",
 			"stale_threshold", w.cfg.StaleThreshold.String())
 		w.cfg.StaleThreshold = 0
 	}
