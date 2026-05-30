@@ -344,3 +344,90 @@ func TestWatchdog_DisabledStaleNeverExits(t *testing.T) {
 	default:
 	}
 }
+
+func TestTickProbeSuccessBumpsHeartbeat(t *testing.T) {
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	base := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return base }
+	probed := false
+	w.SetProbe(func(context.Context) error { probed = true; return nil }, 0)
+
+	// Heartbeat starts at 0 (startup grace).
+	if w.heartbeat.Load() != 0 {
+		t.Fatalf("expected heartbeat 0 before tick, got %d", w.heartbeat.Load())
+	}
+	w.tick(func(int) { t.Fatal("must not exit on a successful probe") })
+
+	if !probed {
+		t.Fatal("probe was not invoked")
+	}
+	if got := w.heartbeat.Load(); got != base.UnixNano() {
+		t.Fatalf("probe success should bump heartbeat to %d, got %d", base.UnixNano(), got)
+	}
+}
+
+func TestTickProbeFailureDoesNotBumpHeartbeat(t *testing.T) {
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	base := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return base }
+	w.SetProbe(func(context.Context) error { return errors.New("api unreachable") }, 0)
+
+	w.tick(func(int) {}) // heartbeat is 0 → startup grace, no exit yet
+
+	if got := w.heartbeat.Load(); got != 0 {
+		t.Fatalf("probe failure must not bump heartbeat, got %d", got)
+	}
+}
+
+func TestSustainedProbeFailureExits(t *testing.T) {
+	w := New(Config{StaleThreshold: 5 * time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	current := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return current }
+	w.SetProbe(func(context.Context) error { return errors.New("api unreachable") }, 0)
+
+	// First tick: probe fails but heartbeat is still 0 (startup grace) → no exit.
+	exited := -1
+	w.tick(func(code int) { exited = code })
+	if exited != -1 {
+		t.Fatalf("must not exit during startup grace, exited=%d", exited)
+	}
+
+	// Establish a heartbeat (simulate one earlier successful reconcile/probe),
+	// then let the clock advance past the stale threshold with probes failing.
+	w.heartbeat.Store(current.UnixNano())
+	current = current.Add(6 * time.Minute)
+	w.tick(func(code int) { exited = code })
+	if exited != 74 {
+		t.Fatalf("sustained probe failure past stale threshold should exit(74), got %d", exited)
+	}
+}
+
+func TestStaleCheckStaysEnabledWithProbeAndZeroPeriod(t *testing.T) {
+	w := New(Config{StaleThreshold: 5 * time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	w.SetProbe(func(context.Context) error { return nil }, 0)
+
+	// reconcilePeriod is 0, but a probe is installed, so Start must NOT disable
+	// the stale check. Drive Start briefly with an injected exit + a cancelled
+	// context so it returns immediately after the preflight branch.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.exit = func(int) {}
+	_ = w.Start(ctx)
+
+	if w.cfg.StaleThreshold == 0 {
+		t.Fatal("stale check must remain enabled when a probe is installed")
+	}
+}
+
+func TestStaleCheckDisabledWithoutProbeAndZeroPeriod(t *testing.T) {
+	w := New(Config{StaleThreshold: 5 * time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	// No probe, reconcilePeriod 0 → legacy fail-open disable still applies.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.exit = func(int) {}
+	_ = w.Start(ctx)
+
+	if w.cfg.StaleThreshold != 0 {
+		t.Fatal("legacy fail-open: stale check should be disabled without a probe and with zero period")
+	}
+}
