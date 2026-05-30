@@ -60,10 +60,19 @@ var (
 		Name: "nodemanager_reconcile_in_flight_duration_seconds",
 		Help: "Age of an in-flight Reconcile call exceeding the watchdog slow threshold.",
 	}, []string{"node", "controller", "key"})
+
+	// watchdogProbeTotal counts connectivity probe results. A rising "error"
+	// rate means the agent is losing contact with the API server; sustained
+	// failure past StaleThreshold triggers exit(74) for a supervised restart.
+	watchdogProbeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "nodemanager_watchdog_probe_total",
+		Help: "Watchdog API connectivity probe results by node and result.",
+	}, []string{"node", "result"})
 )
 
 func init() {
 	metrics.Registry.MustRegister(reconcileInFlightDuration)
+	metrics.Registry.MustRegister(watchdogProbeTotal)
 }
 
 // Watchdog owns the heartbeat and in-flight reconcile tracker. Reconcilers
@@ -200,6 +209,28 @@ func (w *Watchdog) Start(ctx context.Context) error {
 // tests can capture it without touching os.Exit.
 func (w *Watchdog) tick(exitFn func(int)) {
 	now := w.now()
+
+	// Connectivity probe: a direct, uncached API read proves the agent can
+	// still reach the API server. Unlike a reconcile (which reads the informer
+	// cache and "succeeds" even when the watch is broken), a probe failure is a
+	// true connectivity signal. Success bumps the heartbeat, so an idle but
+	// healthy agent never false-exits and no periodic reconcile is required to
+	// keep it alive.
+	if w.probe != nil {
+		ctx := context.Background()
+		if w.probeTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, w.probeTimeout)
+			defer cancel()
+		}
+		if err := w.probe(ctx); err != nil {
+			watchdogProbeTotal.WithLabelValues(w.nodeName, "error").Inc()
+			w.logger.Warn("watchdog connectivity probe failed", "err", err)
+		} else {
+			watchdogProbeTotal.WithLabelValues(w.nodeName, "success").Inc()
+			w.heartbeat.Store(now.UnixNano())
+		}
+	}
 
 	// Signal 1: heartbeat staleness.
 	if w.cfg.StaleThreshold > 0 {

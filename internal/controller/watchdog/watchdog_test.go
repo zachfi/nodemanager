@@ -9,6 +9,7 @@ package watchdog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"sync"
@@ -231,6 +232,40 @@ func TestWatchdog_SlowGaugeSetAndCleared(t *testing.T) {
 	cancel()
 	if err := <-startErrCh; err != nil {
 		t.Fatalf("Start returned unexpected error: %v", err)
+	}
+}
+
+func TestTickProbeSuccessBumpsHeartbeat(t *testing.T) {
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	base := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return base }
+	probed := false
+	w.SetProbe(func(context.Context) error { probed = true; return nil }, 0)
+
+	// Heartbeat starts at 0 (startup grace).
+	if w.heartbeat.Load() != 0 {
+		t.Fatalf("expected heartbeat 0 before tick, got %d", w.heartbeat.Load())
+	}
+	w.tick(func(int) { t.Fatal("must not exit on a successful probe") })
+
+	if !probed {
+		t.Fatal("probe was not invoked")
+	}
+	if got := w.heartbeat.Load(); got != base.UnixNano() {
+		t.Fatalf("probe success should bump heartbeat to %d, got %d", base.UnixNano(), got)
+	}
+}
+
+func TestTickProbeFailureDoesNotBumpHeartbeat(t *testing.T) {
+	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: 0}, "node1", 0, slog.Default())
+	base := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return base }
+	w.SetProbe(func(context.Context) error { return errors.New("api unreachable") }, 0)
+
+	w.tick(func(int) {}) // heartbeat is 0 → startup grace, no exit yet
+
+	if got := w.heartbeat.Load(); got != 0 {
+		t.Fatalf("probe failure must not bump heartbeat, got %d", got)
 	}
 }
 
