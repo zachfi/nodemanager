@@ -11,7 +11,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -110,21 +109,31 @@ func TestWatchdog_ConcurrentTrack(t *testing.T) {
 	}
 }
 
-func TestWatchdog_PreflightRejectsStaleWithoutReconcilePeriod(t *testing.T) {
+// TestWatchdog_StaleWithoutReconcilePeriodFailsOpen verifies the watchdog does
+// NOT brick the agent on the shipped defaults (stale-threshold=10m,
+// reconcile-period=0). The stale check needs a periodic reconcile to bump the
+// heartbeat on an idle fleet; without one it would false-positive, so the
+// watchdog must disable just the stale check and start normally — never refuse
+// to start, since a watchdog must not prevent the thing it guards from running.
+func TestWatchdog_StaleWithoutReconcilePeriodFailsOpen(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
-	w := New(Config{StaleThreshold: time.Minute, SlowThreshold: time.Minute}, "test-node", 0, logger)
-	w.exit = func(int) {}
+	exitCalls := make(chan int, 1)
+	w := New(Config{StaleThreshold: 30 * time.Millisecond, SlowThreshold: time.Minute}, "test-node", 0, logger)
+	w.exit = func(c int) { exitCalls <- c }
 	w.interval = 10 * time.Millisecond
+	// A heartbeat old enough that an *enabled* stale check would exit.
+	w.heartbeat.Store(time.Now().Add(-time.Hour).UnixNano())
 
-	err := w.Start(t.Context())
-	if err == nil {
-		t.Fatal("expected error from Start when stale>0 and reconcilePeriod==0")
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("Start must not error on default config (stale>0, reconcile-period=0); got %v", err)
 	}
-	if !strings.Contains(err.Error(), "watchdog.stale-threshold") {
-		t.Fatalf("error must mention watchdog.stale-threshold; got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "configset.reconcile-period") {
-		t.Fatalf("error must mention configset.reconcile-period; got %q", err.Error())
+	select {
+	case c := <-exitCalls:
+		t.Fatalf("stale check must be disabled when reconcile-period==0; got exit(%d)", c)
+	default:
 	}
 }
 

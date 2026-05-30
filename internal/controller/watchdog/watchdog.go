@@ -23,7 +23,6 @@ package watchdog
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -47,7 +46,7 @@ type Config struct {
 }
 
 func (c *Config) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
-	f.DurationVar(&c.StaleThreshold, prefix+".stale-threshold", 10*time.Minute, "Exit the agent (code 74) if no Reconcile entry occurs in this duration. 0 disables. Requires configset.reconcile-period > 0 when enabled.")
+	f.DurationVar(&c.StaleThreshold, prefix+".stale-threshold", 10*time.Minute, "Exit the agent (code 74) if no Reconcile entry occurs in this duration. 0 disables. Auto-disabled (with a warning) when configset.reconcile-period is 0, since an idle fleet would otherwise false-positive.")
 	f.DurationVar(&c.SlowThreshold, prefix+".slow-threshold", 15*time.Minute, "Surface a WARN log and metric series when a single Reconcile has been in-flight longer than this. 0 disables.")
 }
 
@@ -119,11 +118,20 @@ func (w *Watchdog) Track(controller, name string) func() {
 }
 
 // Start implements controller-runtime's manager.Runnable. Returns nil when
-// the ctx is cancelled (normal shutdown), or an error if the preflight
-// check fails.
+// the ctx is cancelled (normal shutdown). It never fails preflight: an
+// unusable stale check is disabled (fail-open) rather than aborting startup,
+// so the watchdog can never brick the agent it is meant to guard.
 func (w *Watchdog) Start(ctx context.Context) error {
+	// Fail open: the stale check needs a periodic reconcile to bump the
+	// heartbeat on an otherwise-idle, event-driven fleet; without one it would
+	// false-positive and exit a healthy agent. Rather than refuse to start —
+	// which bricks the agent into a crash loop, the very outage a watchdog
+	// exists to prevent — disable just the stale check and keep everything else
+	// (the slow-threshold signal, normal reconciliation) running.
 	if w.cfg.StaleThreshold > 0 && w.reconcilePeriod == 0 {
-		return fmt.Errorf("watchdog.stale-threshold > 0 requires configset.reconcile-period > 0; otherwise an idle fleet false-positives")
+		w.logger.Warn("watchdog stale check disabled: it requires configset.reconcile-period > 0 to avoid false-positives on an idle fleet; set --configset.reconcile-period (recommended > stale-threshold) to enable",
+			"stale_threshold", w.cfg.StaleThreshold.String())
+		w.cfg.StaleThreshold = 0
 	}
 
 	if w.cfg.StaleThreshold == 0 && w.cfg.SlowThreshold == 0 {
