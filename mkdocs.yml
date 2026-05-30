@@ -34,5 +34,20 @@ nav:
     - Poudriere: monitoring/poudriere.md
     - Runbooks:
       - NodeManagerReconcileErrors: runbooks/NodeManagerReconcileErrors.md
+      - NodeManagerReconcileLatencyHigh: runbooks/NodeManagerReconcileLatencyHigh.md
       - NodeManagerConfigSetApplyError: runbooks/NodeManagerConfigSetApplyError.md
+      - NodeManagerConfigSetApplyStale: runbooks/NodeManagerConfigSetApplyStale.md
+      - NodeManagerConfigSetConflict: runbooks/NodeManagerConfigSetConflict.md
       - NodeManagerUpgradeFailed: runbooks/NodeManagerUpgradeFailed.md
+      - NodeManagerUpgradeStale: runbooks/NodeManagerUpgradeStale.md
+      - NodeManagerVersionSkew: runbooks/NodeManagerVersionSkew.md
+      - NodeManagerFileDrift: runbooks/NodeManagerFileDrift.md
+      - NodeManagerPackageOperationFailed: runbooks/NodeManagerPackageOperationFailed.md
+      - NodeManagerServiceOperationFailed: runbooks/NodeManagerServiceOperationFailed.md
+      - NodeManagerServiceStartLoop: runbooks/NodeManagerServiceStartLoop.md
+      - NodeManagerReconcileStuck: runbooks/NodeManagerReconcileStuck.md
+      - NodeManagerAgentRestartLoop: runbooks/NodeManagerAgentRestartLoop.md
+      - NodeManagerJailOperationFailed: runbooks/NodeManagerJailOperationFailed.md
+      - NodeManagerPoudriereBuildFailed: runbooks/NodeManagerPoudriereBuildFailed.md
+      - NodeManagerPoudriereBuildStale: runbooks/NodeManagerPoudriereBuildStale.md
+      - NodeManagerPoudriereBuildLong: runbooks/NodeManagerPoudriereBuildLong.md
