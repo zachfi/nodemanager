@@ -199,7 +199,11 @@ func handleEvent(ctx context.Context, logger *slog.Logger, desk desktopNotifier,
 func handleUpgradeApproval(ctx context.Context, logger *slog.Logger, desk desktopNotifier, client notificationv1.NodeNotificationServiceClient, user, eventID string, req *notificationv1.UpgradeApprovalRequest) {
 	deadline := req.GetDeadline().AsTime()
 	remaining := time.Until(deadline)
-	body := fmt.Sprintf("%s\nAuto-approves in %s", req.GetDescription(), remaining.Round(time.Second))
+	defaultPhrase := "Auto-approves"
+	if req.GetDefaultAction() == notificationv1.ApprovalAction_APPROVAL_ACTION_DELAY {
+		defaultPhrase = "Auto-defers"
+	}
+	body := fmt.Sprintf("%s\n%s in %s", req.GetDescription(), defaultPhrase, remaining.Round(time.Second))
 
 	logger.Info("showing upgrade approval request",
 		"event", eventID,
@@ -223,6 +227,9 @@ func handleUpgradeApproval(ctx context.Context, logger *slog.Logger, desk deskto
 			case "deny":
 				action = notificationv1.ApprovalAction_APPROVAL_ACTION_DENY
 				logger.Info("user denied upgrade", "event", eventID)
+			case actionKeyDismiss:
+				action = notificationv1.ApprovalAction_APPROVAL_ACTION_DELAY
+				logger.Info("user dismissed upgrade approval, delaying", "event", eventID)
 			default:
 				logger.Warn("unexpected action key", "key", actionKey, "event", eventID)
 				return
