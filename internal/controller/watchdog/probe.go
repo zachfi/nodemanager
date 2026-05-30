@@ -10,7 +10,6 @@ package watchdog
 import (
 	"context"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -32,9 +31,6 @@ func ManagedNodeProbe(reader client.Reader, name, namespace string) func(context
 	return func(ctx context.Context) error {
 		var mn commonv1.ManagedNode
 		err := reader.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &mn)
-		if err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-		return nil
+		return client.IgnoreNotFound(err)
 	}
 }

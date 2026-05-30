@@ -74,8 +74,7 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(reconcileInFlightDuration)
-	metrics.Registry.MustRegister(watchdogProbeTotal)
+	metrics.Registry.MustRegister(reconcileInFlightDuration, watchdogProbeTotal)
 }
 
 // Watchdog owns the heartbeat and in-flight reconcile tracker. Reconcilers
@@ -220,20 +219,8 @@ func (w *Watchdog) tick(exitFn func(int)) {
 	// true connectivity signal. Success bumps the heartbeat, so an idle but
 	// healthy agent never false-exits and no periodic reconcile is required to
 	// keep it alive.
-	if w.probe != nil {
-		ctx := context.Background()
-		if w.probeTimeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, w.probeTimeout)
-			defer cancel()
-		}
-		if err := w.probe(ctx); err != nil {
-			watchdogProbeTotal.WithLabelValues(w.nodeName, "error").Inc()
-			w.logger.Warn("watchdog connectivity probe failed", "err", err)
-		} else {
-			watchdogProbeTotal.WithLabelValues(w.nodeName, "success").Inc()
-			w.heartbeat.Store(now.UnixNano())
-		}
+	if w.probe != nil && w.runProbe() {
+		w.heartbeat.Store(now.UnixNano())
 	}
 
 	// Signal 1: heartbeat staleness.
@@ -276,6 +263,25 @@ func (w *Watchdog) tick(exitFn func(int)) {
 		reconcileInFlightDuration.WithLabelValues(w.nodeName, controller, name).Set(age.Seconds())
 		return true
 	})
+}
+
+// runProbe executes the connectivity probe once, records the result metric, and
+// reports whether it succeeded. It owns its own context so the probe-timeout
+// cancel is scoped to this call rather than the whole tick.
+func (w *Watchdog) runProbe() bool {
+	ctx := context.Background()
+	if w.probeTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, w.probeTimeout)
+		defer cancel()
+	}
+	if err := w.probe(ctx); err != nil {
+		watchdogProbeTotal.WithLabelValues(w.nodeName, "error").Inc()
+		w.logger.Warn("watchdog connectivity probe failed", "err", err)
+		return false
+	}
+	watchdogProbeTotal.WithLabelValues(w.nodeName, "success").Inc()
+	return true
 }
 
 // splitTrackKey reverses the format used in Track: "controller/key".
