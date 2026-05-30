@@ -43,11 +43,14 @@ type Config struct {
 	// SlowThreshold: WARN + metric if a single Reconcile has been in-flight
 	// longer than this. 0 disables.
 	SlowThreshold time.Duration `json:"slowThreshold,omitempty"`
+	// ProbeTimeout bounds each connectivity-probe API call. 0 = no deadline.
+	ProbeTimeout time.Duration `json:"probeTimeout,omitempty"`
 }
 
 func (c *Config) RegisterFlagsAndApplyDefaults(prefix string, f *flag.FlagSet) {
 	f.DurationVar(&c.StaleThreshold, prefix+".stale-threshold", 10*time.Minute, "Exit the agent (code 74) if no Reconcile entry occurs in this duration. 0 disables. Auto-disabled (with a warning) when configset.reconcile-period is 0, since an idle fleet would otherwise false-positive.")
 	f.DurationVar(&c.SlowThreshold, prefix+".slow-threshold", 15*time.Minute, "Surface a WARN log and metric series when a single Reconcile has been in-flight longer than this. 0 disables.")
+	f.DurationVar(&c.ProbeTimeout, prefix+".probe-timeout", 10*time.Second, "Timeout for the watchdog's direct API connectivity probe each tick. 0 disables the deadline.")
 }
 
 var (
@@ -60,10 +63,18 @@ var (
 		Name: "nodemanager_reconcile_in_flight_duration_seconds",
 		Help: "Age of an in-flight Reconcile call exceeding the watchdog slow threshold.",
 	}, []string{"node", "controller", "key"})
+
+	// watchdogProbeTotal counts connectivity probe results. A rising "error"
+	// rate means the agent is losing contact with the API server; sustained
+	// failure past StaleThreshold triggers exit(74) for a supervised restart.
+	watchdogProbeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "nodemanager_watchdog_probe_total",
+		Help: "Watchdog API connectivity probe results by node and result.",
+	}, []string{"node", "result"})
 )
 
 func init() {
-	metrics.Registry.MustRegister(reconcileInFlightDuration)
+	metrics.Registry.MustRegister(reconcileInFlightDuration, watchdogProbeTotal)
 }
 
 // Watchdog owns the heartbeat and in-flight reconcile tracker. Reconcilers
@@ -83,6 +94,14 @@ type Watchdog struct {
 	now      func() time.Time
 	interval time.Duration
 
+	// probe, when non-nil, is run each tick to confirm API connectivity
+	// independent of reconcile activity. It should perform a DIRECT, UNCACHED
+	// API read so it fails on a real connection break rather than succeeding
+	// against the informer cache. Success bumps the heartbeat; nil preserves
+	// the legacy reconcile-only heartbeat.
+	probe        func(context.Context) error
+	probeTimeout time.Duration
+
 	heartbeat atomic.Int64 // unix nanos; 0 means never bumped (startup grace)
 	inFlight  sync.Map     // key: "<controller>/<name>" → value: time.Time
 }
@@ -98,6 +117,14 @@ func New(cfg Config, nodeName string, reconcilePeriod time.Duration, logger *slo
 		now:             time.Now,
 		interval:        time.Minute,
 	}
+}
+
+// SetProbe installs a connectivity probe and its per-call timeout. Call before
+// Start (it is not safe to call concurrently with the running ticker). A zero
+// timeout means the probe runs without an explicit deadline.
+func (w *Watchdog) SetProbe(probe func(context.Context) error, timeout time.Duration) {
+	w.probe = probe
+	w.probeTimeout = timeout
 }
 
 // Track records a Reconcile entry. Bumps the heartbeat, registers the
@@ -122,14 +149,15 @@ func (w *Watchdog) Track(controller, name string) func() {
 // unusable stale check is disabled (fail-open) rather than aborting startup,
 // so the watchdog can never brick the agent it is meant to guard.
 func (w *Watchdog) Start(ctx context.Context) error {
-	// Fail open: the stale check needs a periodic reconcile to bump the
-	// heartbeat on an otherwise-idle, event-driven fleet; without one it would
-	// false-positive and exit a healthy agent. Rather than refuse to start —
-	// which bricks the agent into a crash loop, the very outage a watchdog
-	// exists to prevent — disable just the stale check and keep everything else
-	// (the slow-threshold signal, normal reconciliation) running.
-	if w.cfg.StaleThreshold > 0 && w.reconcilePeriod == 0 {
-		w.logger.Warn("watchdog stale check disabled: it requires configset.reconcile-period > 0 to avoid false-positives on an idle fleet; set --configset.reconcile-period (recommended > stale-threshold) to enable",
+	// Fail open ONLY when there is no other liveness source. The stale check
+	// needs *something* to bump the heartbeat on an idle fleet: either a
+	// periodic reconcile or a connectivity probe. With a probe installed the
+	// heartbeat stays fresh regardless of reconcile-period, so the stale check
+	// stays enabled (and reconcile-period may safely be 0). Without either, a
+	// stale check would false-positive and exit a healthy agent — so disable it
+	// rather than brick the agent into a crash loop.
+	if w.cfg.StaleThreshold > 0 && w.reconcilePeriod == 0 && w.probe == nil {
+		w.logger.Warn("watchdog stale check disabled: no liveness source (set a connectivity probe or configset.reconcile-period > 0)",
 			"stale_threshold", w.cfg.StaleThreshold.String())
 		w.cfg.StaleThreshold = 0
 	}
@@ -185,6 +213,16 @@ func (w *Watchdog) Start(ctx context.Context) error {
 func (w *Watchdog) tick(exitFn func(int)) {
 	now := w.now()
 
+	// Connectivity probe: a direct, uncached API read proves the agent can
+	// still reach the API server. Unlike a reconcile (which reads the informer
+	// cache and "succeeds" even when the watch is broken), a probe failure is a
+	// true connectivity signal. Success bumps the heartbeat, so an idle but
+	// healthy agent never false-exits and no periodic reconcile is required to
+	// keep it alive.
+	if w.probe != nil && w.runProbe() {
+		w.heartbeat.Store(now.UnixNano())
+	}
+
 	// Signal 1: heartbeat staleness.
 	if w.cfg.StaleThreshold > 0 {
 		hb := w.heartbeat.Load()
@@ -225,6 +263,25 @@ func (w *Watchdog) tick(exitFn func(int)) {
 		reconcileInFlightDuration.WithLabelValues(w.nodeName, controller, name).Set(age.Seconds())
 		return true
 	})
+}
+
+// runProbe executes the connectivity probe once, records the result metric, and
+// reports whether it succeeded. It owns its own context so the probe-timeout
+// cancel is scoped to this call rather than the whole tick.
+func (w *Watchdog) runProbe() bool {
+	ctx := context.Background()
+	if w.probeTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, w.probeTimeout)
+		defer cancel()
+	}
+	if err := w.probe(ctx); err != nil {
+		watchdogProbeTotal.WithLabelValues(w.nodeName, "error").Inc()
+		w.logger.Warn("watchdog connectivity probe failed", "err", err)
+		return false
+	}
+	watchdogProbeTotal.WithLabelValues(w.nodeName, "success").Inc()
+	return true
 }
 
 // splitTrackKey reverses the format used in Track: "controller/key".

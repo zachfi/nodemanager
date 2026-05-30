@@ -253,6 +253,16 @@ func main() {
 		cfg.ControllerConfig.ConfigSet.ReconcilePeriod,
 		logger,
 	)
+	// Give the watchdog a connectivity probe that does a DIRECT, UNCACHED read
+	// of this agent's own ManagedNode. GetAPIReader() bypasses the informer
+	// cache, so the probe fails when the API server is actually unreachable —
+	// unlike a reconcile, which reads cache and would mask a broken watch. This
+	// makes liveness independent of the ConfigSet reconcile-period. NotFound
+	// counts as success (the API answered) — see watchdog.ManagedNodeProbe.
+	watchdog.SetProbe(
+		controller.ManagedNodeProbe(mgr.GetAPIReader(), hostname, cfg.ControllerConfig.Namespace),
+		cfg.ControllerConfig.Watchdog.ProbeTimeout,
+	)
 	if err := mgr.Add(watchdog); err != nil {
 		setupLog.Error(err, "unable to add watchdog runnable")
 		os.Exit(1)
