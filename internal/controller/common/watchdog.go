@@ -39,10 +39,3 @@ func NewWatchdog(cfg WatchdogConfig, nodeName string, reconcilePeriod time.Durat
 func ManagedNodeProbe(reader client.Reader, name, namespace string) func(context.Context) error {
 	return watchdog.ManagedNodeProbe(reader, name, namespace)
 }
-
-// ManagedNodeProbe is a re-export wrapper so cmd/ and this package can build a
-// watchdog connectivity probe without importing the watchdog sub-package
-// directly. It delegates to watchdog.ManagedNodeProbe.
-func ManagedNodeProbe(reader client.Reader, name, namespace string) func(context.Context) error {
-	return watchdog.ManagedNodeProbe(reader, name, namespace)
-}

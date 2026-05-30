@@ -302,6 +302,30 @@ local rules = [
     },
   },
 
+  {
+    alert: 'NodeManagerWatchdogProbeFailing',
+    // A self-healing restart is the expected recovery, so a single blip must not
+    // page: require sustained errors with no successes, with a 10m 'for'. Selects
+    // on the node label (not job), which off-cluster agents actually carry.
+    expr: |||
+      rate(nodemanager_watchdog_probe_total{result="error"}[10m]) > 0
+      and
+      rate(nodemanager_watchdog_probe_total{result="success"}[10m]) == 0
+    |||,
+    'for': '10m',
+    labels: { severity: 'warning' },
+    annotations: {
+      summary: 'nodemanager on {{ $labels.node }} cannot reach the API server.',
+      description: |||
+        The watchdog connectivity probe on node {{ $labels.node }} has been
+        failing with no successes for 10 minutes. The agent is losing contact
+        with the Kubernetes API server; if this persists past the watchdog
+        stale-threshold the agent will exit(74) for a supervised restart.
+        Repeated firing indicates the restart is not recovering connectivity.
+      |||,
+    },
+  },
+
   // ── Poudriere build metrics (FreeBSD) ────────────────────────────────────
 
   {
