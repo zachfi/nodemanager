@@ -8,9 +8,12 @@ you may not use this file except in compliance with the License.
 package common
 
 import (
+	"context"
 	"time"
 
 	"log/slog"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/zachfi/nodemanager/internal/controller/watchdog"
 )
@@ -28,4 +31,11 @@ type WatchdogConfig = watchdog.Config
 // and cmd/ do not need updating. It delegates to watchdog.New.
 func NewWatchdog(cfg WatchdogConfig, nodeName string, reconcilePeriod time.Duration, logger *slog.Logger) *Watchdog {
 	return watchdog.New(cfg, nodeName, reconcilePeriod, logger)
+}
+
+// ManagedNodeProbe is a re-export wrapper so cmd/ and this package can build a
+// watchdog connectivity probe without importing the watchdog sub-package
+// directly. It delegates to watchdog.ManagedNodeProbe.
+func ManagedNodeProbe(reader client.Reader, name, namespace string) func(context.Context) error {
+	return watchdog.ManagedNodeProbe(reader, name, namespace)
 }
