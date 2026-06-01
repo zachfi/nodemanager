@@ -49,6 +49,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	ctrlhandler "sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -100,6 +101,12 @@ type ConfigSetReconciler struct {
 	// configSetAppliedResourceVersion gauge.
 	lastResourceVersionMu sync.Mutex
 	lastResourceVersion   map[string]string // key: "node/configset"
+
+	// nodeLabelsMu guards nodeLabels, a live cache of the local ManagedNode's
+	// labels.  Updated by the ManagedNode watch mapper so the ConfigSet watch
+	// predicate always evaluates against current labels.
+	nodeLabelsMu sync.RWMutex
+	nodeLabels   map[string]string
 }
 
 func NewConfigSetReconciler(client client.Client, scheme *runtime.Scheme, logger *slog.Logger, cfg ConfigSetConfig, system handler.System, locker locker.Locker, watchdog *Watchdog) *ConfigSetReconciler {
@@ -179,8 +186,10 @@ func (r *ConfigSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		r.logger.Debug("configset labels do not match node, skipping", "configset", configSet.Name, "node", node.Name)
 		r.removeConfigSetStatus(ctx, configSet.Name)
 		err = nil // for the span defer
-		// Requeue so we retry after the ManagedNode reconciler sets labels.
-		return ctrl.Result{RequeueAfter: jitterDuration(2 * time.Minute)}, nil
+		// No requeue: the ManagedNode label-change watch will re-enqueue all
+		// ConfigSets when node labels change, and the ConfigSet watch predicate
+		// will admit events when ConfigSet labels change to match.
+		return ctrl.Result{}, nil
 	}
 
 	nodeName := node.Name
@@ -355,6 +364,43 @@ func (r *ConfigSetReconciler) touchNotifyTarget(ctx context.Context, apiVersion,
 	}
 }
 
+// setNodeLabels replaces the cached node labels used by the watch predicate.
+func (r *ConfigSetReconciler) setNodeLabels(labels map[string]string) {
+	r.nodeLabelsMu.Lock()
+	r.nodeLabels = labels
+	r.nodeLabelsMu.Unlock()
+}
+
+// getNodeLabels returns a snapshot of the cached node labels.
+func (r *ConfigSetReconciler) getNodeLabels() map[string]string {
+	r.nodeLabelsMu.RLock()
+	defer r.nodeLabelsMu.RUnlock()
+	return r.nodeLabels
+}
+
+// nodeMatchPredicate returns a predicate that admits ConfigSet events only when
+// the ConfigSet's labels match the cached local node labels.  When the cache is
+// empty (node not yet created / labels not yet fetched) all events are admitted
+// so the Reconcile-level nodeLabelMatch guard can handle them.
+//
+// Requests enqueued by Watches() mappers (ManagedNode label changes, Secret/
+// ConfigMap updates) bypass this predicate — they go directly into the queue.
+func (r *ConfigSetReconciler) nodeMatchPredicate() predicate.Predicate {
+	matches := func(obj client.Object) bool {
+		cached := r.getNodeLabels()
+		if len(cached) == 0 {
+			return true // cache not seeded yet; admit and let Reconcile decide
+		}
+		return matchAllLabels(cached, obj.GetLabels())
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return matches(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return matches(e.ObjectNew) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return matches(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return matches(e.Object) },
+	}
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.cfg.FileBucket.Enabled && r.cfg.FileBucket.MaxAge > 0 {
@@ -371,12 +417,29 @@ func (r *ConfigSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return fmt.Errorf("failed to get hostname for ManagedNode watch: %w", err)
 	}
 
+	// Seed the node label cache so the watch predicate can filter immediately.
+	// Best-effort: if the ManagedNode doesn't exist yet the cache stays empty
+	// and the predicate admits all events until the first ManagedNode watch fires.
+	var seedNode commonv1.ManagedNode
+	if getErr := mgr.GetAPIReader().Get(context.Background(), types.NamespacedName{
+		Name:      hostname,
+		Namespace: r.cfg.Namespace,
+	}, &seedNode); getErr == nil && len(seedNode.Labels) > 0 {
+		r.setNodeLabels(seedNode.Labels)
+		r.logger.Info("seeded node label cache", "labels", len(seedNode.Labels))
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&commonv1.ConfigSet{}).
+		// Filter ConfigSet watch events against cached node labels so non-matching
+		// ConfigSets never enter the work queue.  Requests enqueued by the
+		// ManagedNode/Secret/ConfigMap mappers below bypass this predicate.
+		For(&commonv1.ConfigSet{}, builder.WithPredicates(r.nodeMatchPredicate())).
 		Watches(&corev1.Secret{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingSecret)).
 		Watches(&corev1.ConfigMap{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsReferencingConfigMap)).
 		// Watch the local ManagedNode so label changes (e.g. role labels set after
 		// startup) immediately re-trigger ConfigSet reconciliation without polling.
+		// The mapper also updates the node label cache so the ConfigSet predicate
+		// reflects the new labels for subsequent events.
 		// Use LabelChangedPredicate so status-only updates (SSH keys, interfaces,
 		// WireGuard, configset apply results) don't cause a flood of reconciles.
 		Watches(&commonv1.ManagedNode{}, ctrlhandler.EnqueueRequestsFromMapFunc(r.configSetsOnNodeChange(hostname)),
@@ -440,6 +503,9 @@ func (r *ConfigSetReconciler) configSetsOnNodeChange(hostname string) ctrlhandle
 		if obj.GetName() != hostname {
 			return nil
 		}
+		// Update the label cache so the ConfigSet watch predicate reflects
+		// the new labels for all subsequent informer events.
+		r.setNodeLabels(obj.GetLabels())
 		var list commonv1.ConfigSetList
 		if err := r.List(ctx, &list, client.InNamespace(r.cfg.Namespace)); err != nil {
 			return nil
